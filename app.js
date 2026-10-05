@@ -185,6 +185,8 @@ function render(config, lists) {
   const focus = document.activeElement;
   const focusId = focus && (focus.dataset.videoId || focus.dataset.channelId);
   displayed = mergeVideos(config, lists);
+  const manualIds = new Set(config.videos.map(v=>v.id));
+  const approvedChannelIds = new Set(config.channels.map(c=>c.id));
   const isChannels = viewMode === 'channels' && !selectedChannelId;
   const selected = config.channels.find(channel => channel.id === selectedChannelId);
   const videoChannels = new Map();
@@ -197,7 +199,7 @@ function render(config, lists) {
   // approval wins deduplication and does not carry a channelId itself.
   const channelVideos = selected ? new Set(cleanChannelVideos(lists[selected.id], selected).map(video => video.id)) : null;
   let items = isChannels ? config.channels.filter(channel => matchesSearch(channel.name)) : [...displayed.values()].filter(video =>
-    (!channelVideos || channelVideos.has(video.id)) && (viewMode !== 'videos' || (config.videos.some(v => v.id === video.id) && !config.channels.some(c => c.id === video.authorId || (lists[c.id] || []).some(v => v.id === video.id)))) && (!channelFilter || selected || video.authorId === channelFilter || (lists[channelFilter] || []).some(v => v.id === video.id)) && matchesSearch(video.title + ' ' + (video.author || '') + ' ' + (videoChannels.get(video.id) || '')));
+    (!channelVideos || channelVideos.has(video.id)) && (viewMode !== 'videos' || (manualIds.has(video.id) && !approvedChannelIds.has(video.authorId) && !videoChannels.has(video.id))) && (!channelFilter || selected || video.authorId === channelFilter || (lists[channelFilter] || []).some(v => v.id === video.id)) && matchesSearch(video.title + ' ' + (video.author || '') + ' ' + (videoChannels.get(video.id) || '')));
   if (!isChannels && sortMode === 'newest') items.sort((a,b) => b.published-a.published || a.title.localeCompare(b.title,'he'));
   if (!isChannels && sortMode === 'name') items.sort((a,b) => a.title.localeCompare(b.title,'he'));
   ui.filters.hidden = isChannels;
@@ -219,9 +221,17 @@ function render(config, lists) {
   ui.grid.setAttribute('aria-label', isChannels ? 'הערוצים המאושרים' : 'הסרטונים המאושרים');
   const fragment = document.createDocumentFragment();
   for (const item of items.slice(0, visibleCount)) {
-    const key = (isChannels ? 'channel:' : 'video:') + item.id + ':' + JSON.stringify(isChannels ? [item.name,item.thumbnail,(lists[item.id] || []).length] : [item.title,item.author]);
+    const key = (isChannels ? 'channel:' : 'video:') + item.id + ':' + (isChannels ? JSON.stringify([item.name,item.thumbnail,(lists[item.id] || []).length]) : '');
     const cachedCard = cardCache.get(key);
-    if (cachedCard) {fragment.append(cachedCard);continue;}
+    if (cachedCard) {
+      if (!isChannels) {
+        cachedCard.setAttribute('aria-label','צפייה: '+item.title);
+        const thumb=cachedCard.children[0], title=cachedCard.children[1]; title.textContent=item.title;
+        const author=cachedCard.children[2] || document.createElement('span');author.className='card-author';author.dir='auto';author.textContent=item.author;
+        cachedCard.replaceChildren(...(item.author ? [thumb,title,author] : [thumb,title]));
+      }
+      fragment.append(cachedCard);continue;
+    }
     const card = document.createElement('button');
     cardCache.set(key,card);
     while (cardCache.size > 240) cardCache.delete(cardCache.keys().next().value);
@@ -648,7 +658,8 @@ async function tryCompatiblePlayer(session,base,sequence) {
   playerMessage('מחפש מקור חלופי...',true);
   // Metadata validates this exact ID before the bounded compatibility embed.
   // iframe load itself is not evidence of playback, and is never logged as such.
-  const data=await providers.fetchFromProvider(base,'/api/v1/videos/'+session.video.id,{signal:session.controller.signal,validate:d=>validVideoMetadata(d,session.video.id),timeoutMs:Math.min(SETTINGS.requestTimeoutMs,Math.max(1,session.deadline-Date.now()))});
+  const cached=providers.getCachedData('/api/v1/videos/'+session.video.id,d=>validVideoMetadata(d,session.video.id));
+  const data=providers.getDataProvider(cached)===base ? cached : await providers.fetchFromProvider(base,'/api/v1/videos/'+session.video.id,{signal:session.controller.signal,validate:d=>validVideoMetadata(d,session.video.id),timeoutMs:Math.min(SETTINGS.requestTimeoutMs,Math.max(1,session.deadline-Date.now()))});
   if (!current()) return;
   if (!getApprovedVideos().has(session.video.id) && !getApprovedChannels().has(data.authorId)) throw new KidsProviders.AppError('VIDEO_UNAVAILABLE');
   stopMedia();

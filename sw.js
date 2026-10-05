@@ -1,8 +1,8 @@
 'use strict';
 const CACHE_PREFIX = 'kids-youtube-shell:' + self.registration.scope + ':';
-const SHELL_CACHE = CACHE_PREFIX + 'v4';
+const SHELL_CACHE = CACHE_PREFIX + 'v5';
 const IMAGE_CACHE = 'kids-youtube-images:' + self.registration.scope + ':v1';
-const SHELL_FILES = ['./index.html','./app.js','./providers.js','./manifest.json','./icons/icon-192.png','./icons/icon-512.png'];
+const SHELL_FILES = ['./index.html','./app.js?v=20261006b','./providers.js?v=20261006b','./manifest.json','./icons/icon-192.png','./icons/icon-512.png'];
 const SCOPE_URL = new URL(self.registration.scope);
 const SHELL_URLS = new Set(SHELL_FILES.map(path => new URL(path,SCOPE_URL).href));
 const IMAGE_TTL = 7*24*60*60*1000;
@@ -21,7 +21,7 @@ self.addEventListener('activate',event => {
 });
 async function networkFirst(request,cacheKey) {
   try {
-    const response=await fetch(request);
+    const response=await fetch(request,{cache:'no-store'});
     if (!response.ok) throw new Error('SHELL_UNAVAILABLE');
     if (response.type==='basic') {try {const cache=await caches.open(SHELL_CACHE);await cache.put(cacheKey,response.clone());} catch (_) {}}
     return response;

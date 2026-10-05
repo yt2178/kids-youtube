@@ -41,6 +41,7 @@
     const healthKey = 'kidsYoutubeHealth:' + scope;
     const dataKey = 'kidsYoutubeData:' + scope;
     const networkData = new WeakSet();
+    const dataProviders = new WeakMap();
     const inflight = new Map(), resourceFailures = new Map(), diagnostics = [];
     const load = key => {try {return JSON.parse(storage.getItem(key)) || {};} catch (_) {return {};}};
     const save = (key,value) => {try {storage.setItem(key,JSON.stringify(value));} catch (_) { /* Optional cache. */ }};
@@ -103,7 +104,7 @@
       try {
         const data=await fetchJSON(fetcher,base+path,{timeout:timeoutMs,signal});
         if (!validate(data)) throw new AppError('INVALID_RESPONSE');
-        if (data && typeof data === 'object') networkData.add(data);
+        if (data && typeof data === 'object') {networkData.add(data);dataProviders.set(data,base);}
         updateProviderHealth(base,'api',true,clock()-started);
         save('kidsYoutubeLastInstance',{scope,url:base});
         record({kind:'api',provider:base,path,outcome:'success',ms:clock()-started});
@@ -150,7 +151,7 @@
       const base=candidates[0];
       try {await fetchFromProvider(base,'/api/v1/stats',{validate:data=>!!data && !!data.software});} catch (_) { /* Captured in diagnostics. */ }
     }
-    return {isNetworkData:data=>!!data && typeof data==='object' && networkData.has(data),request,fetchFromProvider,getHealthyProviders,getCachedData,setCachedData,updateProviderHealth,healthCheck,clearCache,resetHealth,markResourceFailure,clearResourceFailures,record,snapshot:()=>({health:JSON.parse(JSON.stringify(states)),requests:diagnostics.slice(),cacheEntries:cache.size,inflight:inflight.size})};
+    return {getDataProvider:data=>data && typeof data==='object' ? dataProviders.get(data) : null,isNetworkData:data=>!!data && typeof data==='object' && networkData.has(data),request,fetchFromProvider,getHealthyProviders,getCachedData,setCachedData,updateProviderHealth,healthCheck,clearCache,resetHealth,markResourceFailure,clearResourceFailures,record,snapshot:()=>({health:JSON.parse(JSON.stringify(states)),requests:diagnostics.slice(),cacheEntries:cache.size,inflight:inflight.size})};
   }
   return {AppError,classifyError,httpError,fetchJSON,createManager};
 });
