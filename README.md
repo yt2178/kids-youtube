@@ -15,7 +15,8 @@ kids-youtube/
 │   └── icon-512.png
 ├── README.md
 ├── tests/
-│   └── app.test.cjs
+│   ├── app.test.cjs
+│   └── fixtures/example-list.txt
 └── .github/workflows/
     └── pages.yml
 ```
@@ -130,6 +131,8 @@ autoplay=1&related_videos=false&continue=0&comments=false&iv_load_policy=3
 ```bash
 node --test tests/app.test.cjs
 ```
+
+הדוגמאות לבדיקות נמצאות ב־`tests/fixtures/example-list.txt`, בנפרד מרשימת ההורה. אפשר לערוך את `videos.txt` ולהוסיף אישורים בלי לשנות את הבדיקות.
 
 **47 מתוך 47 בדיקות עברו.** הבדיקות מריצות את JavaScript האמיתי מה־HTML בתוך DOM מדומה, עם תשובות API ומטמון מבוקרים. הן מכסות:
 

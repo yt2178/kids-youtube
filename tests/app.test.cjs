@@ -62,7 +62,7 @@ test('inline JS and service worker parse, no external scripts/frameworks',()=>{
   assert.doesNotMatch(html,/\/kids-youtube\/sw\.js/);
 });
 test('sample placeholders do not approve actual content',async()=>{
-  const a=await app(fs.readFileSync(path.join(root,'videos.txt'),'utf8'));
+  const a=await app(fs.readFileSync(path.join(__dirname,'fixtures','example-list.txt'),'utf8'));
   assert.equal(a.run('displayed.size'),0);assert.equal(a.calls.length,1);assert.equal(a.elements.empty.hidden,false);
 });
 test('manual whitelist, invalid IDs, duplicate IDs and literal titles',async()=>{
