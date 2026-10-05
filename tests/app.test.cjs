@@ -574,3 +574,12 @@ test('expired compatibility budget terminates in friendly error rather than a st
   const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));
   await a.run('playback.deadline=Date.now()-1;tryCompatiblePlayer(playback,INVIDIOUS_INSTANCES[0],playerSequence)');assert.equal(a.elements['player-error'].hidden,false);assert.equal(media(a),undefined);a.run('closePlayer()');
 });
+
+test('global channel filter does not hide manual approvals or block pagination inside another channel',async()=>{
+  const a=await app({videos:[{id:id(9),title:'ידני'}],channels:[{id:A},{id:B}]},url=>{
+    const channel=url.includes(A)?A:B;return json({videos:[row(new URL(url).searchParams.has('continuation')?3:channel===A?1:2,channel)],continuation:new URL(url).searchParams.has('continuation')?null:'next'});
+  });
+  a.run(`channelFilter='${A}';switchBrowse('videos')`);assert.deepEqual(visibleVideoIds(a),[id(9)]);
+  a.run(`switchBrowse('channels','${B}')`);assert.equal(a.elements['channel-filter'].value,B);assert.equal(a.elements.more.hidden,false);
+  const before=a.calls.length;await a.run('loadMoreVideos()');assert.equal(a.calls.length,before+1);assert.deepEqual(visibleVideoIds(a),[id(2),id(3)]);
+});

@@ -207,7 +207,7 @@ function render(config, lists) {
   // approval wins deduplication and does not carry a channelId itself.
   const channelVideos = selected ? new Set(cleanChannelVideos(lists[selected.id], selected).map(video => video.id)) : null;
   let items = isChannels ? config.channels.filter(channel => matchesSearch(channel.name)) : [...displayed.values()].filter(video =>
-    (!channelVideos || channelVideos.has(video.id)) && (viewMode !== 'videos' || (manualIds.has(video.id) && !approvedChannelIds.has(video.authorId) && !videoChannels.has(video.id))) && (!channelFilter || selected || video.authorId === channelFilter || (lists[channelFilter] || []).some(v => v.id === video.id)) && matchesSearch(video.title + ' ' + (video.author || '') + ' ' + (videoChannels.get(video.id) || '')));
+    (!channelVideos || channelVideos.has(video.id)) && (viewMode !== 'videos' || (manualIds.has(video.id) && !approvedChannelIds.has(video.authorId) && !videoChannels.has(video.id))) && (viewMode === 'videos' || !channelFilter || selected || video.authorId === channelFilter || (lists[channelFilter] || []).some(v => v.id === video.id)) && matchesSearch(video.title + ' ' + (video.author || '') + ' ' + (videoChannels.get(video.id) || '')));
   if (!isChannels && sortMode === 'newest') items.sort((a,b) => b.published-a.published || a.title.localeCompare(b.title,'he'));
   if (!isChannels && sortMode === 'name') items.sort((a,b) => a.title.localeCompare(b.title,'he'));
   ui.filters.hidden = isChannels;
@@ -215,7 +215,7 @@ function render(config, lists) {
   const allOption = document.createElement('option'); allOption.value = ''; allOption.textContent = 'כל הערוצים'; options.append(allOption);
   for (const c of config.channels) { const option = document.createElement('option'); option.value = c.id; option.textContent = c.name; options.append(option); }
   if (!config.channels.some(c => c.id === channelFilter)) channelFilter = '';
-  ui['channel-filter'].replaceChildren(options); ui['channel-filter'].value = channelFilter; ui['channel-filter'].disabled = !!selected;
+  ui['channel-filter'].replaceChildren(options); ui['channel-filter'].value = viewMode==='videos' ? '' : selected ? selected.id : channelFilter; ui['channel-filter'].disabled = !!selected || viewMode==='videos';
   ui['all-tab'].setAttribute('aria-pressed', String(viewMode === 'all'));
   ui['videos-tab'].setAttribute('aria-pressed', String(viewMode === 'videos'));
   ui['channels-tab'].setAttribute('aria-pressed', String(viewMode === 'channels'));
@@ -280,7 +280,7 @@ function render(config, lists) {
   }
   ui.grid.replaceChildren(fragment);
   ui.count.textContent = items.length ? items.length.toLocaleString('he-IL') + (isChannels ? ' ערוצים לבחירה' : ' סרטונים לבחירה') : '';
-  const hasMorePages = !isChannels && config.channels.some(c => (!selected || c.id === selected.id) && (!channelFilter || c.id === channelFilter) && channelProgress.get(c.id)?.continuation) && viewMode !== 'videos';
+  const hasMorePages = !isChannels && config.channels.some(c => (!selected || c.id === selected.id) && (selectedChannelId || !channelFilter || c.id === channelFilter) && channelProgress.get(c.id)?.continuation) && viewMode !== 'videos';
   ui.more.hidden = items.length <= visibleCount && !hasMorePages; ui.more.disabled = paginationBusy;
   ui.more.textContent = isChannels ? 'עוד ערוצים' : 'עוד סרטונים';
   ui.empty.hidden = items.length > 0 || loading;
@@ -456,7 +456,7 @@ async function loadMoreVideos() {
   if (loading || paginationBusy || playback) return;
   paginationBusy = true; visibleCount += SETTINGS.cardsPerPage;
   render(activeConfig,activeLists);
-  const relevant = activeConfig.channels.filter(c => (!selectedChannelId || c.id === selectedChannelId) && (!channelFilter || c.id === channelFilter) && channelProgress.get(c.id)?.continuation);
+  const relevant = activeConfig.channels.filter(c => (viewMode==='all' || !!selectedChannelId) && (!selectedChannelId || c.id === selectedChannelId) && (selectedChannelId || !channelFilter || c.id === channelFilter) && channelProgress.get(c.id)?.continuation);
   try {
     await Promise.all([loadVisibleMetadata(),parallelMap(relevant, async channel => {
       const result = await loadChannel(channel,1);
