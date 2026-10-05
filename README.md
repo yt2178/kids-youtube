@@ -130,7 +130,7 @@ autoplay=1&related_videos=false&continue=0&comments=false&iv_load_policy=3
 node --test tests/app.test.cjs
 ```
 
-**30 מתוך 30 בדיקות עברו.** הבדיקות מריצות את JavaScript האמיתי מה־HTML בתוך DOM מדומה, עם תשובות API ומטמון מבוקרים. הן מכסות:
+**31 מתוך 31 בדיקות עברו.** הבדיקות מריצות את JavaScript האמיתי מה־HTML בתוך DOM מדומה, עם תשובות API ומטמון מבוקרים. הן מכסות:
 
 - syntax, קובץ הדוגמאות והכנסה בטוחה של כותרות כטקסט.
 - אישור ידני וערוצים, דילוג על מזהים לא תקינים ומחיקה מהמטמון.
@@ -138,6 +138,7 @@ node --test tests/app.test.cjs
 - deduplication, טעינה במקביל, API לא תקין ו־authorId שאינו מתאים לערוץ.
 - fallback בין מופעים, ערוץ שנכשל בלי לעצור אחר ועמודים שהתקבלו חלקית.
 - localStorage fallback, עבודה ללא localStorage והפרדת נתיבי repositories.
+- כפתור ״עוד סרטונים״ משתמש תמיד באישורים שבזיכרון; כשל כתיבה למטמון אינו מחזיר אישורים שבוטלו.
 - נגן fullscreen כ־overlay, params, sandbox, סגירה וביטול בקשות.
 - נתיבי manifest, מידות PNG, רישום Service Worker, install/activate ו־offline shell.
 - נוכחות כללי RTL, grid לטאבלט, tap targets והפחתת תנועה.

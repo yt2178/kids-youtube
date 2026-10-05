@@ -143,6 +143,8 @@
     const $ = id => document.getElementById(id);
     const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','video-frame','player-spinner','player-message','next-player','player-error','retry-video','install'].map(id => [id, $(id)]));
     let displayed = new Map();
+    let activeConfig = {videos:[], channels:[]};
+    let activeLists = Object.create(null);
     let visibleCount = SETTINGS.cardsPerPage;
     let loading = false;
     let lastLoad = 0;
@@ -212,6 +214,8 @@
       ui.spinner.hidden = !busy;
     }
     function render(config, lists) {
+      activeConfig = config;
+      activeLists = lists;
       const focusId = document.activeElement && document.activeElement.dataset.videoId;
       displayed = mergeVideos(config, lists);
       const fragment = document.createDocumentFragment();
@@ -364,6 +368,7 @@
         if (!cacheSaved) messages.push('לא הצלחנו לשמור את הרשימה במכשיר. הצפייה עדיין זמינה עם חיבור לאינטרנט.');
         status(messages.join(' '));
       } catch (_) {
+        activeConfig = {videos:[], channels:[]}; activeLists = Object.create(null);
         displayed = new Map(); ui.grid.replaceChildren(); ui.count.textContent = ''; ui.more.hidden = true;
         if (invalidConfig) {
           // Replace the local snapshot with an empty whitelist on a malformed current file.
@@ -450,12 +455,9 @@
     ui.refresh.addEventListener('click', loadApp);
     ui.more.addEventListener('click', () => {
       visibleCount += SETTINGS.cardsPerPage;
-      const snapshot = readSnapshot();
-      if (snapshot) render(snapshot.config, snapshot.channelLists);
-      else {
-        // Storage may be disabled: render the in-memory approved list instead.
-        render({videos:[...displayed.values()], channels:[]}, {});
-      }
+      // Always use the freshly approved in-memory list. A full/blocked storage
+      // write must never let this button resurrect an older whitelist.
+      render(activeConfig, activeLists);
     });
     ui.back.addEventListener('click', () => closePlayer());
     window.addEventListener('popstate', () => closePlayer(true));

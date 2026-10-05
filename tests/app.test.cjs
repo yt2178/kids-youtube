@@ -157,6 +157,14 @@ test('channel fetching is parallel with a concurrency ceiling of three',async()=
   });
   assert.equal(peak,3);assert.equal(a.calls.length,6);
 });
+test('more cards never revive revoked approvals when cache writes fail',async()=>{
+  const store=new Map();
+  await app({videos:[{id:id(99)}],channels:[]},undefined,store);
+  const a=await app({videos:Array.from({length:61},(_,n)=>({id:id(n)})),channels:[]},undefined,store,{noStorage:true});
+  a.elements.more.listeners.click[0]();
+  assert.equal(a.elements.grid.children.length,61);
+  assert.equal(a.run(`displayed.has('${id(99)}')`),false);
+});
 test('player enforces approved IDs and the required URL parameters',async()=>{
   const a=await app({videos:[{id:id(1),title:'סרטון שלנו'}],channels:[]},()=>json({videoId:id(1)}));
   a.run(`openPlayer('${id(9)}')`);assert.equal(a.elements.player.hidden,true);
