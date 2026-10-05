@@ -40,7 +40,7 @@ jobs:
       - name: Package the six static app files (no build)
         run: |
           mkdir -p _site/icons
-          cp index.html manifest.json sw.js videos.json _site/
+          cp index.html manifest.json sw.js videos.txt _site/
           cp icons/icon-192.png icons/icon-512.png _site/icons/
       - uses: actions/upload-pages-artifact@v3
         with:

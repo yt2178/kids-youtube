@@ -2,7 +2,7 @@
 
 // Scoped cache names avoid deleting another PWA's caches on the same GitHub origin.
 const CACHE_PREFIX = 'kids-youtube-shell:' + self.registration.scope + ':';
-const SHELL_CACHE = CACHE_PREFIX + 'v1';
+const SHELL_CACHE = CACHE_PREFIX + 'v2';
 const SHELL_FILES = ['./index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 const SCOPE_URL = new URL(self.registration.scope);
 const SHELL_URLS = new Set(SHELL_FILES.map(path => new URL(path, SCOPE_URL).href));
@@ -47,7 +47,7 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET' || url.origin !== SCOPE_URL.origin) return;
   // Never cache/intercept the whitelist, API calls, streams, or embeds.
   // index.html handles last-known whitelist data in localStorage explicitly.
-  if (url.pathname === new URL('./videos.json', SCOPE_URL).pathname) return;
+  if (url.pathname === new URL('./videos.txt', SCOPE_URL).pathname) return;
   if (request.mode === 'navigate' && (url.pathname === SCOPE_URL.pathname || url.pathname === new URL('./index.html', SCOPE_URL).pathname)) {
     event.respondWith(networkFirst(request, new URL('./index.html', SCOPE_URL).href));
   } else if (SHELL_URLS.has(url.href)) {

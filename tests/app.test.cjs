@@ -12,7 +12,7 @@ const A = 'UC' + 'A'.repeat(22), B = 'UC' + 'B'.repeat(22);
 const id = n => 'vid' + String(n).padStart(8,'0');
 const row = (n,channel=A) => ({videoId:id(n),title:'סרטון '+n,authorId:channel});
 const empty = {videos:[],channels:[]};
-const json = data => ({ok:true,json:async()=>data});
+const json = data => ({ok:true,json:async()=>data,text:async()=>typeof data === 'string' ? data : JSON.stringify(data)});
 const fail = () => { throw new Error('Unavailable'); };
 async function until(check) {
   for(let i=0;i<200;i++) { if(check()) return; await new Promise(r=>setTimeout(r,2)); }
@@ -45,7 +45,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   const context=vm.createContext({URL,AbortController,setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
     navigator:{},location:{href:options.href||'https://example.test/kids-youtube/'},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
-    fetch:async(url,opts)=>{calls.push({url:String(url),opts});if(String(url)==='./videos.json')return options.offline?fail():json(config);return api(String(url),opts);},
+    fetch:async(url,opts)=>{calls.push({url:String(url),opts});if(String(url)==='./videos.txt')return options.offline?fail():json(config);return api(String(url),opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn)});
   context.window=context;
   vm.runInContext(scripts[0],context,{filename:'service-worker-registration.js'});
@@ -62,7 +62,7 @@ test('inline JS and service worker parse, no external scripts/frameworks',()=>{
   assert.doesNotMatch(html,/\/kids-youtube\/sw\.js/);
 });
 test('sample placeholders do not approve actual content',async()=>{
-  const a=await app(JSON.parse(fs.readFileSync(path.join(root,'videos.json'),'utf8')));
+  const a=await app(fs.readFileSync(path.join(root,'videos.txt'),'utf8'));
   assert.equal(a.run('displayed.size'),0);assert.equal(a.calls.length,1);assert.equal(a.elements.empty.hidden,false);
 });
 test('manual whitelist, invalid IDs, duplicate IDs and literal titles',async()=>{
@@ -223,7 +223,7 @@ test('service worker installs shell, activates, excludes whitelist and cross-ori
   vm.runInContext(fs.readFileSync(path.join(root,'sw.js'),'utf8'),context);
   let work;handlers.install({waitUntil:p=>work=p});await work;assert.equal(skip,1);assert.equal(cached.size,4);
   handlers.activate({waitUntil:p=>work=p});await work;assert.equal(claim,1);assert.equal(deleted.length,1);assert.match(deleted[0],/old$/);
-  for(const url of [scope+'videos.json','https://invidious.example/api/v1/videos/abc']){
+  for(const url of [scope+'videos.txt','https://invidious.example/api/v1/videos/abc']){
     let intercepted=false;handlers.fetch({request:{url,method:'GET',mode:'cors'},respondWith:()=>intercepted=true});assert.equal(intercepted,false);
   }
   let response;handlers.fetch({request:{url:scope,method:'GET',mode:'navigate'},respondWith:p=>response=p});assert.ok(await response);
@@ -231,4 +231,107 @@ test('service worker installs shell, activates, excludes whitelist and cross-ori
 test('tablet grid, tap targets and reduced-motion styles are provided',()=>{
   assert.match(html,/minmax\(min\(100%,260px\),1fr\)/);assert.match(html,/min-width:700px/);
   assert.match(html,/min-height:58px/);assert.match(html,/prefers-reduced-motion:reduce/);
+});
+
+const link = n => 'https://youtu.be/' + id(n);
+const channelLink = channel => 'https://www.youtube.com/channel/' + channel;
+function metadataApi(url) {
+  const parsed=new URL(url),p=parsed.pathname;
+  if(p==='/api/v1/resolveurl')return json({ucid:A,pageType:'CHANNEL'});
+  if(p.endsWith('/videos') && p.includes('/channels/'))return json({videos:[{...row(1),author:'שם ערוץ מהשרת'},row(2)],continuation:null});
+  if(p.includes('/api/v1/channels/'))return json({authorId:p.split('/').pop(),author:'שם הערוץ האוטומטי'});
+  if(p.includes('/api/v1/videos/'))return json({videoId:p.split('/').pop(),title:'שם הסרטון האוטומטי',author:'יוצר הסרטון'});
+  return fail();
+}
+test('plain list ignores // comments, blank lines and BOM/CRLF without breaking https://',async()=>{
+  const a=await app('\uFEFF// הערה\r\n\r\n'+link(1)+' // השיר שלנו\r\n  // עוד הערה\r\n'+channelLink(A),metadataApi);
+  assert.equal(a.run('activeConfig.videos.length'),1);assert.equal(a.run('activeConfig.channels.length'),1);
+  assert.equal(a.run('displayed.size'),2);assert.equal(a.calls[0].url,'./videos.txt');assert.equal(a.calls[0].opts.cache,'no-store');
+  assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם הסרטון האוטומטי');
+  assert.equal(a.elements.grid.children[0].children[2].textContent,'יוצר הסרטון');
+  assert.equal(a.run('activeConfig.channels[0].name'),'שם הערוץ האוטומטי');
+});
+test('video share, watch, Shorts, live, embed and music URLs canonicalize and deduplicate',async()=>{
+  const urls=[link(1)+'?si=test',`https://www.youtube.com/watch?v=${id(1)}&t=5`,`https://m.youtube.com/shorts/${id(1)}`,`https://youtube.com/live/${id(1)}`,`https://www.youtube.com/embed/${id(1)}`,`music.youtube.com/watch?v=${id(1)}`];
+  const a=await app(urls.join('\n'),metadataApi);
+  assert.equal(a.run('displayed.size'),1);assert.equal(a.calls.length,2);
+  assert.equal(Object.keys(JSON.parse(a.store.get('kidsYoutubeVideos')).linkRecords).length,1);
+});
+test('channel UC, handle, legacy custom and user URLs automatically resolve channel IDs',async()=>{
+  for(const url of [channelLink(A)+'/videos?view=0','https://youtube.com/@Example/shorts?si=x','https://www.youtube.com/c/Example/featured','https://m.youtube.com/user/Example/about','https://www.youtube.com/@%D7%93%D7%95%D7%92%D7%9E%D7%94']) {
+    const a=await app(url,metadataApi);
+    assert.equal(a.run('activeConfig.channels[0].id'),A);assert.equal(a.run('displayed.size'),2);
+    const resolve=a.calls.find(c=>c.url.includes('/resolveurl?'));
+    if(!url.includes('/channel/')) {assert.ok(resolve);assert.match(new URL(resolve.url).searchParams.get('url'),/^https:\/\/www.youtube.com\//);}
+    else assert.equal(resolve,undefined);
+  }
+});
+test('invalid hosts, IDs, credentials, paths and unsupported playlists are ignored',async()=>{
+  const urls=['https://evil.example/watch?v='+id(1),'https://youtube.com.evil.example/@Example','https://u:p@youtube.com/@Example','https://youtube.com/playlist?list=PLx','https://youtu.be/'+id(1)+'/extra','https://youtube.com/watch?v='+id(1)+'&v='+id(2),'https://youtube.com/@','https://youtube.com/@Example%2Fextra','https://youtube.com/@Example%5Cextra','javascript:alert(1)','https://youtube.com/@Example/unknown','https://youtube.com/watch?v=short'];
+  const a=await app(urls.join('\n'),metadataApi);
+  assert.equal(a.run('displayed.size'),0);assert.equal(a.calls.length,1);assert.match(a.elements['status-text'].textContent,/זקוקים לבדיקה/);
+});
+test('mixed valid and invalid links retain only valid approvals',async()=>{
+  const a=await app('this is not a URL\n'+link(1)+' // תקין\nhttps://evil.example',metadataApi);
+  assert.equal(a.run('displayed.size'),1);assert.equal(a.run('activeConfig.channels.length'),0);
+});
+test('metadata fallback retries another instance and saves its successful name',async()=>{
+  const a=await app(link(1),url=>url.includes('nerdvpn')?fail():metadataApi(url));
+  assert.equal(a.calls.length,3);assert.equal(a.run('activeConfig.videos[0].title'),'שם הסרטון האוטומטי');
+  assert.match(a.store.get('kidsYoutubeLastInstance'),/tiekoetter/);
+});
+test('mismatched video metadata is rejected before accepting the next instance',async()=>{
+  const a=await app(link(1),url=>url.includes('nerdvpn')?json({videoId:id(2),title:'wrong'}):metadataApi(url));
+  assert.equal(a.calls.length,3);assert.equal(a.run('activeConfig.videos[0].title'),'שם הסרטון האוטומטי');
+});
+test('failed channel resolution does not remove direct approved videos',async()=>{
+  const a=await app(link(1)+'\nhttps://youtube.com/@Unreachable',url=>url.includes('/api/v1/videos/')?metadataApi(url):fail());
+  assert.equal(a.run('displayed.size'),1);assert.equal(a.run('activeConfig.channels.length'),0);
+});
+test('resolveurl may use browseId and must return a real channel ID',async()=>{
+  const a=await app('https://youtube.com/@Example',url=>url.includes('/resolveurl?')?json({browseId:A}):metadataApi(url));
+  assert.equal(a.run('activeConfig.channels[0].id'),A);
+  const b=await app('https://youtube.com/@Example',()=>json({videoId:id(1),browseId:id(1)}));
+  assert.equal(b.run('displayed.size'),0);assert.equal(b.calls.length,5);
+});
+test('cached alias, video title and channel videos survive all instance failures',async()=>{
+  const store=new Map(),list=link(1)+'\nhttps://youtube.com/@Example';
+  await app(list,metadataApi,store);
+  const a=await app(list,fail,store);
+  assert.equal(a.run('displayed.size'),2);assert.equal(a.run('activeConfig.channels[0].name'),'שם הערוץ האוטומטי');
+  assert.equal(a.run('activeConfig.videos[0].title'),'שם הסרטון האוטומטי');
+});
+test('removed alias and manual link never reappear from cache during outages',async()=>{
+  const store=new Map();await app(link(1)+'\nhttps://youtube.com/@Example',metadataApi,store);
+  const a=await app('// הוסרו\n'+link(3),fail,store);
+  assert.equal(a.run('displayed.size'),1);assert.equal(a.run('activeConfig.channels.length'),0);
+  const saved=JSON.parse(store.get('kidsYoutubeVideos'));
+  assert.deepEqual(Object.keys(saved.channelLists),[]);assert.deepEqual(Object.keys(saved.linkRecords),['https://www.youtube.com/watch?v='+id(3)]);
+  const b=await app('',fail,store,{offline:true});assert.equal(b.run('displayed.size'),1);
+});
+test('comments-only list intentionally clears every approval and cached source',async()=>{
+  const store=new Map();await app(link(1)+'\nhttps://youtube.com/@Example',metadataApi,store);
+  const a=await app('// אין כרגע אישורים\n\n',fail,store);
+  assert.equal(a.run('displayed.size'),0);assert.equal(a.calls.length,1);
+  assert.deepEqual(JSON.parse(store.get('kidsYoutubeVideos')).linkRecords,{});
+});
+test('alias resolving to a different channel prunes old channel cached videos',async()=>{
+  const store=new Map(),list='https://youtube.com/@Example';await app(list,metadataApi,store);
+  const a=await app(list,url=>url.includes('/resolveurl?')?json({ucid:B}):url.endsWith('/'+B)?json({authorId:B,author:'ערוץ חדש'}):fail(),store);
+  assert.equal(a.run('activeConfig.channels[0].id'),B);assert.equal(a.run('displayed.size'),0);
+  assert.deepEqual(Object.keys(JSON.parse(store.get('kidsYoutubeVideos')).channelLists),[B]);
+});
+test('plain channel list paginates and deduplicates automatically with manual video precedence',async()=>{
+  const a=await app(link(1)+'\n'+channelLink(A),url=>url.includes('/channels/')&&new URL(url).pathname.endsWith('/videos')?json(new URL(url).searchParams.has('continuation')?{videos:[row(2),row(3)],continuation:null}:{videos:[row(1),row(2)],continuation:'page2'}):metadataApi(url));
+  assert.equal(a.run('displayed.size'),3);assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם הסרטון האוטומטי');
+  assert.ok(a.calls.some(c=>new URL(c.url,'https://example.test/').searchParams.get('continuation')==='page2'));
+});
+test('automatic names are inserted as text, including the channel author',async()=>{
+  const a=await app(link(1),()=>json({videoId:id(1),title:'<script>x</script>',author:'<img onerror=x>'}));
+  assert.equal(a.elements.grid.children[0].children[1].textContent,'<script>x</script>');
+  assert.equal(a.elements.grid.children[0].children[2].textContent,'<img onerror=x>');
+});
+test('plain links remain usable with unavailable localStorage',async()=>{
+  const a=await app(link(1),metadataApi,new Map(),{noStorage:true});
+  assert.equal(a.run('displayed.size'),1);assert.match(a.elements['status-text'].textContent,/לא הצלחנו לשמור/);
 });
