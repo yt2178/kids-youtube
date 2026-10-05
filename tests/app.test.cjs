@@ -8,6 +8,8 @@ const vm = require('node:vm');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root,'index.html'),'utf8');
 const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]);
+scripts.push(fs.readFileSync(path.join(root,'app.js'),'utf8'));
+const providerScript=fs.readFileSync(path.join(root,'providers.js'),'utf8');
 const A = 'UC' + 'A'.repeat(22), B = 'UC' + 'B'.repeat(22);
 const id = n => 'vid' + String(n).padStart(8,'0');
 const row = (n,channel=A) => ({videoId:id(n),title:'סרטון '+n,authorId:channel});
@@ -23,7 +25,11 @@ class Element {
   append(...nodes) { this.children.push(...nodes.flatMap(n=>n.fragment?n.children:[n])); }
   replaceChildren(...nodes) { this.children=[];this.append(...nodes); }
   setAttribute(k,v) { this.attributes[k]=String(v); }
-  removeAttribute(k) { delete this.attributes[k]; }
+  removeAttribute(k) { delete this.attributes[k]; if(k==='src')this.src=''; }
+  pause() {this.paused=true;}
+  load() {}
+  play() {this.paused=false;return Promise.resolve();}
+  closest() {return null;}
   getAttribute(k) { return this.attributes[k]??null; }
   addEventListener(k,fn) { (this.listeners[k]??=[]).push(fn); }
   blur() { this.doc.activeElement=null; }
@@ -43,22 +49,23 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   }
   const listeners={};
   const history={state:null,pushState(state){this.state=state;},replaceState(state){this.state=state;},back(){this.state=null;}};
-  const context=vm.createContext({URL,AbortController,setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
+  const context=vm.createContext({URL,AbortController,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
     navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/'},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});if(String(url)==='./videos.txt')return options.offline?fail():json(config);return api(String(url),opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn)});
   context.window=context;
   vm.runInContext(scripts[0],context,{filename:'service-worker-registration.js'});
+  vm.runInContext(providerScript,context,{filename:'providers.js'});
   vm.runInContext(scripts[1],context,{filename:'index-inline.js'});
   await until(()=>!vm.runInContext('loading',context));
   return {context,elements,calls,store,document,listeners,run:code=>vm.runInContext(code,context)};
 }
 const plain = obj => JSON.parse(JSON.stringify(obj));
 
-test('inline JS and service worker parse, no external scripts/frameworks',()=>{
+test('local JS and service worker parse, no third-party scripts/frameworks',()=>{
   scripts.forEach(s=>new vm.Script(s));new vm.Script(fs.readFileSync(path.join(root,'sw.js'),'utf8'));
-  assert.equal(scripts.length,2);assert.doesNotMatch(html,/<script[^>]+src=/);
+  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js','./app.js']);new vm.Script(providerScript);
   assert.match(html,/<html lang="he" dir="rtl">/);assert.match(html,/href="\.\/manifest.json"/);
   assert.doesNotMatch(html,/\/kids-youtube\/sw\.js/);
 });
@@ -73,6 +80,7 @@ test('manual whitelist, invalid IDs, duplicate IDs and literal titles',async()=>
 });
 test('object API response, continuation encoding and manual/channel deduplication',async()=>{
   const a=await app({videos:[{id:id(1),title:'הכותרת של ההורה'}],channels:[{id:A,name:'ערוץ'}]},url=>json(new URL(url).searchParams.has('continuation')?{videos:[row(2),row(3)],continuation:null}:{videos:[row(1),row(2)],continuation:'next+/?=&'}));
+  assert.equal(a.run('displayed.size'),2);await a.run('loadMoreVideos()');
   assert.equal(a.run('displayed.size'),3);assert.equal(a.run(`displayed.get('${id(1)}').title`),'הכותרת של ההורה');
   assert.equal(new URL(a.calls[2].url).searchParams.get('continuation'),'next+/?=&');
 });
@@ -82,15 +90,16 @@ test('maxVideos strictly limits output and stops additional page requests',async
 });
 test('repeated pagination token stops an infinite loop',async()=>{
   const a=await app({videos:[],channels:[{id:A}]},()=>json({videos:[row(1)],continuation:'same'}));
-  assert.equal(a.calls.length,3);assert.equal(a.run('displayed.size'),1);
+  await a.run('loadMoreVideos()');assert.equal(a.calls.length,3);assert.equal(a.run('displayed.size'),1);
 });
 test('safety limit stops after 100 pages',async()=>{
   let page=0;
   const a=await app({videos:[],channels:[{id:A}]},()=>json({videos:[row(++page)],continuation:String(page)}));
+  for(let i=0;i<110;i++)await a.run('loadMoreVideos()');
   assert.equal(page,100);assert.equal(a.run('displayed.size'),100);
 });
 test('channel instance fallback and last-working instance are persisted',async()=>{
-  const a=await app({videos:[],channels:[{id:A}]},url=>url.includes('nerdvpn')?fail():json({videos:[row(1)],continuation:null}));
+  const a=await app({videos:[],channels:[{id:A}]},url=>url.includes('invidious.f5')?fail():json({videos:[row(1)],continuation:null}));
   assert.equal(a.calls.length,3);assert.match(JSON.parse(a.store.get('kidsYoutubeLastInstance')).url,/tiekoetter/);
   assert.match(a.calls[2].url,/tiekoetter/);
 });
@@ -111,6 +120,7 @@ test('partial pages remain visible when later pages fail',async()=>{
 test('all instances failing preserve the previous approved channel list',async()=>{
   const config={videos:[{id:id(1)}],channels:[{id:A}]};const store=new Map();
   await app(config,()=>json({videos:[row(2)],continuation:null}),store);
+  for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
   const a=await app(config,fail,store);
   assert.equal(a.run('displayed.size'),2);assert.match(a.elements['status-text'].textContent,/השמורים/);
 });
@@ -135,6 +145,7 @@ test('new maxVideos also caps older cached data during an outage',async()=>{
 });
 test('successful empty channel response removes obsolete cached videos',async()=>{
   const store=new Map();await app({videos:[],channels:[{id:A}]},()=>json({videos:[row(1)],continuation:null}),store);
+  for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
   const a=await app({videos:[],channels:[{id:A}]},()=>json({videos:[],continuation:null}),store);assert.equal(a.run('displayed.size'),0);
 });
 test('invalid current whitelist fails closed rather than reviving old cache',async()=>{
@@ -166,31 +177,31 @@ test('more cards never revive revoked approvals when cache writes fail',async()=
   assert.equal(a.elements.grid.children.length,61);
   assert.equal(a.run(`displayed.has('${id(99)}')`),false);
 });
-test('player enforces approved IDs and the required URL parameters',async()=>{
-  const a=await app({videos:[{id:id(1),title:'סרטון שלנו'}],channels:[]},()=>json({videoId:id(1)}));
+function media(a) { return a.elements['media-host'].children[0]; }
+function emit(element,event) { for(const fn of element.listeners[event] || [])fn(); }
+test('player enforces approved IDs, native media, no iframe navigation, and stops before hide',async()=>{
+  const a=await app({videos:[{id:id(1),title:'סרטון שלנו'}],channels:[]});
   a.run(`openPlayer('${id(9)}')`);assert.equal(a.elements.player.hidden,true);
-  a.run(`openPlayer('${id(1)}')`);await until(()=>!!a.elements['video-frame'].src);
-  const url=new URL(a.elements['video-frame'].src);
-  assert.equal(url.pathname,'/embed/'+id(1));
-  for(const [k,v] of Object.entries({autoplay:'1',related_videos:'false',continue:'0',comments:'false',iv_load_policy:'3'}))assert.equal(url.searchParams.get(k),v);
-  assert.equal(a.elements.app.inert,true);assert.equal(a.elements.player.hidden,false);
-  const sandbox=a.elements['video-frame'].attributes.sandbox;assert.doesNotMatch(sandbox,/top-navigation|popups|forms/);
-  a.run('closePlayer()');assert.equal(a.elements['video-frame'].src,'');assert.equal(a.elements.player.hidden,true);assert.equal(a.elements.app.inert,false);
+  a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a)?.src);
+  const video=media(a),url=new URL(video.src);
+  assert.equal(url.pathname,'/latest_version');assert.equal(url.searchParams.get('id'),id(1));assert.equal(url.searchParams.get('local'),'true');assert.equal(url.searchParams.get('itag'),'18');
+  assert.equal(a.elements.app.inert,true);emit(video,'canplay');assert.equal(a.elements['player-message'].textContent,'');
+  a.run('closePlayer()');assert.equal(video.src,'');assert.equal(video.paused,true);assert.equal(a.elements.player.hidden,true);assert.equal(a.elements.app.inert,false);
+  assert.doesNotMatch(html,/<iframe|allowfullscreen|sandbox=/);
 });
-test('player metadata failure automatically advances to the next instance',async()=>{
-  const a=await app({videos:[{id:id(1)}],channels:[]},url=>url.includes('nerdvpn')?fail():json({videoId:id(1)}));
-  a.run(`openPlayer('${id(1)}')`);await until(()=>!!a.elements['video-frame'].src);
-  assert.match(a.elements['video-frame'].src,/tiekoetter/);a.run('closePlayer()');
+test('actual media errors automatically advance to the next instance',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});
+  a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a)?.src);const first=media(a);emit(first,'error');await until(()=>media(a)!==first);
+  assert.match(media(a).src,/tiekoetter/);emit(first,'canplay');assert.match(media(a).src,/tiekoetter/);a.run('closePlayer()');
 });
-test('all player attempts failing show a friendly retry state',async()=>{
-  const a=await app({videos:[{id:id(1)}],channels:[]},fail);
-  a.run(`openPlayer('${id(1)}')`);await until(()=>!a.elements['player-error'].hidden);
-  assert.equal(a.elements['video-frame'].src,'');assert.equal(a.elements['video-frame'].hidden,true);a.run('closePlayer()');
+test('all finite player attempts failing show a friendly retry state',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));
+  for(let i=0;i<3;i++){const v=media(a);emit(v,'error');await new Promise(r=>setTimeout(r,0));}
+  assert.equal(a.elements['player-error'].hidden,false);assert.equal(media(a),undefined);assert.match(a.elements['player-message'].textContent,/לא הצלחנו להפעיל/);a.run('closePlayer()');
 });
-test('closing during player preflight cancels request and never reopens frame',async()=>{
-  const a=await app({videos:[{id:id(1)}],channels:[]},(url,opts)=>new Promise((resolve,reject)=>opts.signal.addEventListener('abort',()=>reject(new Error('aborted')))));
-  a.run(`openPlayer('${id(1)}')`);a.run('closePlayer()');await new Promise(r=>setTimeout(r,5));
-  assert.equal(a.elements['video-frame'].src,'');assert.equal(a.elements.player.hidden,true);
+test('closing cancels an in-progress native source and ignores its late events',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));const v=media(a);
+  a.run('closePlayer()');emit(v,'canplay');emit(v,'error');assert.equal(media(a),undefined);assert.equal(a.elements.player.hidden,true);
 });
 test('request timeout aborts stalled fetches',async()=>{
   const a=await app();a.context.fetch=(url,opts)=>new Promise((resolve,reject)=>opts.signal.addEventListener('abort',()=>reject(new Error('timeout'))));
@@ -222,7 +233,7 @@ test('service worker installs shell, activates, excludes whitelist and cross-ori
     caches:{open:async()=>cache,keys:async()=>['kids-youtube-shell:'+scope+':old','some-other-app'],delete:async k=>deleted.push(k),match:async k=>cached.get(k)},
     fetch:async()=>{throw new Error('offline');}});
   vm.runInContext(fs.readFileSync(path.join(root,'sw.js'),'utf8'),context);
-  let work;handlers.install({waitUntil:p=>work=p});await work;assert.equal(skip,1);assert.equal(cached.size,4);
+  let work;handlers.install({waitUntil:p=>work=p});await work;assert.equal(skip,1);assert.equal(cached.size,6);
   handlers.activate({waitUntil:p=>work=p});await work;assert.equal(claim,1);assert.equal(deleted.length,1);assert.match(deleted[0],/old$/);
   for(const url of [scope+'videos.txt','https://invidious.example/api/v1/videos/abc']){
     let intercepted=false;handlers.fetch({request:{url,method:'GET',mode:'cors'},respondWith:()=>intercepted=true});assert.equal(intercepted,false);
@@ -277,12 +288,12 @@ test('mixed valid and invalid links retain only valid approvals',async()=>{
   assert.equal(a.run('displayed.size'),1);assert.equal(a.run('activeConfig.channels.length'),0);
 });
 test('metadata fallback retries another instance and saves its successful name',async()=>{
-  const a=await app(link(1),url=>url.includes('nerdvpn')?fail():metadataApi(url));
+  const a=await app(link(1),url=>url.includes('invidious.f5')?fail():metadataApi(url));
   assert.equal(a.calls.length,3);assert.equal(a.run('activeConfig.videos[0].title'),'שם הסרטון האוטומטי');
   assert.match(a.store.get('kidsYoutubeLastInstance'),/tiekoetter/);
 });
 test('mismatched video metadata is rejected before accepting the next instance',async()=>{
-  const a=await app(link(1),url=>url.includes('nerdvpn')?json({videoId:id(2),title:'wrong'}):metadataApi(url));
+  const a=await app(link(1),url=>url.includes('invidious.f5')?json({videoId:id(2),title:'wrong'}):metadataApi(url));
   assert.equal(a.calls.length,3);assert.equal(a.run('activeConfig.videos[0].title'),'שם הסרטון האוטומטי');
 });
 test('failed channel resolution does not remove direct approved videos',async()=>{
@@ -293,7 +304,7 @@ test('resolveurl may use browseId and must return a real channel ID',async()=>{
   const a=await app('https://youtube.com/@Example',url=>url.includes('/resolveurl?')?json({browseId:A}):metadataApi(url));
   assert.equal(a.run('activeConfig.channels[0].id'),A);
   const b=await app('https://youtube.com/@Example',()=>json({videoId:id(1),browseId:id(1)}));
-  assert.equal(b.run('displayed.size'),0);assert.equal(b.calls.length,5);
+  assert.equal(b.run('displayed.size'),0);assert.equal(b.calls.length,4);
 });
 test('cached alias, video title and channel videos survive all instance failures',async()=>{
   const store=new Map(),list=link(1)+'\nhttps://youtube.com/@Example';
@@ -318,12 +329,14 @@ test('comments-only list intentionally clears every approval and cached source',
 });
 test('alias resolving to a different channel prunes old channel cached videos',async()=>{
   const store=new Map(),list='https://youtube.com/@Example';await app(list,metadataApi,store);
+  for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
   const a=await app(list,url=>url.includes('/resolveurl?')?json({ucid:B}):url.endsWith('/'+B)?json({authorId:B,author:'ערוץ חדש'}):fail(),store);
   assert.equal(a.run('activeConfig.channels[0].id'),B);assert.equal(a.run('displayed.size'),0);
   assert.deepEqual(Object.keys(JSON.parse(store.get('kidsYoutubeVideos')).channelLists),[B]);
 });
 test('plain channel list paginates and deduplicates automatically with manual video precedence',async()=>{
   const a=await app(link(1)+'\n'+channelLink(A),url=>url.includes('/channels/')&&new URL(url).pathname.endsWith('/videos')?json(new URL(url).searchParams.has('continuation')?{videos:[row(2),row(3)],continuation:null}:{videos:[row(1),row(2)],continuation:'page2'}):metadataApi(url));
+  assert.equal(a.run('displayed.size'),2);await a.run('loadMoreVideos()');
   assert.equal(a.run('displayed.size'),3);assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם הסרטון האוטומטי');
   assert.ok(a.calls.some(c=>new URL(c.url,'https://example.test/').searchParams.get('continuation')==='page2'));
 });
@@ -338,9 +351,10 @@ test('plain links remain usable with unavailable localStorage',async()=>{
 });
 
 const visibleVideoIds = a => a.elements.grid.children.map(card=>card.dataset.videoId);
-function inputSearch(a,query) {
+async function inputSearch(a,query) {
   a.elements.search.value=query;
   a.elements.search.listeners.input[0]();
+  await until(()=>a.run('searchTimer')===null);
 }
 function clickGrid(a,card) {
   a.elements.grid.listeners.click[0]({target:{closest:()=>card}});
@@ -348,7 +362,7 @@ function clickGrid(a,card) {
 test('default video tab combines manual approvals and approved channels',async()=>{
   const a=await app({videos:[{id:id(3),title:'ידני'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
   assert.deepEqual(visibleVideoIds(a),[id(3),id(1),id(2)]);
-  assert.equal(a.elements['videos-tab'].getAttribute('aria-pressed'),'true');
+  assert.equal(a.elements['all-tab'].getAttribute('aria-pressed'),'true');
   assert.equal(a.elements['channels-tab'].getAttribute('aria-pressed'),'false');
 });
 test('channel tab lists only whole-channel approvals, not creators of manual videos',async()=>{
@@ -361,15 +375,15 @@ test('channel tab lists only whole-channel approvals, not creators of manual vid
 test('live search matches titles, authors and approved channel names without network requests',async()=>{
   const a=await app({videos:[{id:id(3),title:'שִׁיר לשבת',author:'יוצר יחיד'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
   const count=a.calls.length;
-  inputSearch(a,'שיר');assert.deepEqual(visibleVideoIds(a),[id(3)]);
-  inputSearch(a,'יוצר יחיד');assert.deepEqual(visibleVideoIds(a),[id(3)]);
-  inputSearch(a,'מאיר');assert.deepEqual(visibleVideoIds(a),[id(1),id(2)]);
-  inputSearch(a,'מאיר 2');assert.deepEqual(visibleVideoIds(a),[id(2)]);
+  await inputSearch(a,'שיר');assert.deepEqual(visibleVideoIds(a),[id(3)]);
+  await inputSearch(a,'יוצר יחיד');assert.deepEqual(visibleVideoIds(a),[id(3)]);
+  await inputSearch(a,'מאיר');assert.deepEqual(visibleVideoIds(a),[id(1),id(2)]);
+  await inputSearch(a,'מאיר 2');assert.deepEqual(visibleVideoIds(a),[id(2)]);
   assert.equal(a.calls.length,count);
 });
 test('manual/channel duplicate remains searchable by its approved channel name',async()=>{
   const a=await app({videos:[{id:id(1),title:'כותרת ידנית'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
-  inputSearch(a,'מאיר');assert.deepEqual(visibleVideoIds(a),[id(1),id(2)]);
+  await inputSearch(a,'מאיר');assert.deepEqual(visibleVideoIds(a),[id(1),id(2)]);
   assert.equal(a.elements.grid.children[0].children[1].textContent,'כותרת ידנית');
 });
 test('channel card opens only its own videos, including deduplicated manual approvals',async()=>{
@@ -377,50 +391,50 @@ test('channel card opens only its own videos, including deduplicated manual appr
   a.elements['channels-tab'].listeners.click[0]();clickGrid(a,a.elements.grid.children[0]);
   assert.deepEqual(visibleVideoIds(a),[id(1)]);assert.equal(a.elements['channel-heading'].hidden,false);
   assert.equal(a.elements['channel-name'].textContent,'מאיר');
-  inputSearch(a,'בחוץ');assert.equal(a.elements.grid.children.length,0);
+  await inputSearch(a,'בחוץ');assert.equal(a.elements.grid.children.length,0);
   assert.equal(a.elements.player.hidden,true);
 });
 test('channel name search filters channel cards and clear button restores all',async()=>{
   const a=await app({videos:[],channels:[{id:A,name:'מאיר'},{id:B,name:'סיפורים'}]},()=>json({videos:[],continuation:null}));
-  a.elements['channels-tab'].listeners.click[0]();inputSearch(a,'סיפורים');
+  a.elements['channels-tab'].listeners.click[0]();await inputSearch(a,'סיפורים');
   assert.deepEqual(a.elements.grid.children.map(card=>card.dataset.channelId),[B]);
   a.elements['clear-search'].listeners.click[0]();assert.equal(a.elements.grid.children.length,2);
   assert.equal(a.elements.search.value,'');assert.equal(a.elements['clear-search'].hidden,true);
 });
 test('no matches shows a friendly reset and keeps the approved authorization map',async()=>{
   const a=await app({videos:[{id:id(1),title:'מאושר'}],channels:[]});
-  inputSearch(a,'לא קיים');assert.equal(a.elements.empty.hidden,false);assert.match(a.elements['empty-title'].textContent,/לא מצאנו/);
+  await inputSearch(a,'לא קיים');assert.equal(a.elements.empty.hidden,false);assert.match(a.elements['empty-title'].textContent,/לא מצאנו/);
   assert.equal(a.elements['empty-clear'].hidden,false);assert.equal(a.elements.more.hidden,true);assert.equal(a.run('displayed.size'),1);
   a.elements['empty-clear'].listeners.click[0]();assert.deepEqual(visibleVideoIds(a),[id(1)]);assert.equal(a.elements.empty.hidden,true);
 });
 test('more cards apply the current filter and never show excluded videos',async()=>{
   const videos=Array.from({length:130},(_,i)=>({id:id(i),title:i<70?'שיר מאושר':'סיפור מאושר'}));
-  const a=await app({videos,channels:[]});inputSearch(a,'שיר');
+  const a=await app({videos,channels:[]});await inputSearch(a,'שיר');
   assert.equal(a.elements.grid.children.length,60);assert.equal(a.elements.more.hidden,false);
   a.elements.more.listeners.click[0]();assert.equal(a.elements.grid.children.length,70);assert.equal(a.elements.more.hidden,true);
   assert.ok(a.elements.grid.children.every(card=>card.children[1].textContent==='שיר מאושר'));
 });
 test('tab switching preserves each list search, card limit and scroll position',async()=>{
   const a=await app({videos:[{id:id(1),title:'שיר'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
-  inputSearch(a,'שיר');a.run('visibleCount=120; window.scrollY=440');
+  await inputSearch(a,'שיר');a.run('visibleCount=120; window.scrollY=440');
   a.elements['channels-tab'].listeners.click[0]();assert.equal(a.elements.search.value,'');assert.equal(a.run('window.scrollY'),0);
-  inputSearch(a,'מאיר');a.run('window.scrollY=180');a.elements['videos-tab'].listeners.click[0]();
+  await inputSearch(a,'מאיר');a.run('window.scrollY=180');a.elements['all-tab'].listeners.click[0]();
   assert.equal(a.elements.search.value,'שיר');assert.equal(a.run('visibleCount'),120);assert.equal(a.run('window.scrollY'),440);
   a.elements['channels-tab'].listeners.click[0]();assert.equal(a.elements.search.value,'מאיר');assert.equal(a.run('window.scrollY'),180);
 });
 test('returning from a channel restores its channel-list search and position',async()=>{
   const a=await app({videos:[],channels:[{id:A,name:'מאיר'}]},metadataApi);
-  a.elements['channels-tab'].listeners.click[0]();inputSearch(a,'מאיר');a.run('window.scrollY=300');clickGrid(a,a.elements.grid.children[0]);
-  inputSearch(a,'2');a.elements['back-channels'].listeners.click[0]();
+  a.elements['channels-tab'].listeners.click[0]();await inputSearch(a,'מאיר');a.run('window.scrollY=300');clickGrid(a,a.elements.grid.children[0]);
+  await inputSearch(a,'2');a.elements['back-channels'].listeners.click[0]();
   assert.equal(a.elements.search.value,'מאיר');assert.equal(a.run('window.scrollY'),300);assert.equal(a.elements['channel-heading'].hidden,true);
   clickGrid(a,a.elements.grid.children[0]);assert.equal(a.elements.search.value,'2');assert.deepEqual(visibleVideoIds(a),[id(2)]);
 });
 test('closing the player preserves channel, search, more-card limit and scroll',async()=>{
   const a=await app({videos:[],channels:[{id:A,name:'מאיר'}]},url=>url.includes('/channels/')?metadataApi(url):json({videoId:id(2)}));
-  a.run(`switchBrowse('channels','${A}')`);inputSearch(a,'2');a.run('visibleCount=120; window.scrollY=500');
+  a.run(`switchBrowse('channels','${A}')`);await inputSearch(a,'2');a.run('visibleCount=120; window.scrollY=500');
   const card=a.elements.grid.children[0];card.focus();clickGrid(a,card);
-  await until(()=>!a.elements['video-frame'].hidden);a.run('window.scrollY=0; closePlayer(true)');
-  assert.equal(a.elements['video-frame'].src,'');assert.equal(a.elements.player.hidden,true);
+  await until(()=>!!media(a));emit(media(a),'canplay');a.run('window.scrollY=0; closePlayer(true)');
+  assert.equal(media(a),undefined);assert.equal(a.elements.player.hidden,true);
   assert.equal(a.run('selectedChannelId'),A);assert.equal(a.elements.search.value,'2');assert.equal(a.run('visibleCount'),120);
   assert.equal(a.run('window.scrollY'),500);assert.equal(a.document.activeElement,card);
 });
@@ -453,12 +467,75 @@ test('unsafe channel image URLs are rejected and names are inserted as literal t
 });
 test('search query is local text, never a URL or an approval',async()=>{
   const a=await app({videos:[{id:id(1),title:'מאושר'}],channels:[]});const count=a.calls.length;
-  inputSearch(a,'https://youtube.com/watch?v='+id(2));assert.equal(a.calls.length,count);assert.equal(a.elements.grid.children.length,0);
+  await inputSearch(a,'https://youtube.com/watch?v='+id(2));assert.equal(a.calls.length,count);assert.equal(a.elements.grid.children.length,0);
   a.run(`openPlayer('${id(2)}')`);assert.equal(a.elements.player.hidden,true);
-  inputSearch(a,'<script>alert(1)</script>');assert.equal(a.calls.length,count);
+  await inputSearch(a,'<script>alert(1)</script>');assert.equal(a.calls.length,count);
 });
 test('navigation stays visible and search controls have large tablet touch targets',()=>{
-  assert.match(html,/\.browse-controls \{ position:sticky/);assert.match(html,/\.tab \{[^}]*min-height:64px/);
+  assert.match(html,/\.browse-controls \{ position:sticky/);assert.match(html,/\.tab \{[^}]*min-height:78px/);
   assert.match(html,/<label[^>]*for="search"/);assert.match(html,/id="search" type="search"/);
   assert.match(html,/id="back-channels"/);assert.doesNotMatch(html,/api\/v1\/search/);
+});
+
+test('three tabs separate manual approvals, whole channels, and deduplicated union',async()=>{
+  const a=await app({videos:[{id:id(1),title:'ידני מתוך ערוץ'},{id:id(3),title:'ידני בלבד'},{id:id(4),authorId:A}],channels:[{id:A,name:'ערוץ מאושר'}]},()=>json({videos:[row(1),row(2)],continuation:null}));
+  assert.deepEqual(visibleVideoIds(a),[id(1),id(3),id(4),id(2)]);
+  a.run("switchBrowse('videos')");assert.deepEqual(visibleVideoIds(a),[id(3)]);
+  a.run("switchBrowse('channels')");assert.equal(a.elements.grid.children.length,1);assert.equal(a.elements.grid.children[0].dataset.channelId,A);
+  assert.match(a.elements.grid.children[0].children[2].textContent,/2 סרטונים נטענו/);
+  a.run("switchBrowse('all')");assert.equal(new Set(visibleVideoIds(a)).size,4);
+});
+test('initial channel load is one page, subsequent pages are requested only on demand',async()=>{
+  let page=0;const a=await app({videos:[],channels:[{id:A}]},()=>json({videos:[row(++page)],continuation:page<3?'page'+page:null}));
+  assert.equal(page,1);assert.equal(a.elements.more.hidden,false);await a.run('loadMoreVideos()');assert.equal(page,2);await a.run('loadMoreVideos()');assert.equal(page,3);assert.equal(a.elements.more.hidden,true);
+});
+test('normalization rejects invalid IDs, retains safe dates, and removes duplicate IDs',async()=>{
+  const a=await app();assert.equal(a.run("normalizeVideo({id:'invalid'})"),null);
+  assert.equal(a.run(`deduplicateVideos([{id:'${id(1)}'},{videoId:'${id(1)}'},{id:'bad'}]).length`),1);
+});
+test('newest sort and approved channel filter change presentation without API requests',async()=>{
+  const a=await app({videos:[{id:id(3),title:'ידני',published:30}],channels:[{id:A}]},()=>json({videos:[{...row(1),published:10},{...row(2),published:20}],continuation:null}));
+  const count=a.calls.length;a.elements.sort.value='newest';a.elements.sort.listeners.change[0]();assert.deepEqual(visibleVideoIds(a),[id(3),id(2),id(1)]);
+  a.elements['channel-filter'].value=A;a.elements['channel-filter'].listeners.change[0]();assert.deepEqual(visibleVideoIds(a),[id(2),id(1)]);assert.equal(a.calls.length,count);
+});
+test('rapid opens cannot let an old media callback replace the latest video',async()=>{
+  const a=await app({videos:[{id:id(1)},{id:id(2)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));const old=media(a);
+  a.run(`openPlayer('${id(2)}')`);await until(()=>!!media(a)?.src && new URL(media(a).src).searchParams.get('id')===id(2));emit(old,'error');emit(old,'canplay');
+  assert.equal(new URL(media(a).src).searchParams.get('id'),id(2));assert.equal(old.src,'');a.run('closePlayer()');
+});
+test('cached forged channel membership cannot authorize playback',async()=>{
+  const store=new Map(),config={videos:[],channels:[{id:A}]};await app(config,()=>json({videos:[row(1)],continuation:null}),store);
+  const snapshot=JSON.parse(store.get('kidsYoutubeVideos'));snapshot.channelLists[A]=[{id:id(9),channelId:A,title:'forged'}];store.set('kidsYoutubeVideos',JSON.stringify(snapshot));
+  for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
+  const a=await app(config,url=>url.includes('/api/v1/videos/')?json({videoId:id(9),title:'belongs elsewhere',authorId:B}):fail(),store);
+  a.run(`openPlayer('${id(9)}')`);await until(()=>!a.elements['player-error'].hidden);assert.equal(media(a),undefined);a.run('closePlayer()');
+});
+test('authorization metadata cancellation stops a late response after switching videos',async()=>{
+  const a=await app({videos:[{id:id(2)}],channels:[]});
+  a.run(`render(normalizeConfig({videos:[{id:'${id(2)}'}],channels:[{id:'${A}'}]}),{'${A}':[{id:'${id(1)}',channelId:'${A}'}]})`);
+  a.run(`openPlayer('${id(1)}');openPlayer('${id(2)}')`);await until(()=>!!media(a));assert.equal(new URL(media(a).src).searchParams.get('id'),id(2));a.run('closePlayer()');
+});
+test('autoplay rejection asks for one tap and does not fail over unnecessarily',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));const v=media(a);
+  v.play=()=>Promise.reject(Object.assign(new Error(),{name:'NotAllowedError'}));emit(v,'canplay');await new Promise(r=>setTimeout(r,0));
+  assert.equal(media(a),v);assert.match(a.elements['player-message'].textContent,/לחצו/);a.run('closePlayer()');
+});
+test('media timeout automatically advances and has a finite total attempt budget',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]},undefined,new Map(),{timerCap:8});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));const first=media(a);
+  await until(()=>media(a)!==first);assert.ok(a.run('providers.snapshot().requests.some(r=>r.kind==="playback" && r.outcome==="TIMEOUT")'));
+  await until(()=>!a.elements['player-error'].hidden);assert.equal(a.run('playback.index'),3);a.run('closePlayer()');
+});
+test('re-rendering keeps existing thumbnail nodes rather than issuing duplicate loads',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});const image=a.elements.grid.children[0].children[0].children[0];a.run('render(activeConfig,activeLists)');assert.equal(a.elements.grid.children[0].children[0].children[0],image);assert.equal(image.loading,'lazy');
+});
+test('online recovery resets cooldown and refreshes whitelist',async()=>{
+  const a=await app();const initial=a.calls.length;a.listeners.offline[0]();assert.match(a.elements['status-text'].textContent,/אין חיבור/);a.listeners.online[0]();await until(()=>!a.run('loading'));assert.equal(a.calls.length,initial+1);
+});
+test('clear-cache control evicts API data while preserving parent whitelist source',async()=>{
+  const a=await app(link(1),metadataApi);assert.ok(a.run('providers.snapshot().cacheEntries')>0);a.elements['clear-cache'].listeners.click[0]();await until(()=>!a.run('loading'));assert.equal(a.run('displayed.size'),1);assert.equal(a.calls.filter(c=>c.url==='./videos.txt').length,2);
+});
+test('search debounce collapses rapid input and preserves pending input on background render',async()=>{
+  const a=await app({videos:[{id:id(1),title:'שיר'}],channels:[]});
+  a.elements.search.value='ש';a.elements.search.listeners.input[0]();a.elements.search.value='שיר';a.elements.search.listeners.input[0]();a.run('render(activeConfig,activeLists)');assert.equal(a.elements.search.value,'שיר');
+  await until(()=>a.run('searchTimer')===null);assert.deepEqual(visibleVideoIds(a),[id(1)]);
 });
