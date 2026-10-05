@@ -26,6 +26,7 @@ class Element {
   removeAttribute(k) { delete this.attributes[k]; }
   getAttribute(k) { return this.attributes[k]??null; }
   addEventListener(k,fn) { (this.listeners[k]??=[]).push(fn); }
+  blur() { this.doc.activeElement=null; }
   focus() { this.doc.activeElement=this; }
   contains(el) { return this.children.includes(el); }
   querySelectorAll() { return this.children; }
@@ -43,7 +44,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   const listeners={};
   const history={state:null,pushState(state){this.state=state;},replaceState(state){this.state=state;},back(){this.state=null;}};
   const context=vm.createContext({URL,AbortController,setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
-    navigator:{},location:{href:options.href||'https://example.test/kids-youtube/'},document,
+    navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/'},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});if(String(url)==='./videos.txt')return options.offline?fail():json(config);return api(String(url),opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn)});
@@ -334,4 +335,130 @@ test('automatic names are inserted as text, including the channel author',async(
 test('plain links remain usable with unavailable localStorage',async()=>{
   const a=await app(link(1),metadataApi,new Map(),{noStorage:true});
   assert.equal(a.run('displayed.size'),1);assert.match(a.elements['status-text'].textContent,/לא הצלחנו לשמור/);
+});
+
+const visibleVideoIds = a => a.elements.grid.children.map(card=>card.dataset.videoId);
+function inputSearch(a,query) {
+  a.elements.search.value=query;
+  a.elements.search.listeners.input[0]();
+}
+function clickGrid(a,card) {
+  a.elements.grid.listeners.click[0]({target:{closest:()=>card}});
+}
+test('default video tab combines manual approvals and approved channels',async()=>{
+  const a=await app({videos:[{id:id(3),title:'ידני'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
+  assert.deepEqual(visibleVideoIds(a),[id(3),id(1),id(2)]);
+  assert.equal(a.elements['videos-tab'].getAttribute('aria-pressed'),'true');
+  assert.equal(a.elements['channels-tab'].getAttribute('aria-pressed'),'false');
+});
+test('channel tab lists only whole-channel approvals, not creators of manual videos',async()=>{
+  const a=await app({videos:[{id:id(3),title:'סרטון',author:'יוצר לא מאושר'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
+  a.elements['channels-tab'].listeners.click[0]();
+  assert.deepEqual(a.elements.grid.children.map(card=>card.dataset.channelId),[A]);
+  assert.equal(a.elements['channels-tab'].getAttribute('aria-pressed'),'true');
+  assert.match(a.elements['search-label'].textContent,/ערוץ/);
+});
+test('live search matches titles, authors and approved channel names without network requests',async()=>{
+  const a=await app({videos:[{id:id(3),title:'שִׁיר לשבת',author:'יוצר יחיד'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
+  const count=a.calls.length;
+  inputSearch(a,'שיר');assert.deepEqual(visibleVideoIds(a),[id(3)]);
+  inputSearch(a,'יוצר יחיד');assert.deepEqual(visibleVideoIds(a),[id(3)]);
+  inputSearch(a,'מאיר');assert.deepEqual(visibleVideoIds(a),[id(1),id(2)]);
+  inputSearch(a,'מאיר 2');assert.deepEqual(visibleVideoIds(a),[id(2)]);
+  assert.equal(a.calls.length,count);
+});
+test('manual/channel duplicate remains searchable by its approved channel name',async()=>{
+  const a=await app({videos:[{id:id(1),title:'כותרת ידנית'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
+  inputSearch(a,'מאיר');assert.deepEqual(visibleVideoIds(a),[id(1),id(2)]);
+  assert.equal(a.elements.grid.children[0].children[1].textContent,'כותרת ידנית');
+});
+test('channel card opens only its own videos, including deduplicated manual approvals',async()=>{
+  const a=await app({videos:[{id:id(1),title:'ידני'},{id:id(3),title:'בחוץ'}],channels:[{id:A,name:'מאיר'},{id:B,name:'אחר'}]},url=>json({videos:[row(url.includes(B)?4:1,url.includes(B)?B:A)],continuation:null}));
+  a.elements['channels-tab'].listeners.click[0]();clickGrid(a,a.elements.grid.children[0]);
+  assert.deepEqual(visibleVideoIds(a),[id(1)]);assert.equal(a.elements['channel-heading'].hidden,false);
+  assert.equal(a.elements['channel-name'].textContent,'מאיר');
+  inputSearch(a,'בחוץ');assert.equal(a.elements.grid.children.length,0);
+  assert.equal(a.elements.player.hidden,true);
+});
+test('channel name search filters channel cards and clear button restores all',async()=>{
+  const a=await app({videos:[],channels:[{id:A,name:'מאיר'},{id:B,name:'סיפורים'}]},()=>json({videos:[],continuation:null}));
+  a.elements['channels-tab'].listeners.click[0]();inputSearch(a,'סיפורים');
+  assert.deepEqual(a.elements.grid.children.map(card=>card.dataset.channelId),[B]);
+  a.elements['clear-search'].listeners.click[0]();assert.equal(a.elements.grid.children.length,2);
+  assert.equal(a.elements.search.value,'');assert.equal(a.elements['clear-search'].hidden,true);
+});
+test('no matches shows a friendly reset and keeps the approved authorization map',async()=>{
+  const a=await app({videos:[{id:id(1),title:'מאושר'}],channels:[]});
+  inputSearch(a,'לא קיים');assert.equal(a.elements.empty.hidden,false);assert.match(a.elements['empty-title'].textContent,/לא מצאנו/);
+  assert.equal(a.elements['empty-clear'].hidden,false);assert.equal(a.elements.more.hidden,true);assert.equal(a.run('displayed.size'),1);
+  a.elements['empty-clear'].listeners.click[0]();assert.deepEqual(visibleVideoIds(a),[id(1)]);assert.equal(a.elements.empty.hidden,true);
+});
+test('more cards apply the current filter and never show excluded videos',async()=>{
+  const videos=Array.from({length:130},(_,i)=>({id:id(i),title:i<70?'שיר מאושר':'סיפור מאושר'}));
+  const a=await app({videos,channels:[]});inputSearch(a,'שיר');
+  assert.equal(a.elements.grid.children.length,60);assert.equal(a.elements.more.hidden,false);
+  a.elements.more.listeners.click[0]();assert.equal(a.elements.grid.children.length,70);assert.equal(a.elements.more.hidden,true);
+  assert.ok(a.elements.grid.children.every(card=>card.children[1].textContent==='שיר מאושר'));
+});
+test('tab switching preserves each list search, card limit and scroll position',async()=>{
+  const a=await app({videos:[{id:id(1),title:'שיר'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
+  inputSearch(a,'שיר');a.run('visibleCount=120; window.scrollY=440');
+  a.elements['channels-tab'].listeners.click[0]();assert.equal(a.elements.search.value,'');assert.equal(a.run('window.scrollY'),0);
+  inputSearch(a,'מאיר');a.run('window.scrollY=180');a.elements['videos-tab'].listeners.click[0]();
+  assert.equal(a.elements.search.value,'שיר');assert.equal(a.run('visibleCount'),120);assert.equal(a.run('window.scrollY'),440);
+  a.elements['channels-tab'].listeners.click[0]();assert.equal(a.elements.search.value,'מאיר');assert.equal(a.run('window.scrollY'),180);
+});
+test('returning from a channel restores its channel-list search and position',async()=>{
+  const a=await app({videos:[],channels:[{id:A,name:'מאיר'}]},metadataApi);
+  a.elements['channels-tab'].listeners.click[0]();inputSearch(a,'מאיר');a.run('window.scrollY=300');clickGrid(a,a.elements.grid.children[0]);
+  inputSearch(a,'2');a.elements['back-channels'].listeners.click[0]();
+  assert.equal(a.elements.search.value,'מאיר');assert.equal(a.run('window.scrollY'),300);assert.equal(a.elements['channel-heading'].hidden,true);
+  clickGrid(a,a.elements.grid.children[0]);assert.equal(a.elements.search.value,'2');assert.deepEqual(visibleVideoIds(a),[id(2)]);
+});
+test('closing the player preserves channel, search, more-card limit and scroll',async()=>{
+  const a=await app({videos:[],channels:[{id:A,name:'מאיר'}]},url=>url.includes('/channels/')?metadataApi(url):json({videoId:id(2)}));
+  a.run(`switchBrowse('channels','${A}')`);inputSearch(a,'2');a.run('visibleCount=120; window.scrollY=500');
+  const card=a.elements.grid.children[0];card.focus();clickGrid(a,card);
+  await until(()=>!a.elements['video-frame'].hidden);a.run('window.scrollY=0; closePlayer(true)');
+  assert.equal(a.elements['video-frame'].src,'');assert.equal(a.elements.player.hidden,true);
+  assert.equal(a.run('selectedChannelId'),A);assert.equal(a.elements.search.value,'2');assert.equal(a.run('visibleCount'),120);
+  assert.equal(a.run('window.scrollY'),500);assert.equal(a.document.activeElement,card);
+});
+test('background render during playback restores focus to the replacement card',async()=>{
+  const a=await app({videos:[{id:id(1),title:'שיר'}],channels:[]},()=>json({videoId:id(1)}));
+  const card=a.elements.grid.children[0];card.focus();a.run(`openPlayer('${id(1)}')`);
+  card.isConnected=false;a.run('render(activeConfig,activeLists);closePlayer(true)');
+  assert.equal(a.document.activeElement,a.elements.grid.children[0]);
+});
+test('removed selected channel returns to approved channel list without reviving old videos',async()=>{
+  const a=await app({videos:[],channels:[{id:A,name:'מאיר'}]},metadataApi);
+  a.run(`switchBrowse('channels','${A}'); render(normalizeConfig({videos:[],channels:[]}),{})`);
+  assert.equal(a.run('selectedChannelId'),null);assert.equal(a.run('viewMode'),'channels');assert.equal(a.elements.grid.children.length,0);
+  a.run(`switchBrowse('channels','${A}')`);assert.equal(a.run('selectedChannelId'),null);
+});
+test('channel avatars load automatically, survive outages and show a fallback on image error',async()=>{
+  const store=new Map(),image='https://yt3.ggpht.com/example=s176';
+  const a=await app(channelLink(A),url=>new URL(url).pathname.endsWith('/'+A)?json({authorId:A,author:'מאיר',authorThumbnails:[{url:image,width:176}]}):metadataApi(url),store);
+  a.elements['channels-tab'].listeners.click[0]();const thumb=a.elements.grid.children[0].children[0];
+  assert.equal(thumb.children[1].src,image);assert.equal(thumb.children[0].hidden,true);
+  thumb.children[1].listeners.error[0]();assert.equal(thumb.children[0].hidden,false);
+  const b=await app(channelLink(A),fail,store);b.elements['channels-tab'].listeners.click[0]();
+  assert.equal(b.elements.grid.children[0].children[0].children[1].src,image);
+});
+test('unsafe channel image URLs are rejected and names are inserted as literal text',async()=>{
+  const a=await app({videos:[],channels:[{id:A,name:'<img onerror=x>',thumbnail:'https://evil.example/avatar'}]},()=>json({videos:[],continuation:null}));
+  a.elements['channels-tab'].listeners.click[0]();assert.equal(a.elements.grid.children[0].children[1].textContent,'<img onerror=x>');
+  assert.equal(a.elements.grid.children[0].children[0].children.length,1);
+  for(const value of ['javascript:alert(1)','http://yt3.ggpht.com/x','https://yt3.ggpht.com.evil.example/x','https://user:pass@yt3.ggpht.com/x'])assert.equal(a.run(`safeChannelImage(${JSON.stringify(value)})`),'');
+});
+test('search query is local text, never a URL or an approval',async()=>{
+  const a=await app({videos:[{id:id(1),title:'מאושר'}],channels:[]});const count=a.calls.length;
+  inputSearch(a,'https://youtube.com/watch?v='+id(2));assert.equal(a.calls.length,count);assert.equal(a.elements.grid.children.length,0);
+  a.run(`openPlayer('${id(2)}')`);assert.equal(a.elements.player.hidden,true);
+  inputSearch(a,'<script>alert(1)</script>');assert.equal(a.calls.length,count);
+});
+test('navigation stays visible and search controls have large tablet touch targets',()=>{
+  assert.match(html,/\.browse-controls \{ position:sticky/);assert.match(html,/\.tab \{[^}]*min-height:64px/);
+  assert.match(html,/<label[^>]*for="search"/);assert.match(html,/id="search" type="search"/);
+  assert.match(html,/id="back-channels"/);assert.doesNotMatch(html,/api\/v1\/search/);
 });
