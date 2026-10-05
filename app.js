@@ -219,7 +219,7 @@ function render(config, lists) {
   ui.grid.setAttribute('aria-label', isChannels ? 'הערוצים המאושרים' : 'הסרטונים המאושרים');
   const fragment = document.createDocumentFragment();
   for (const item of items.slice(0, visibleCount)) {
-    const key = (isChannels ? 'channel:' : 'video:') + item.id + ':' + JSON.stringify(item) + ':' + (isChannels ? (lists[item.id] || []).length : '');
+    const key = (isChannels ? 'channel:' : 'video:') + item.id + ':' + JSON.stringify(isChannels ? [item.name,item.thumbnail,(lists[item.id] || []).length] : [item.title,item.author]);
     const cachedCard = cardCache.get(key);
     if (cachedCard) {fragment.append(cachedCard);continue;}
     const card = document.createElement('button');
@@ -270,7 +270,8 @@ function render(config, lists) {
   ui['empty-clear'].hidden = !searching;
   ui['empty-clear'].textContent = isChannels ? 'הצגת כל הערוצים' : 'הצגת כל הסרטונים';
   ui['empty-title'].textContent = searching ? 'לא מצאנו. נסו שם אחר' : (isChannels ? 'עוד מעט יהיו כאן ערוצים' : 'עוד מעט יהיו כאן סרטונים');
-  ui['empty-text'].textContent = searching ? 'אפשר למחוק את החיפוש ולבחור מתוך הרשימה.' : (isChannels ? 'אחרי שההורה יוסיף ערוצים מאושרים, הם יופיעו כאן.' : 'אפשר לרענן או לבחור תוכן אחר שאושר.');
+  if (ui['status-text'].textContent.startsWith('אפשר ללחוץ על')) ui.status.hidden=viewMode==='videos' || isChannels;
+  ui['empty-text'].textContent = searching ? 'אפשר למחוק את החיפוש ולבחור מתוך הרשימה.' : (isChannels ? 'אחרי שההורה יוסיף ערוצים מאושרים, הם יופיעו כאן.' : viewMode === 'videos' ? 'אבא עוד לא הוסיף סרטונים בודדים. אפשר לבחור ערוץ או לפתוח את כל הסרטונים.' : 'אפשר לרענן או לבחור תוכן אחר שאושר.');
   if (!searchTimer) audit();
   if (focusId && !playback) {
     const target = [...ui.grid.children].find(card => (card.dataset.videoId || card.dataset.channelId) === focusId);
@@ -557,7 +558,10 @@ function playerMessage(text, busy = false) {
 function stopMedia() {
   clearTimeout(playerTimer);
   const media = ui['media-host'].children[0];
-  if (media) { media.pause(); media.removeAttribute('src'); media.load(); }
+  if (media) {
+    if (media.tagName.toLowerCase() === 'iframe') media.src='';
+    else {media.pause();media.removeAttribute('src');media.load();}
+  }
   ui['media-host'].replaceChildren();
 }
 function playerUnavailable() {
@@ -596,6 +600,10 @@ async function tryPlayer() {
   if (!current()) return;
   if (Date.now() >= session.deadline || session.index >= session.instances.length) {playerUnavailable();return;}
   const base = session.instances[session.index++];
+  if (providers.getCachedData('compatibility:'+base+session.video.id)) {
+    try {await tryCompatiblePlayer(session,base,sequence);} catch (_) {if(current())tryPlayer();}
+    return;
+  }
   const started = Date.now();
   const media = document.createElement('video');
   media.controls = true; media.autoplay = true; media.playsInline = true; media.preload = 'auto';
@@ -607,10 +615,10 @@ async function tryPlayer() {
     if (!valid() || settled) return;
     settled = true; if (Number.isFinite(media.currentTime) && media.currentTime > 0) session.resumeTime = media.currentTime;
     if (becameReady) session.deadline = Date.now() + SETTINGS.playerBudgetMs;
-    providers.markResourceFailure(base,'/media/'+session.video.id);
+    providers.markResourceFailure(base,'/native/'+session.video.id);
     providers.updateProviderHealth(base,'playback',false,Date.now()-started,error);
     providers.record({kind:'playback',provider:base,path:session.video.id,outcome:error.code,ms:Date.now()-started});
-    audit(); tryPlayer();
+    audit(); tryCompatiblePlayer(session,base,sequence).catch(() => {if(current())tryPlayer();});
   };
   const ready = () => {
     if (!valid() || settled) return;
@@ -634,6 +642,33 @@ async function tryPlayer() {
   playerTimer = setTimeout(() => fail(new KidsProviders.AppError('TIMEOUT')),Math.max(1,Math.min(SETTINGS.playerWaitMs,session.deadline-Date.now())));
   media.src = mediaSource(base,session.video.id); media.load();
 }
+async function tryCompatiblePlayer(session,base,sequence) {
+  const current=()=>playback===session && playerSequence===sequence && !session.controller.signal.aborted;
+  if (!current() || Date.now() >= session.deadline) return;
+  playerMessage('מחפש מקור חלופי...',true);
+  // Metadata validates this exact ID before the bounded compatibility embed.
+  // iframe load itself is not evidence of playback, and is never logged as such.
+  const data=await providers.fetchFromProvider(base,'/api/v1/videos/'+session.video.id,{signal:session.controller.signal,validate:d=>validVideoMetadata(d,session.video.id),timeoutMs:Math.min(SETTINGS.requestTimeoutMs,Math.max(1,session.deadline-Date.now()))});
+  if (!current()) return;
+  if (!getApprovedVideos().has(session.video.id) && !getApprovedChannels().has(data.authorId)) throw new KidsProviders.AppError('VIDEO_UNAVAILABLE');
+  stopMedia();
+  const frame=document.createElement('iframe'); frame.id='compatible-frame'; frame.title='צפייה: '+session.video.title;
+  // Opaque origin: no allow-same-origin, popups, forms or top navigation.
+  frame.setAttribute('sandbox','allow-scripts allow-presentation');
+  frame.setAttribute('allow','autoplay; fullscreen; picture-in-picture');frame.referrerPolicy='no-referrer';
+  frame.addEventListener('load',()=>{
+    if (!current() || ui['media-host'].children[0]!==frame) return;
+    clearTimeout(playerTimer);playerMessage('אם הסרטון לא מתחיל, לחצו על ▶. אפשר גם לנסות מקור אחר.');
+    ui['next-player'].hidden=session.index>=session.instances.length;
+    providers.setCachedData('compatibility:'+base+session.video.id,{preferred:true},10*60*1000);
+    providers.record({kind:'embed',provider:base,path:session.video.id,outcome:'loaded-not-playback-proof'});audit();
+  },{once:true});
+  frame.addEventListener('error',()=>{if(current())tryPlayer();},{once:true});
+  ui['media-host'].replaceChildren(frame);
+  const url=new URL('/embed/'+session.video.id,base);url.search='autoplay=1&related_videos=false&continue=0&comments=false&iv_load_policy=3&quality=dash&local=true';
+  frame.src=url.href;
+  playerTimer=setTimeout(()=>{if(current() && ui['media-host'].children[0]===frame)tryPlayer();},Math.max(1,Math.min(SETTINGS.playerWaitMs,session.deadline-Date.now())));
+}
 function openPlayer(id) {
   const video = displayed.get(id);
   if (!video || (!getApprovedVideos().has(id) && !getApprovedChannels().has(video.channelId))) return;
@@ -643,7 +678,7 @@ function openPlayer(id) {
   else {returnFocus=document.activeElement;returnScrollY=window.scrollY||0;}
   returnVideoId=id;
   stopMedia();
-  playback={video,instances:providers.getHealthyProviders('playback','/media/'+id),index:0,controller:new AbortController(),deadline:Date.now()+SETTINGS.playerBudgetMs,verified:false,resumeTime:0};
+  playback={video,instances:providers.getHealthyProviders('playback'),index:0,controller:new AbortController(),deadline:Date.now()+SETTINGS.playerBudgetMs,verified:false,resumeTime:0};
   ui['player-title'].textContent=video.title;
   ui.player.hidden=false;ui.app.inert=true;ui.app.setAttribute('aria-hidden','true');document.body.style.overflow='hidden';ui.back.focus();
   if (!alreadyOpen) history.pushState({kidsYoutubePlayer:true},'',location.href);
@@ -684,7 +719,7 @@ ui.refresh.addEventListener('click', loadApp);
 ui.more.addEventListener('click', loadMoreVideos);
 ui.back.addEventListener('click', () => closePlayer());
 window.addEventListener('popstate', () => closePlayer(true));
-ui['next-player'].addEventListener('click', () => {if (playback) {const media=ui['media-host'].children[0];if(media && media.currentTime)playback.resumeTime=media.currentTime;playback.deadline=Date.now()+SETTINGS.playerBudgetMs;tryPlayer();}});
+ui['next-player'].addEventListener('click', () => {if (playback) {const media=ui['media-host'].children[0];if(media && Number.isFinite(media.currentTime) && media.currentTime)playback.resumeTime=media.currentTime;playback.deadline=Date.now()+SETTINGS.playerBudgetMs;tryPlayer();}});
 ui['retry-video'].addEventListener('click', () => {
   if (playback) {providers.resetHealth('playback');providers.clearResourceFailures('/media/'+playback.video.id);playback.instances=providers.getHealthyProviders('playback');playback.index=0;playback.deadline=Date.now()+SETTINGS.playerBudgetMs;tryPlayer();}
 });
@@ -692,7 +727,7 @@ document.addEventListener('keydown', event => {
   if (ui.player.hidden) return;
   if (event.key === 'Escape') { event.preventDefault(); closePlayer(); }
   if (event.key === 'Tab') {
-    const controls = [...ui.player.querySelectorAll('button,video')].filter(el => !el.hidden && !el.closest('[hidden]'));
+    const controls = [...ui.player.querySelectorAll('button,video,iframe')].filter(el => !el.hidden && !el.closest('[hidden]'));
     const first = controls[0], last = controls[controls.length - 1];
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }

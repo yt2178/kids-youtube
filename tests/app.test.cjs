@@ -187,7 +187,7 @@ test('player enforces approved IDs, native media, no iframe navigation, and stop
   assert.equal(url.pathname,'/latest_version');assert.equal(url.searchParams.get('id'),id(1));assert.equal(url.searchParams.get('local'),'true');assert.equal(url.searchParams.get('itag'),'18');
   assert.equal(a.elements.app.inert,true);emit(video,'canplay');assert.equal(a.elements['player-message'].textContent,'');
   a.run('closePlayer()');assert.equal(video.src,'');assert.equal(video.paused,true);assert.equal(a.elements.player.hidden,true);assert.equal(a.elements.app.inert,false);
-  assert.doesNotMatch(html,/<iframe|allowfullscreen|sandbox=/);
+  assert.doesNotMatch(html,/allowfullscreen|sandbox="allow-scripts allow-same-origin/);
 });
 test('actual media errors automatically advance to the next instance',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});
@@ -197,7 +197,7 @@ test('actual media errors automatically advance to the next instance',async()=>{
 test('all finite player attempts failing show a friendly retry state',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));
   for(let i=0;i<3;i++){const v=media(a);emit(v,'error');await new Promise(r=>setTimeout(r,0));}
-  assert.equal(a.elements['player-error'].hidden,false);assert.equal(media(a),undefined);assert.match(a.elements['player-message'].textContent,/לא הצלחנו להפעיל/);a.run('closePlayer()');
+  await until(()=>!a.elements['player-error'].hidden);assert.equal(media(a),undefined);assert.match(a.elements['player-message'].textContent,/לא הצלחנו להפעיל/);a.run('closePlayer()');
 });
 test('closing cancels an in-progress native source and ignores its late events',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));const v=media(a);
@@ -538,4 +538,17 @@ test('search debounce collapses rapid input and preserves pending input on backg
   const a=await app({videos:[{id:id(1),title:'שיר'}],channels:[]});
   a.elements.search.value='ש';a.elements.search.listeners.input[0]();a.elements.search.value='שיר';a.elements.search.listeners.input[0]();a.run('render(activeConfig,activeLists)');assert.equal(a.elements.search.value,'שיר');
   await until(()=>a.run('searchTimer')===null);assert.deepEqual(visibleVideoIds(a),[id(1)]);
+});
+
+test('native failure automatically opens the validated compatibility embed with opaque sandbox',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]},()=>json({videoId:id(1),title:'שם הסרטון'}));
+  a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));const old=media(a);emit(old,'error');await until(()=>media(a)?.tagName==='iframe');const frame=media(a);
+  const url=new URL(frame.src);assert.equal(url.pathname,'/embed/'+id(1));assert.equal(url.searchParams.get('continue'),'0');assert.equal(url.searchParams.get('related_videos'),'false');
+  assert.equal(frame.getAttribute('sandbox'),'allow-scripts allow-presentation');assert.equal(frame.getAttribute('allow'),'autoplay; fullscreen; picture-in-picture');assert.equal(frame.getAttribute('allowfullscreen'),null);
+  emit(frame,'load');assert.equal(a.run('providers.snapshot().requests.at(-1).outcome'),'loaded-not-playback-proof');
+  a.run('closePlayer()');assert.equal(frame.src,'');assert.equal(a.elements.player.hidden,true);
+});
+test('compatibility fallback never trusts mismatched metadata or a cancelled session',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]},()=>json({videoId:id(2),title:'wrong'}));a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.src?.includes('tiekoetter'));
+  assert.equal(media(a).tagName,'video');a.run('closePlayer()');
 });
