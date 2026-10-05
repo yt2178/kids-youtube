@@ -35,7 +35,7 @@ https://www.youtube.com/@CHANNEL_HANDLE_HERE // כל הסרטונים הרגיל
 
 הנגן פותח overlay ומנסה מדיה באמצעות `<video>` מקומי של הדפדפן, שמקבל אירועי `canplay`, `playing`, `error` ו־timeout. מקור MP4 משולב עשוי להיות חסר אצל ספק, גם כאשר הנגן הרשמי שלו מצליח באמצעות DASH. במקרה כזה עוברים אוטומטית לנגן התאימות הרשמי של אותו Invidious, אחרי אימות metadata של אותו ID. המקור האחרון הזמין מקבל קדימות לזמן מוגבל.
 
-לנגן התאימות sandbox עם `allow-scripts allow-presentation` בלבד, ללא `allow-same-origin`, popups, forms או top navigation. ההרשאות נקבעות באמצעות `allow`, בלי `allowfullscreen` כפול. פרמטרי הנגן מבטלים related videos, comments והמשך אוטומטי. אין fallback אוטומטי ל־YouTube.
+לנגן התאימות sandbox עם scripts, same-origin ו־presentation, לצורך JavaScript, מקור וקוקיז/העדפות של ספק הניגון. אין popups, forms או top navigation. השילוב scripts/same-origin נבדק: מקור הספק חייב להיות שונה ממקור האפליקציה, ו־CSP frame-src שנוצר מהרשימה הקבועה מונע מעבר iframe למקור האפליקציה או למקור לא מוגדר. הסיכון של הסרת sandbox המתואר ב־MDN חל בעיקר על iframe בעל אותו מקור כמו ההורה; כתובת כזאת נדחית כאן. זו התאמה לצורכי הנגן, ולא הענקה אוטומטית לכל URL. ההרשאות נקבעות באמצעות `allow`, בלי `allowfullscreen` כפול. פרמטרי הנגן מבטלים related videos, comments והמשך אוטומטי. אין fallback אוטומטי ל־YouTube.
 
 כל פתיחה חדשה מבטלת את הבקשה הקודמת. לניסיון מדיה עד 6 שניות, בקשת metadata עד 4 שניות, תקציב 18.5 שניות לסבב ומספר ספקים מוגבל. כשל HTTP, metadata לא תקין, timeout או error שנגישים לאפליקציה גורמים למעבר אוטומטי. ״← חזרה״, Back ו־Escape עוצרים את המדיה/מרוקנים את iframe.src ורק אז מסתירים את הנגן.
 

@@ -22,7 +22,7 @@ async function until(check) {
 }
 class Element {
   constructor(tag='div',fragment=false) { this.tagName=tag;this.fragment=fragment;this.hidden=false;this.children=[];this.attributes={};this.dataset={};this.style={};this.listeners={};this.isConnected=true; }
-  append(...nodes) { this.children.push(...nodes.flatMap(n=>n.fragment?n.children:[n])); }
+  append(...nodes) { this.children.push(...nodes.flatMap(n=>n.fragment?n.children:[n]));for(const n of nodes)if(n.tagName==='iframe' && !n.src)for(const fn of n.listeners.load || [])fn(); }
   replaceChildren(...nodes) { this.children=[];this.append(...nodes); }
   setAttribute(k,v) { this.attributes[k]=String(v); }
   removeAttribute(k) { delete this.attributes[k]; if(k==='src')this.src=''; }
@@ -39,7 +39,7 @@ class Element {
 }
 async function app(config=empty,api=()=>json({videos:[],continuation:null}),store=new Map(),options={}) {
   const elements={};const calls=[];
-  const document={body:new Element('body'),activeElement:null,hidden:false,addEventListener(){},
+  const document={head:new Element('head'),body:new Element('body'),activeElement:null,hidden:false,addEventListener(){},
     getElementById:id=>elements[id],createElement:tag=>{const el=new Element(tag);el.doc=document;return el;},
     createDocumentFragment:()=>new Element('fragment',true)};
   for(const m of html.matchAll(/<([a-z][a-z0-9-]*)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
@@ -65,7 +65,7 @@ const plain = obj => JSON.parse(JSON.stringify(obj));
 
 test('local JS and service worker parse, no third-party scripts/frameworks',()=>{
   scripts.forEach(s=>new vm.Script(s));new vm.Script(fs.readFileSync(path.join(root,'sw.js'),'utf8'));
-  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006b','./app.js?v=20261006b']);new vm.Script(providerScript);
+  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006c','./app.js?v=20261006c']);new vm.Script(providerScript);
   assert.match(html,/<html lang="he" dir="rtl">/);assert.match(html,/href="\.\/manifest.json"/);
   assert.doesNotMatch(html,/\/kids-youtube\/sw\.js/);
 });
@@ -540,11 +540,11 @@ test('search debounce collapses rapid input and preserves pending input on backg
   await until(()=>a.run('searchTimer')===null);assert.deepEqual(visibleVideoIds(a),[id(1)]);
 });
 
-test('native failure automatically opens the validated compatibility embed with opaque sandbox',async()=>{
+test('native failure automatically opens the validated compatibility embed with restricted cross-origin sandbox',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]},()=>json({videoId:id(1),title:'שם הסרטון'}));
   a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));const old=media(a);emit(old,'error');await until(()=>media(a)?.tagName==='iframe');const frame=media(a);
   const url=new URL(frame.src);assert.equal(url.pathname,'/embed/'+id(1));assert.equal(url.searchParams.get('continue'),'0');assert.equal(url.searchParams.get('related_videos'),'false');
-  assert.equal(frame.getAttribute('sandbox'),'allow-scripts allow-presentation');assert.equal(frame.getAttribute('allow'),'autoplay; fullscreen; picture-in-picture');assert.equal(frame.getAttribute('allowfullscreen'),null);
+  assert.equal(frame.getAttribute('sandbox'),'allow-scripts allow-same-origin allow-presentation');assert.equal(frame.getAttribute('allow'),'autoplay; fullscreen; picture-in-picture');assert.equal(frame.getAttribute('allowfullscreen'),null);
   emit(frame,'load');assert.equal(a.run('providers.snapshot().requests.at(-1).outcome'),'loaded-not-playback-proof');
   a.run('closePlayer()');assert.equal(frame.src,'');assert.equal(a.elements.player.hidden,true);
 });
@@ -557,4 +557,20 @@ test('metadata updates reuse thumbnail nodes while updating literal title and au
   const a=await app({videos:[{id:id(1),title:'ישן'}],channels:[]});const image=a.elements.grid.children[0].children[0].children[0];
   a.run(`render(normalizeConfig({videos:[{id:'${id(1)}',title:'חדש',author:'<img onerror=x>',published:123}],channels:[]}),{})`);
   const card=a.elements.grid.children[0];assert.equal(card.children[0].children[0],image);assert.equal(card.children[1].textContent,'חדש');assert.equal(card.children[2].textContent,'<img onerror=x>');
+});
+
+test('compatibility iframe URL and deadline exist before the first load event',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]},()=>json({videoId:id(1),title:'מאושר'}));a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.tagName==='iframe');
+  assert.match(media(a).src,/\/embed\//);assert.ok(a.run('playerTimer'));assert.equal(a.run('providers.snapshot().requests.some(r=>r.kind==="embed")'),false);
+  emit(media(a),'load');assert.ok(a.run('providers.snapshot().requests.some(r=>r.kind==="embed")'));a.run('closePlayer()');
+});
+
+test('frame CSP permits only configured external providers, never the parent app origin',async()=>{
+  const a=await app();const meta=a.document.head.children[0];assert.equal(meta.httpEquiv,'Content-Security-Policy');
+  assert.match(meta.content,/frame-src https:\/\/invidious\.f5\.si/);assert.match(meta.content,/object-src 'none'/);assert.doesNotMatch(meta.content,/example\.test|\*|data:|blob:/);
+});
+
+test('expired compatibility budget terminates in friendly error rather than a stuck loading state',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));
+  await a.run('playback.deadline=Date.now()-1;tryCompatiblePlayer(playback,INVIDIOUS_INSTANCES[0],playerSequence)');assert.equal(a.elements['player-error'].hidden,false);assert.equal(media(a),undefined);a.run('closePlayer()');
 });

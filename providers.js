@@ -53,7 +53,7 @@
     const states = Object.create(null);
     for (const base of bases) {
       states[base] = Object.create(null);
-      for (const kind of ['api','playback']) {
+      for (const kind of ['api','playback','native']) {
         const old = storedHealth && storedHealth[base] && storedHealth[base][kind];
         const fresh = {status:'unknown',lastSuccess:0,lastFailure:0,failureCount:0,averageResponseTime:0,cooldownUntil:0};
         if (old && Number.isFinite(old.lastFailure) && Number.isFinite(old.lastSuccess) && Math.max(old.lastFailure,old.lastSuccess)>clock()-10*60*1000) {
@@ -142,7 +142,7 @@
     function clearCache() {cache.clear();resourceFailures.clear();save(dataKey,{entries:[]});}
     function markResourceFailure(base,resource) {if (bases.includes(base))resourceFailures.set(base+resource,clock()+30000);}
     function clearResourceFailures(resource) {for (const base of bases) resourceFailures.delete(base+resource);}
-    function resetHealth(kind) {for (const base of bases) for (const k of kind?[kind]:['api','playback']) states[base][k].cooldownUntil=0;save(healthKey,states);}
+    function resetHealth(kind) {for (const base of bases) for (const k of kind?[kind]:['api','playback','native']) states[base][k].cooldownUntil=0;save(healthKey,states);}
     async function healthCheck() {
       // One cheap probe per interval, not an all-provider fan-out. A successful
       // stats probe never claims the video-stream capability is healthy.

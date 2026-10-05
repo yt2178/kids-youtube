@@ -26,6 +26,14 @@ const CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
 const CACHE_KEY = 'kidsYoutubeVideos';
 const INSTANCE_KEY = 'kidsYoutubeLastInstance';
 const SCOPE = new URL('./', location.href).href;
+// A provider iframe may need its own storage for playback/preferences.
+// Its origin must stay external; CSP also blocks a redirect into our origin.
+function installFramePolicy() {
+  if (!document.head) return;
+  const origins=INVIDIOUS_INSTANCES.filter(base=>{try {const u=new URL(base);return u.protocol==='https:' && u.origin===base && u.origin!==new URL(SCOPE).origin && !u.username && !u.password;} catch (_) {return false;}});
+  const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';policy.content="frame-src "+(origins.join(' ') || "'none'")+"; object-src 'none'; base-uri 'self'";document.head.append(policy);
+}
+installFramePolicy();
 const $ = id => document.getElementById(id);
 const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear'].map(id => [id, $(id)]));
 let displayed = new Map();
@@ -610,7 +618,7 @@ async function tryPlayer() {
   if (!current()) return;
   if (Date.now() >= session.deadline || session.index >= session.instances.length) {playerUnavailable();return;}
   const base = session.instances[session.index++];
-  if (providers.getCachedData('compatibility:'+base+session.video.id)) {
+  if (providers.getCachedData('compatibility:'+base+session.video.id) || !providers.getHealthyProviders('native','/native/'+session.video.id).includes(base)) {
     try {await tryCompatiblePlayer(session,base,sequence);} catch (_) {if(current())tryPlayer();}
     return;
   }
@@ -626,13 +634,14 @@ async function tryPlayer() {
     settled = true; if (Number.isFinite(media.currentTime) && media.currentTime > 0) session.resumeTime = media.currentTime;
     if (becameReady) session.deadline = Date.now() + SETTINGS.playerBudgetMs;
     providers.markResourceFailure(base,'/native/'+session.video.id);
-    providers.updateProviderHealth(base,'playback',false,Date.now()-started,error);
+    providers.updateProviderHealth(base,'native',false,Date.now()-started,error);
     providers.record({kind:'playback',provider:base,path:session.video.id,outcome:error.code,ms:Date.now()-started});
     audit(); tryCompatiblePlayer(session,base,sequence).catch(() => {if(current())tryPlayer();});
   };
   const ready = () => {
     if (!valid() || settled) return;
     becameReady = true; clearTimeout(playerTimer);
+    providers.updateProviderHealth(base,'native',true,Date.now()-started);
     providers.updateProviderHealth(base,'playback',true,Date.now()-started);
     providers.record({kind:'playback',provider:base,path:session.video.id,outcome:'canplay',ms:Date.now()-started});
     rememberInstance(base); playerMessage(''); ui['next-player'].hidden = session.index >= session.instances.length;
@@ -654,7 +663,8 @@ async function tryPlayer() {
 }
 async function tryCompatiblePlayer(session,base,sequence) {
   const current=()=>playback===session && playerSequence===sequence && !session.controller.signal.aborted;
-  if (!current() || Date.now() >= session.deadline) return;
+  if (!current()) return;
+  if (Date.now() >= session.deadline) {playerUnavailable();return;}
   playerMessage('מחפש מקור חלופי...',true);
   // Metadata validates this exact ID before the bounded compatibility embed.
   // iframe load itself is not evidence of playback, and is never logged as such.
@@ -664,8 +674,11 @@ async function tryCompatiblePlayer(session,base,sequence) {
   if (!getApprovedVideos().has(session.video.id) && !getApprovedChannels().has(data.authorId)) throw new KidsProviders.AppError('VIDEO_UNAVAILABLE');
   stopMedia();
   const frame=document.createElement('iframe'); frame.id='compatible-frame'; frame.title='צפייה: '+session.video.title;
-  // Opaque origin: no allow-same-origin, popups, forms or top navigation.
-  frame.setAttribute('sandbox','allow-scripts allow-presentation');
+  if (new URL(base).origin===new URL(SCOPE).origin) throw new KidsProviders.AppError('INVALID_REQUEST');
+  // The provider needs its own origin/storage. Parent origin access remains
+  // forbidden, with frame-src CSP also forbidding redirects into the app origin.
+  // No popups, forms or top-level navigation are granted.
+  frame.setAttribute('sandbox','allow-scripts allow-same-origin allow-presentation');
   frame.setAttribute('allow','autoplay; fullscreen; picture-in-picture');frame.referrerPolicy='no-referrer';
   frame.addEventListener('load',()=>{
     if (!current() || ui['media-host'].children[0]!==frame) return;
@@ -675,10 +688,12 @@ async function tryCompatiblePlayer(session,base,sequence) {
     providers.record({kind:'embed',provider:base,path:session.video.id,outcome:'loaded-not-playback-proof'});audit();
   },{once:true});
   frame.addEventListener('error',()=>{if(current())tryPlayer();},{once:true});
-  ui['media-host'].replaceChildren(frame);
   const url=new URL('/embed/'+session.video.id,base);url.search='autoplay=1&related_videos=false&continue=0&comments=false&iv_load_policy=3&quality=dash&local=true';
+  // Set the URL before insertion: an initial about:blank load must not consume
+  // the real load listener or clear the deadline before it is installed.
   frame.src=url.href;
   playerTimer=setTimeout(()=>{if(current() && ui['media-host'].children[0]===frame)tryPlayer();},Math.max(1,Math.min(SETTINGS.playerWaitMs,session.deadline-Date.now())));
+  ui['media-host'].replaceChildren(frame);
 }
 function openPlayer(id) {
   const video = displayed.get(id);
@@ -693,7 +708,8 @@ function openPlayer(id) {
   ui['player-title'].textContent=video.title;
   ui.player.hidden=false;ui.app.inert=true;ui.app.setAttribute('aria-hidden','true');document.body.style.overflow='hidden';ui.back.focus();
   if (!alreadyOpen) history.pushState({kidsYoutubePlayer:true},'',location.href);
-  tryPlayer().catch(() => {if (playback && playback.video.id===id) playerUnavailable();});
+  const session=playback;const attempt=tryPlayer();const sequence=playerSequence;
+  attempt.catch(() => {if(playback===session && playerSequence===sequence)playerUnavailable();});
 }
 function closePlayer(fromHistory = false) {
   if (!playback) return;
