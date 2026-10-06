@@ -34,7 +34,7 @@ function installFramePolicy() {
 }
 installFramePolicy();
 const $ = id => document.getElementById(id);
-const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear'].map(id => [id, $(id)]));
+const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear'].map(id => [id, $(id)]));
 let displayed = new Map();
 let activeConfig = {videos:[], channels:[]};
 let activeLists = Object.create(null);
@@ -66,8 +66,16 @@ function optionalStorage() { try { return localStorage; } catch (_) { return nul
 const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:fetch, storage:optionalStorage(), timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});
 const diagnosticsEnabled = new URL(location.href).searchParams.get('diagnostics') === '1';
 ui['diagnostic-panel'].hidden = !diagnosticsEnabled;
+const providerButtons = [];
+if(diagnosticsEnabled)INVIDIOUS_INSTANCES.forEach((base,index) => {
+  const row=document.createElement('p'),label=document.createElement('span'),button=document.createElement('button');
+  label.textContent=new URL(base).hostname+' ';button.type='button';button.className='button';
+  button.addEventListener('click',()=>{const paused=providers.snapshot().health[base].api.pausedUntil>Date.now();providers.pauseProvider(base,paused?0:300000);audit();});
+  row.append(label,button);ui['provider-controls'].append(row);providerButtons.push({base,index,button});
+});
 function audit() {
   if (!diagnosticsEnabled) return;
+  for(const {base,index,button} of providerButtons)button.textContent=providers.snapshot().health[base].api.pausedUntil>Date.now()?'הפעלת מקור '+(index+1)+' מחדש':'השהיית מקור '+(index+1)+' ל־5 דקות';
   const resources = typeof performance !== 'undefined' ? performance.getEntriesByType('resource').slice(-150).map(r => ({url:r.name,ms:Math.round(r.duration),bytes:r.transferSize,type:r.initiatorType})) : [];
   ui.diagnostics.textContent = JSON.stringify({providers:providers.snapshot(),approvedVideos:activeConfig.videos.length,approvedChannels:activeConfig.channels.length,loadedVideos:displayed.size,renderedCards:ui.grid.children.length,resources},null,2);
 }
@@ -619,6 +627,8 @@ async function tryPlayer() {
     if (!session.verified) {playerUnavailable();return;}
   } catch (_) {if (current()) playerUnavailable(); return;}
   if (!current()) return;
+  const eligible=providers.getHealthyProviders('playback','/embed/'+session.video.id);
+  while(session.index<session.instances.length && !eligible.includes(session.instances[session.index]))session.index++;
   if (Date.now() >= session.deadline || session.index >= session.instances.length) {playerUnavailable();return;}
   const base = session.instances[session.index++];
   if (providers.getCachedData('compatibility:'+base+session.video.id) || !providers.getHealthyProviders('native','/native/'+session.video.id).includes(base)) {
@@ -755,7 +765,14 @@ ui.refresh.addEventListener('click', loadApp);
 ui.more.addEventListener('click', loadMoreVideos);
 ui.back.addEventListener('click', () => closePlayer());
 window.addEventListener('popstate', () => closePlayer(true));
-ui['next-player'].addEventListener('click', () => {if (playback) {const media=ui['media-host'].children[0];if(media && Number.isFinite(media.currentTime) && media.currentTime)playback.resumeTime=media.currentTime;playback.deadline=Date.now()+SETTINGS.playerBudgetMs;tryPlayer();}});
+ui['next-player'].addEventListener('click', () => {
+  if(!playback)return;
+  const media=ui['media-host'].children[0],base=playback.instances[playback.index-1],id=playback.video.id;
+  if(media && Number.isFinite(media.currentTime) && media.currentTime)playback.resumeTime=media.currentTime;
+  // User-reported failure applies to this video, never every video on the host.
+  if(base){providers.removeCachedData('compatibility:'+base+id);providers.markResourceFailure(base,'/embed/'+id);providers.record({kind:'playback',provider:base,videoId:id,outcome:'user-requested-alternative'});}
+  playback.deadline=Date.now()+SETTINGS.playerBudgetMs;tryPlayer();
+});
 ui['retry-video'].addEventListener('click', () => {
   if (playback) {
     const id=playback.video.id;

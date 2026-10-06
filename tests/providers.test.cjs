@@ -84,3 +84,18 @@ test('targeted cache removal persists while preserving other video metadata',()=
   const p=manager(async()=>ok({}),{storage});p.setCachedData('compatibility:first',{preferred:true},60000);p.setCachedData('/api/v1/videos/second',{title:'keep'},60000);
   p.removeCachedData('compatibility:first');const restored=manager(async()=>ok({}),{storage});assert.equal(restored.getCachedData('compatibility:first'),null);assert.deepEqual(restored.getCachedData('/api/v1/videos/second'),{title:'keep'});
 });
+
+test('parent pause is scoped, persists without prior health history, and expires',async()=>{
+  let now=100000,calls=0;const store=new Map(),storage={getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)};
+  const options={storage,clock:()=>now};const p=manager(async()=>{calls++;return ok({software:{name:'invidious'}});},options);
+  p.pauseProvider(bases[0]);p.updateProviderHealth(bases[0],'api',true,1);p.resetHealth();
+  for(const kind of ['api','playback','native'])assert.equal(p.getHealthyProviders(kind).includes(bases[0]),false);
+  assert.equal(p.snapshot().health[bases[0]].api.status,'paused');await assert.rejects(p.fetchFromProvider(bases[0],'/api/v1/stats'),e=>e.code==='PROVIDER_PAUSED');assert.equal(calls,0);
+  const restored=manager(async()=>ok({}),options);assert.equal(restored.getHealthyProviders('playback').includes(bases[0]),false);
+  await p.healthCheck();assert.equal(calls,1);assert.equal(p.snapshot().requests[0].provider,bases[1]);
+  now+=300001;assert.equal(restored.getHealthyProviders('playback').length,3);
+});
+test('parent pause can be resumed and rejects unconfigured URLs',()=>{
+  const p=manager(async()=>ok({}));p.pauseProvider(bases[1]);p.pauseProvider(bases[1],0);assert.equal(p.getHealthyProviders().length,3);
+  assert.throws(()=>p.pauseProvider('https://untrusted.example'),e=>e.code==='INVALID_REQUEST');assert.throws(()=>p.pauseProvider(bases[0],Infinity),e=>e.code==='INVALID_REQUEST');
+});

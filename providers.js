@@ -55,11 +55,12 @@
       states[base] = Object.create(null);
       for (const kind of ['api','playback','native']) {
         const old = storedHealth && storedHealth[base] && storedHealth[base][kind];
-        const fresh = {status:'unknown',lastSuccess:0,lastFailure:0,failureCount:0,averageResponseTime:0,cooldownUntil:0};
+        const fresh = {status:'unknown',lastSuccess:0,lastFailure:0,failureCount:0,averageResponseTime:0,cooldownUntil:0,pausedUntil:0};
         if (old && Number.isFinite(old.lastFailure) && Number.isFinite(old.lastSuccess) && Math.max(old.lastFailure,old.lastSuccess)>clock()-10*60*1000) {
           for (const key of ['lastSuccess','lastFailure','failureCount','averageResponseTime','cooldownUntil']) if (Number.isFinite(old[key]) && old[key]>=0) fresh[key]=Math.min(old[key], key==='cooldownUntil' ? clock()+5*60*1000 : key==='failureCount' ? 20 : key==='averageResponseTime' ? 60000 : clock());
           fresh.status=fresh.cooldownUntil>clock()?'cooldown':fresh.lastSuccess>fresh.lastFailure?'healthy':'unknown';
         }
+        if(old && Number.isFinite(old.pausedUntil) && old.pausedUntil>clock()) {fresh.pausedUntil=Math.min(old.pausedUntil,clock()+300000);fresh.status='paused';}
         states[base][kind]=fresh;
       }
     }
@@ -79,10 +80,11 @@
         state.cooldownUntil=wait ? clock()+Math.min(300000,wait*2**Math.min(3,state.failureCount-1)) : 0;
         state.status=wait?'cooldown':'degraded';
       }
+      if(state.pausedUntil>clock())state.status='paused';
       save(healthKey,states);
     }
     function getHealthyProviders(kind='api', resource='') {
-      return bases.filter(base=>states[base][kind].cooldownUntil<=clock() && (resourceFailures.get(base+resource)||0)<=clock()).sort((a,b)=>{
+      return bases.filter(base=>states[base][kind].pausedUntil<=clock() && states[base][kind].cooldownUntil<=clock() && (resourceFailures.get(base+resource)||0)<=clock()).sort((a,b)=>{
         const score=base=>{const s=states[base][kind];return (s.lastSuccess>s.lastFailure?0:100000)+s.failureCount*10000+(s.averageResponseTime||5000);};
         return score(a)-score(b);
       });
@@ -100,6 +102,7 @@
     }
     async function fetchFromProvider(base,path,{signal,validate=()=>true,timeoutMs=timeout}={}) {
       if (!bases.includes(base) || !path.startsWith('/api/v1/')) throw new AppError('INVALID_REQUEST');
+      if(states[base].api.pausedUntil>clock())throw new AppError('PROVIDER_PAUSED');
       const started=clock();
       try {
         const data=await fetchJSON(fetcher,base+path,{timeout:timeoutMs,signal});
@@ -144,15 +147,23 @@
     function markResourceFailure(base,resource) {if (bases.includes(base))resourceFailures.set(base+resource,clock()+30000);}
     function clearResourceFailures(resource) {for (const base of bases) resourceFailures.delete(base+resource);}
     function resetHealth(kind) {for (const base of bases) for (const k of kind?[kind]:['api','playback','native']) states[base][k].cooldownUntil=0;save(healthKey,states);}
+    function pauseProvider(base,duration=300000) {
+      if(!bases.includes(base) || !Number.isFinite(duration) || duration<0)throw new AppError('INVALID_REQUEST');
+      for(const kind of ['api','playback','native']) {
+        const state=states[base][kind];state.pausedUntil=duration ? clock()+Math.min(duration,300000) : 0;
+        state.status=state.pausedUntil>clock()?'paused':state.cooldownUntil>clock()?'cooldown':state.lastSuccess>state.lastFailure?'healthy':'unknown';
+      }
+      save(healthKey,states);
+    }
     async function healthCheck() {
       // One cheap probe per interval, not an all-provider fan-out. A successful
       // stats probe never claims the video-stream capability is healthy.
-      const candidates=bases.filter(base=>states[base].api.cooldownUntil<=clock()).sort((a,b)=>Math.max(states[a].api.lastSuccess,states[a].api.lastFailure)-Math.max(states[b].api.lastSuccess,states[b].api.lastFailure));
+      const candidates=bases.filter(base=>states[base].api.pausedUntil<=clock() && states[base].api.cooldownUntil<=clock()).sort((a,b)=>Math.max(states[a].api.lastSuccess,states[a].api.lastFailure)-Math.max(states[b].api.lastSuccess,states[b].api.lastFailure));
       if (!candidates.length) return;
       const base=candidates[0];
       try {await fetchFromProvider(base,'/api/v1/stats',{validate:data=>!!data && !!data.software});} catch (_) { /* Captured in diagnostics. */ }
     }
-    return {getDataProvider:data=>data && typeof data==='object' ? dataProviders.get(data) : null,isNetworkData:data=>!!data && typeof data==='object' && networkData.has(data),request,fetchFromProvider,getHealthyProviders,getCachedData,setCachedData,removeCachedData,updateProviderHealth,healthCheck,clearCache,resetHealth,markResourceFailure,clearResourceFailures,record,snapshot:()=>({health:JSON.parse(JSON.stringify(states)),requests:diagnostics.slice(),cacheEntries:cache.size,inflight:inflight.size})};
+    return {getDataProvider:data=>data && typeof data==='object' ? dataProviders.get(data) : null,isNetworkData:data=>!!data && typeof data==='object' && networkData.has(data),request,fetchFromProvider,getHealthyProviders,getCachedData,setCachedData,removeCachedData,updateProviderHealth,healthCheck,clearCache,resetHealth,pauseProvider,markResourceFailure,clearResourceFailures,record,snapshot:()=>({health:JSON.parse(JSON.stringify(states)),requests:diagnostics.slice(),cacheEntries:cache.size,inflight:inflight.size})};
   }
   return {AppError,classifyError,httpError,fetchJSON,createManager};
 });

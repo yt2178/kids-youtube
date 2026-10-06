@@ -66,7 +66,7 @@ const plain = obj => JSON.parse(JSON.stringify(obj));
 
 test('local JS and service worker parse, no third-party scripts/frameworks',()=>{
   scripts.forEach(s=>new vm.Script(s));new vm.Script(fs.readFileSync(path.join(root,'sw.js'),'utf8'));
-  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006e','./app.js?v=20261006e']);new vm.Script(providerScript);
+  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006f','./app.js?v=20261006f']);new vm.Script(providerScript);
   assert.match(html,/<html lang="he" dir="rtl">/);assert.match(html,/href="\.\/manifest.json"/);
   assert.doesNotMatch(html,/\/kids-youtube\/sw\.js/);
 });
@@ -638,4 +638,19 @@ test('blocked localStorage property getter cannot prevent startup or approved pl
 test('revoking an approval during playback prevents the next fallback source',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.tagName==='iframe');
   a.run('activeConfig=normalizeConfig({videos:[],channels:[]})');emit(media(a),'error');await until(()=>!a.elements['player-error'].hidden);assert.equal(media(a),undefined);assert.equal(a.run('playback.index'),1);a.run('closePlayer()');
+});
+
+test('asking for another player evicts sticky compatibility and skips failed source on reopening',async()=>{
+  const a=await app({videos:[{id:id(1)},{id:id(2)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>media(a)?.tagName==='video');
+  a.run(`providers.setCachedData('compatibility:'+INVIDIOUS_INSTANCES[0]+'${id(1)}',{preferred:true},60000)`);
+  a.elements['next-player'].listeners.click[0]();await until(()=>media(a)?.src?.includes('tiekoetter'));
+  assert.equal(a.run(`providers.getCachedData('compatibility:'+INVIDIOUS_INSTANCES[0]+'${id(1)}')`),null);a.run('closePlayer()');
+  a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));assert.match(media(a).src,/tiekoetter/);a.run('closePlayer()');
+  a.run(`openPlayer('${id(2)}')`);await until(()=>!!media(a));assert.match(media(a).src,/f5/);a.run('closePlayer()');
+});
+test('parent diagnostic pause excludes that source from playback and explicit retry',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]},undefined,new Map(),{href:'https://example.test/kids-youtube/?diagnostics=1'});
+  const button=a.elements['provider-controls'].children[0].children[1];button.listeners.click[0]();assert.match(button.textContent,/הפעלת מקור 1 מחדש/);
+  a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));assert.match(media(a).src,/tiekoetter/);
+  a.elements['retry-video'].listeners.click[0]();await until(()=>!!media(a));assert.match(media(a).src,/tiekoetter/);a.run('closePlayer()');
 });
