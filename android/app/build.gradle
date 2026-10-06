@@ -1,0 +1,40 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'il.kidsyoutube'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'il.kidsyoutube'
+        minSdk 23
+        targetSdk 35
+        versionCode 2
+        versionName '0.2-beta'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+    sourceSets.main.assets.srcDirs = ['src/main/assets', "$buildDir/generated/kidsAssets"]
+    tasks.register('prepareKidsAssets', Exec) {
+        workingDir rootProject.projectDir.parentFile
+        commandLine 'node', 'android/prepare-assets.cjs'
+        inputs.files fileTree(rootProject.projectDir.parentFile) {
+            include 'index.html', 'app.js', 'providers.js', 'icons/*.png', 'manifest.json'
+        }
+        inputs.file rootProject.file('native-adapter.js')
+        outputs.dir "$buildDir/generated/kidsAssets"
+    }
+    preBuild.dependsOn prepareKidsAssets
+    testOptions.unitTests.returnDefaultValues = true
+}
+dependencies {
+    implementation 'com.github.TeamNewPipe:NewPipeExtractor:v0.26.5'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'androidx.webkit:webkit:1.14.0'
+    implementation 'androidx.media3:media3-exoplayer:1.11.1'
+    implementation 'androidx.media3:media3-ui:1.11.1'
+    implementation 'androidx.media3:media3-datasource-okhttp:1.11.1'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
+    testImplementation 'junit:junit:4.13.2'
+}
+

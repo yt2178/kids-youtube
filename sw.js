@@ -1,6 +1,6 @@
 'use strict';
 const CACHE_PREFIX = 'kids-youtube-shell:' + self.registration.scope + ':';
-const SHELL_CACHE = CACHE_PREFIX + 'v11';
+const SHELL_CACHE = CACHE_PREFIX + 'v12';
 const IMAGE_CACHE = 'kids-youtube-images:' + self.registration.scope + ':v1';
 const SHELL_FILES = ['./index.html','./app.js?v=20261006h','./providers.js?v=20261006h','./player.html','./player.js?v=20261006h','./manifest.json','./icons/icon-192.png','./icons/icon-512.png'];
 const SCOPE_URL = new URL(self.registration.scope);

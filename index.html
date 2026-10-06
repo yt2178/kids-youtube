@@ -95,6 +95,20 @@
     noscript { display:block; padding:30px; text-align:center; }
     @media (min-width:700px) and (max-width:1100px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
     @media (max-width:480px) { .shell { padding-top:22px; } .brand-icon { width:52px; height:52px; } header { gap:18px; } .actions { width:100%; } .grid { gap:18px; } .player-bar { gap:12px; } }
+    /* Spacious child navigation; identical approved-content and playback logic. */
+    body { background:radial-gradient(ellipse at top right,#3b2447 0%,#1a1a2e 55%); }
+    .brand-icon { border-radius:22px; }
+    .browse-controls { background:#1a1a2ef5; border-radius:24px; padding:16px; border:1px solid #3d3655; }
+    .tab { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; border-radius:18px; font-weight:750; }
+    .tab span { font-size:24px; line-height:1; }
+    .tab[aria-pressed="true"] { box-shadow:0 6px 22px #e9456030; }
+    .card { box-shadow:0 8px 26px #0002; }
+    .card-title { line-height:1.45; }
+    .sort-options { margin-bottom:20px; border:1px solid #393650; border-radius:16px; }
+    .sort-options summary { cursor:pointer; min-height:56px; padding:15px 18px; color:var(--muted); font-size:16px; }
+    .sort-options .filters { padding:0 18px 16px; margin:0; }
+    .sort-options:has(.filters[hidden]) { display:none; }
+    @media (max-width:600px) { .shell { padding-inline:14px; } .browse-controls { padding:12px; } .tabs { gap:7px; } .tab { min-height:86px; font-size:15px; padding:8px 4px; } .subtitle { font-size:15px; } .toolbar { align-items:baseline; } #count { flex-shrink:0; } .card-title { font-size:21px; } .filters label { flex-wrap:wrap; } }
     @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none !important; transition:none !important; } }
   </style>
 </head>
@@ -127,7 +141,7 @@
         <button class="button" id="back-channels" type="button"><bdi dir="ltr">← חזרה לערוצים</bdi></button>
         <h2 id="channel-name" dir="auto"></h2>
       </div>
-      <div class="filters" id="filters"><label>סדר הסרטונים <select id="sort"><option value="list">לפי הרשימה</option><option value="newest">החדשים קודם</option><option value="name">לפי שם</option></select></label><label>בחירת ערוץ <select id="channel-filter"><option value="">כל הערוצים</option></select></label></div>
+      <details class="sort-options"><summary>סידור הסרטונים</summary><div class="filters" id="filters"><label>סדר הסרטונים <select id="sort"><option value="list">לפי הרשימה</option><option value="newest">החדשים קודם</option><option value="name">לפי שם</option></select></label><label>בחירת ערוץ <select id="channel-filter"><option value="">כל הערוצים</option></select></label></div></details>
       <div class="toolbar"><h2 id="browse-title">מה נצפה היום?</h2><span id="count" role="status" aria-live="polite"></span></div>
       <div class="status" id="status" role="status" aria-live="polite" aria-atomic="true">
         <span class="spinner" id="spinner" aria-hidden="true"></span><p id="status-text">רגע קטן, הסרטונים בדרך…</p>
@@ -161,3 +175,4 @@
 
 </body>
 </html>
+
