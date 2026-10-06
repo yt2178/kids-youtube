@@ -336,9 +336,7 @@ function render(config, lists) {
       ui['empty-clear'].hidden = true;ui['empty-clear'].dataset.action='';
     }
   }
-  ui['empty-title'].textContent = searching ? 'לא מצאנו. נסו שם אחר' : (isChannels ? 'עוד מעט יהיו כאן ערוצים' : 'עוד מעט יהיו כאן סרטונים');
   if (ui['status-text'].textContent.startsWith('אפשר ללחוץ על')) ui.status.hidden=viewMode==='videos' || isChannels;
-  ui['empty-text'].textContent = searching ? 'אפשר למחוק את החיפוש ולבחור מתוך הרשימה.' : (isChannels ? 'אחרי שההורה יוסיף ערוצים מאושרים, הם יופיעו כאן.' : viewMode === 'videos' ? 'אבא עוד לא הוסיף סרטונים בודדים. אפשר לבחור ערוץ או לפתוח את כל הסרטונים.' : 'אפשר לרענן או לבחור תוכן אחר שאושר.');
   if (!searchTimer) audit();
   if (focusId && !playback) {
     const target = [...ui.grid.children].find(card => (card.dataset.videoId || card.dataset.channelId) === focusId);
