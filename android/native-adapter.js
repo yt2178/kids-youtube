@@ -37,11 +37,12 @@
     });
   }
   const realFetch = window.fetch.bind(window);
+  const APPROVAL_API='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
   window.fetch = (input,options = {}) => {
     const raw = typeof input === 'string' ? input : input.url;
     const url = new URL(raw,location.href);
-    if (url.href === new URL('./videos.txt',location.href).href) {
-      return call('whitelist',null,options.signal).then(text => new Response(text,{status:200,headers:{'Content-Type':'text/plain; charset=utf-8'}}));
+    if (url.origin===new URL(APPROVAL_API).origin && url.pathname===new URL(APPROVAL_API).pathname && url.searchParams.get('action')==='list') {
+      return call('whitelist',null,options.signal).then(text => new Response(JSON.stringify({list:text}),{status:200,headers:{'Content-Type':'application/json; charset=utf-8'}}));
     }
     return realFetch(input,options);
   };
