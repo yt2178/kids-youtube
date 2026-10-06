@@ -26,6 +26,8 @@ import org.json.*;
 public final class MainActivity extends Activity {
     static final String ORIGIN="https://appassets.androidplatform.net";
     static final String HOME=ORIGIN+"/assets/index.html";
+    static final String SUPABASE_HOST="jxhelpxhrmwvzrrfrjuh.supabase.co";
+    static final String SUPABASE_PATH="/functions/v1/kids-youtube";
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ThreadPoolExecutor workers=new ThreadPoolExecutor(3,3,0,TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(32),new ThreadPoolExecutor.AbortPolicy());
@@ -131,6 +133,9 @@ public final class MainActivity extends Activity {
                     return result==null ? denied() : result;
                 }
                 String h=u.getHost();
+                boolean supabaseApi="https".equals(u.getScheme()) && SUPABASE_HOST.equals(h)
+                        && SUPABASE_PATH.equals(u.getPath()) && !request.isForMainFrame();
+                if(supabaseApi)return null;
                 boolean image="https".equals(u.getScheme()) && h!=null
                         && (h.equals("img.youtube.com") || h.equals("ytimg.com") || h.endsWith(".ytimg.com")
                         || h.equals("ggpht.com") || h.endsWith(".ggpht.com")

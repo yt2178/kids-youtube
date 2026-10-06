@@ -22,6 +22,16 @@ jobs:
           node-version: '24'
       - name: Website and bridge regressions
         run: node --test tests/*.test.cjs
+      - name: Verify production Supabase CORS for packaged Android origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          code="$(curl --fail-with-body --silent --show-error --location             --dump-header "$headers" --output "$body" --write-out '%{http_code}'             -H 'Origin: https://appassets.androidplatform.net'             'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list')"
+          test "$code" = "200"
+          grep -qi '^access-control-allow-origin: https://appassets.androidplatform.net' "$headers"
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(typeof j.list!=='string')process.exit(1)" "$body"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
