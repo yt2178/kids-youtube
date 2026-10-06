@@ -1,0 +1,18 @@
+{
+  "name": "kids-youtube-playback",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test *.test.mjs",
+    "probe": "node live-probe.mjs"
+  },
+  "dependencies": {
+    "youtubei.js": "18.1.0",
+    "quickjs-emscripten": "0.32.0"
+  }
+}
