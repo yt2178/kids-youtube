@@ -236,22 +236,33 @@ public final class MainActivity extends Activity {
         });
         try{workers.execute(playTask);}catch(RejectedExecutionException e){playTask.abort();unavailable();}
     }
+    static OkHttpClient mediaClient(OkHttpClient base) {
+        // Extractor requests intentionally do not follow redirects. Media URLs are different:
+        // Googlevideo commonly redirects between signed HTTPS media hosts. Follow same-scheme
+        // redirects only, and validate every network exchange before any bytes are sent.
+        return base.newBuilder()
+                .followRedirects(true)
+                .followSslRedirects(false)
+                .addNetworkInterceptor(chain->{
+                    String url=chain.request().url().toString();
+                    if(!ApprovalPolicy.safeMedia(url))throw new IOException("INVALID_MEDIA_REDIRECT");
+                    okhttp3.Response response=chain.proceed(chain.request());
+                    if(response.code()==401 || response.code()==403){
+                        response.close();throw new IOException("UPSTREAM_BLOCKED");
+                    }
+                    if(response.code()==429){
+                        response.close();throw new IOException("RATE_LIMITED");
+                    }
+                    return response;
+                }).build();
+    }
     private void trySource(long generation) {
         if(destroyed || generation!=playerGeneration || active==null)return;
         stopMedia();
         if(sourceIndex>=active.sources.size()){unavailable();return;}
         showMessage(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
         NativeApi.Source source=active.sources.get(sourceIndex++);
-        // Validate every network request again, including any redirected media URL.
-        OkHttpClient mediaClient=api.downloader.client.newBuilder().addInterceptor(chain->{
-            if(!ApprovalPolicy.safeMedia(chain.request().url().toString()))throw new IOException("INVALID_MEDIA");
-            okhttp3.Response response=chain.proceed(chain.request());
-            if(response.code()==401 || response.code()==403){
-                response.close();throw new IOException("UPSTREAM_BLOCKED");
-            }
-            if(response.code()==429){response.close();throw new IOException("RATE_LIMITED");}
-            return response;
-        }).build();
+        OkHttpClient mediaClient=mediaClient(api.downloader.client);
         OkHttpDataSource.Factory dataSource=new OkHttpDataSource.Factory(mediaClient);
         ProgressiveMediaSource.Factory factory=new ProgressiveMediaSource.Factory(dataSource)
                 .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(0));
