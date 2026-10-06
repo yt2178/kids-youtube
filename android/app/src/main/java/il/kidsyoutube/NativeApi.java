@@ -16,7 +16,7 @@ import org.schabi.newpipe.extractor.stream.*;
 
 /** Local equivalent of the existing UI's small Invidious metadata contract. */
 final class NativeApi {
-    static final String LIST_URL="https://raw.githubusercontent.com/yt2178/kids-youtube/main/videos.txt";
+    static final String LIST_URL="https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list&format=text";
     static final long LIST_TTL=30000, META_TTL=6*60*60*1000, CHANNEL_TTL=5*60*1000;
     private final Context context;
     final ExtractorDownloader downloader=new ExtractorDownloader();
