@@ -266,15 +266,19 @@ public final class MainActivity extends Activity {
                         if(redirects>=4){
                             response.close();throw new IOException("TOO_MANY_MEDIA_REDIRECTS");
                         }
-                        String location=response.header("Location");
-                        okhttp3.HttpUrl next=location==null?null:response.request().url().resolve(location);
-                        if(next==null || !ApprovalPolicy.safeMedia(next.toString())){
-                            response.close();throw new IOException("INVALID_MEDIA_REDIRECT");
-                        }
+                        okhttp3.HttpUrl next;
+                        try {next=safeMediaRedirect(response.request().url(),response.header("Location"));}
+                        catch(IOException error){response.close();throw error;}
                         response.close();
                         request=request.newBuilder().url(next).build();
                     }
                 }).build();
+    }
+    static okhttp3.HttpUrl safeMediaRedirect(okhttp3.HttpUrl current,String location) throws IOException {
+        okhttp3.HttpUrl next=location==null?null:current.resolve(location);
+        if(next==null || !ApprovalPolicy.safeMedia(next.toString()))
+            throw new IOException("INVALID_MEDIA_REDIRECT");
+        return next;
     }
     private void trySource(long generation) {
         if(destroyed || generation!=playerGeneration || active==null)return;
