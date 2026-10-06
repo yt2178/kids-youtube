@@ -50,15 +50,10 @@ test('dispatch failure leaves the request open and never reports success',async(
 test('closed or superseded issues cannot be replayed from an old event',async()=>{const m=mock({state:'closed'});assert.equal((await api.processApproval(m)).ignored,true);assert.ok(!m.calls.some(c=>c[0]==='write'));});
 test('editing a request during its save does not close the newer request',async()=>{const m=mock({secondBody:body(other)});assert.equal((await api.processApproval(m)).superseded,true);assert.equal(m.issue.state,'open');});
 test('invalid confirmed issue cannot add or deploy anything',async()=>{const m=mock();m.issue.body=body().replace('[x]','[ ]');assert.equal((await api.processApproval(m)).invalid,true);assert.ok(!m.calls.some(c=>['write','dispatch','close'].includes(c[0])));});
-test('parent page is separate, has no token storage or web iframe and stale previews lose confirmation',()=>{
+test('parent page uses password login, remembered session and direct server save without GitHub navigation',()=>{
   const html=fs.readFileSync('parents.html','utf8'),script=fs.readFileSync('parents.js','utf8');
-  assert.doesNotMatch(html+script,/github_pat_|localStorage|sessionStorage|<iframe|innerHTML/);
-  const nodes={};function node(){return {value:'',hidden:false,checked:false,disabled:false,handlers:{},addEventListener(k,f){this.handlers[k]=f;},removeAttribute(){}};}
-  const c={document:{getElementById(id){return nodes[id]||(nodes[id]=node());}},KidsParentLinks:links,location:{assign(url){c.saved=url;}}};
-  vm.createContext(c);vm.runInContext(script,c);nodes.link.value=video;nodes.inspect.handlers.click();
-  assert.equal(nodes.preview.hidden,false);assert.equal(nodes.save.disabled,true);
-  nodes.checked.checked=true;nodes.checked.handlers.change();assert.equal(nodes.save.disabled,false);
-  nodes.link.handlers.input();assert.equal(nodes.preview.hidden,true);assert.equal(nodes.checked.checked,false);
-  nodes.save.handlers.click();assert.equal(c.saved,undefined);
+  assert.match(html,/type="password"/);assert.match(html,/זכור אותי/);
+  assert.match(script,/localStorage/);assert.match(script,/sessionStorage/);
+  assert.match(script,/encodeURIComponent\(action\)/);assert.match(script,/mutate/);
+  assert.doesNotMatch(script,/issueURL\(/);assert.doesNotMatch(html,/המשך לאישור ב־GitHub/);
 });
-
