@@ -130,9 +130,12 @@ test('offline whitelist falls back to last-known approved snapshot',async()=>{
   const a=await app(empty,fail,store,{offline:true});
   assert.equal(a.run('displayed.size'),1);assert.match(a.elements['status-text'].textContent,/הרשימה השמורה/);
 });
-test('empty offline fallback shows the requested friendly error',async()=>{
+test('empty offline fallback shows a friendly retry state',async()=>{
   const a=await app(empty,fail,new Map(),{offline:true});
-  assert.equal(a.run('displayed.size'),0);assert.match(a.elements['status-text'].textContent,/הסרטונים אינם זמינים כרגע. נסו שוב מאוחר יותר./);
+  assert.equal(a.run('displayed.size'),0);assert.equal(a.elements.empty.hidden,false);
+  assert.match(a.elements['empty-title'].textContent,/לא הצלחנו לטעון/);
+  assert.equal(a.elements['empty-clear'].dataset.action,'retry');assert.equal(a.elements['empty-clear'].textContent,'נסה שוב');
+  assert.equal(a.elements.spinner.hidden,true);
 });
 test('fresh removal of manual video/channel also prunes persistent cache',async()=>{
   const store=new Map();await app({videos:[{id:id(1)}],channels:[{id:A}]},()=>json({videos:[row(2)],continuation:null}),store);
@@ -234,9 +237,29 @@ test('service worker installs shell, activates, excludes whitelist and cross-ori
   }
   let response;handlers.fetch({request:{url:scope,method:'GET',mode:'navigate'},respondWith:p=>response=p});assert.ok(await response);
 });
-test('tablet grid, tap targets and reduced-motion styles are provided',()=>{
-  assert.match(html,/minmax\(min\(100%,260px\),1fr\)/);assert.match(html,/min-width:700px/);
-  assert.match(html,/min-height:58px/);assert.match(html,/prefers-reduced-motion:reduce/);
+test('responsive grid, list view, tap targets and reduced-motion styles are provided',()=>{
+  assert.match(html,/minmax\(min\(100%,230px\),1fr\)/);assert.match(html,/data-view="list"/);
+  assert.match(html,/min-height:48px/);assert.match(html,/prefers-reduced-motion:reduce/);
+  assert.match(html,/@media \(max-width:360px\)/);assert.match(html,/@media \(max-height:520px\)/);
+});
+
+test('view choice switches between grid and list and persists on the device',async()=>{
+  const store=new Map(),config={videos:[{id:id(1),title:'שיר'}],channels:[]};
+  const a=await app(config,undefined,store);assert.equal(a.elements.grid.dataset.view,'grid');
+  a.elements['view-list'].listeners.click[0]();assert.equal(a.elements.grid.dataset.view,'list');
+  assert.equal(a.elements['view-list'].getAttribute('aria-pressed'),'true');
+  assert.equal(JSON.parse(store.get('kidsYoutubeViewMode')),'list');
+  const b=await app(config,undefined,store);assert.equal(b.elements.grid.dataset.view,'list');
+  b.elements['view-grid'].listeners.click[0]();assert.equal(b.elements.grid.dataset.view,'grid');
+});
+test('fast successful loading does not leave a spinner on screen',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});
+  assert.equal(a.elements.spinner.hidden,true);assert.equal(a.elements.status.hidden,true);
+});
+test('successful empty list is distinct from network failure',async()=>{
+  const a=await app(empty);assert.equal(a.elements.empty.hidden,false);
+  assert.match(a.elements['empty-title'].textContent,/עדיין אין כאן סרטונים/);
+  assert.equal(a.elements['empty-clear'].hidden,true);assert.equal(a.run('loadError'),false);
 });
 
 const link = n => 'https://youtu.be/' + id(n);
@@ -364,7 +387,7 @@ test('channel tab lists only whole-channel approvals, not creators of manual vid
   a.elements['channels-tab'].listeners.click[0]();
   assert.deepEqual(a.elements.grid.children.map(card=>card.dataset.channelId),[A]);
   assert.equal(a.elements['channels-tab'].getAttribute('aria-pressed'),'true');
-  assert.match(a.elements['search-label'].textContent,/ערוץ/);
+  assert.match(a.elements['search-label'].textContent,/ערוצ/);
 });
 test('live search matches titles, authors and approved channel names without network requests',async()=>{
   const a=await app({videos:[{id:id(3),title:'שִׁיר לשבת',author:'יוצר יחיד'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
@@ -397,7 +420,7 @@ test('channel name search filters channel cards and clear button restores all',a
 });
 test('no matches shows a friendly reset and keeps the approved authorization map',async()=>{
   const a=await app({videos:[{id:id(1),title:'מאושר'}],channels:[]});
-  await inputSearch(a,'לא קיים');assert.equal(a.elements.empty.hidden,false);assert.match(a.elements['empty-title'].textContent,/לא מצאנו/);
+  await inputSearch(a,'לא קיים');assert.equal(a.elements.empty.hidden,false);assert.match(a.elements['empty-title'].textContent,/לא מצאתי/);
   assert.equal(a.elements['empty-clear'].hidden,false);assert.equal(a.elements.more.hidden,true);assert.equal(a.run('displayed.size'),1);
   a.elements['empty-clear'].listeners.click[0]();assert.deepEqual(visibleVideoIds(a),[id(1)]);assert.equal(a.elements.empty.hidden,true);
 });
@@ -466,10 +489,11 @@ test('search query is local text, never a URL or an approval',async()=>{
   a.run(`openPlayer('${id(2)}')`);assert.equal(a.elements.player.hidden,true);
   await inputSearch(a,'<script>alert(1)</script>');assert.equal(a.calls.length,count);
 });
-test('navigation stays visible and search controls have large tablet touch targets',()=>{
-  assert.match(html,/\.browse-controls \{ position:sticky/);assert.match(html,/\.tab \{[^}]*min-height:78px/);
+test('navigation stays compact and search controls keep child-sized touch targets',()=>{
+  assert.match(html,/\.browse-controls \{ position:sticky/);assert.match(html,/\.tab \{[^}]*min-height:52px/);
   assert.match(html,/<label[^>]*for="search"/);assert.match(html,/id="search" type="search"/);
-  assert.match(html,/id="back-channels"/);assert.doesNotMatch(html,/api\/v1\/search/);
+  assert.match(html,/id="view-grid"/);assert.match(html,/id="view-list"/);assert.match(html,/id="back-channels"/);
+  assert.doesNotMatch(html,/api\/v1\/search/);
 });
 
 test('three tabs separate manual approvals, whole channels, and deduplicated union',async()=>{
