@@ -25,6 +25,29 @@ test('native bundle parses and keeps the three-tab UI without changing website s
     assert.equal(fs.readFileSync(path.join(root,'app.js'),'utf8'),original);
   }finally{fs.rmSync(out,{recursive:true,force:true});}
 });
+test('native CSP allows only the production Kids Supabase origin for connections',()=>{
+  const {prepare}=require('../android/prepare-assets.cjs'),out=fs.mkdtempSync(path.join(os.tmpdir(),'kids-csp-'));
+  try{
+    const {html}=prepare(out);
+    const metas=[...html.matchAll(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/g)];
+    assert.equal(metas.length,1);
+    const csp=metas[0][1];
+    assert.match(csp,/connect-src 'self' https:\/\/jxhelpxhrmwvzrrfrjuh\.supabase\.co(?:;|$)/);
+    assert.doesNotMatch(csp,/connect-src[^;]*\*/);
+    assert.doesNotMatch(csp,/connect-src[^;]*https:\/\/[^ ;]*supabase\.co[^ ;]*\*/);
+    assert.doesNotMatch(csp,/unsafe-eval/);
+  }finally{fs.rmSync(out,{recursive:true,force:true});}
+});
+test('native WebView allows only the exact Kids Supabase function as a remote API request',()=>{
+  const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  assert.match(source,/SUPABASE_HOST="jxhelpxhrmwvzrrfrjuh\.supabase\.co"/);
+  assert.match(source,/SUPABASE_PATH="\/functions\/v1\/kids-youtube"/);
+  assert.match(source,/SUPABASE_HOST\.equals\(h\)/);
+  assert.match(source,/SUPABASE_PATH\.equals\(u\.getPath\(\)\)/);
+  assert.match(source,/!request\.isForMainFrame\(\)/);
+  assert.doesNotMatch(source,/supabase\.co.*endsWith/);
+});
+
 test('native transport resolves matching responses and validates metadata',async()=>{
   const {c,messages,reply}=context();
   const p=c.KidsNative.createManager().request('/api/v1/videos/mVTlbvQ_010',{validate:d=>d.videoId==='mVTlbvQ_010'});
