@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: '24'
       - name: Install isolated backend dependencies
-        run: npm install --prefix backend --ignore-scripts --no-audit --no-fund
+        run: npm ci --prefix backend --ignore-scripts --no-audit --no-fund
       - name: Check backend syntax
         run: |
           node --check backend/core.mjs
@@ -42,8 +42,6 @@ jobs:
       - name: Live approved video, CORS, MP4 bytes and decoded frames
         if: github.event_name == 'workflow_dispatch' && inputs.run_live_probe
         run: node backend/live-probe.mjs
-      - name: Print dependency lock for reproducibility
-        run: node -e "console.log('LOCK_START'); console.log(require('fs').readFileSync('backend/package-lock.json','utf8')); console.log('LOCK_END')"
       - name: Save actual proof result and dependency lock
         if: always()
         uses: actions/upload-artifact@v4
@@ -51,5 +49,6 @@ jobs:
           name: cloud-playback-proof
           path: |
             qa/cloud-playback-proof.json
+            qa/cloud-playback-proof-20261006.json
             qa/cloud-proof-frame.png
             backend/package-lock.json

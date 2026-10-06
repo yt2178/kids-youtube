@@ -18,7 +18,7 @@
 
 ## בדיקה
 
-npm install --prefix backend --ignore-scripts
+npm ci --prefix backend --ignore-scripts
 npm test --prefix backend
 node backend/live-probe.mjs
 
@@ -29,7 +29,7 @@ node backend/live-probe.mjs
 ## הקמה חינמית אחרי הוכחת ניגון
 
 Web Service חדש ב־Render: runtime Node, plan Free, branch playback-cloud-proof.
-Build: npm install --prefix backend --ignore-scripts --no-audit --no-fund
+Build: npm ci --prefix backend --ignore-scripts --no-audit --no-fund
 Start: node backend/server.mjs
 PORT מגיע מ־Render. אין build לאתר הסטטי.
 
@@ -44,3 +44,5 @@ PORT מגיע מ־Render. אין build לאתר הסטטי.
 לא חיברנו את הניסוי לאתר ולא יצרנו שירות Render. אין אישור לניגון עובד ואין שינוי בממשק הילדים או בקישורים המאושרים. בדיקות push לא חוזרות לפנות למקור החסום; בדיקה חיה נוספת דורשת הפעלה ידנית לאחר שינוי במצב המקור. אין לעקוף את דרישת האימות.
 
 בדיקות דפדפן Desktop/Android, Console ו-Network לא בוצעו מחדש בשלב הניסוי: סביבת ההרצה המקומית מנותקת. בדיקות HTTP אמיתיות מקומיות ב-CI בדקו CORS, טווחי מדיה, ביטול אישורים ומגבלות שירות; המדיה בהן מדומה ואינה הוכחת ניגון YouTube.
+
+בדיקת הסיום (ללא ניסיון נוסף מול המקור החסום): 122 בדיקות אתר + 18 בדיקות שירות = 140 בדיקות שעברו. package-lock.json שומר את הגרסאות והתלויות שנבדקו.
