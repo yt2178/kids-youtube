@@ -67,3 +67,17 @@ test('native activity restricts messages to the packaged main frame and stops me
   assert.match(source,/generation!=playerGeneration/);assert.match(source,/player\.release\(\)/);
   assert.match(source,/setShowNextButton\(false\)/);
 });
+
+test('parent share target and credentials are isolated from the child app and packaged website',()=>{
+  const child=fs.readFileSync(path.join(root,'android/app/src/main/AndroidManifest.xml'),'utf8');
+  const parent=fs.readFileSync(path.join(root,'android/parent/src/main/AndroidManifest.xml'),'utf8');
+  assert.doesNotMatch(child,/android.intent.action.SEND|ParentActivity/);
+  assert.match(parent,/android.intent.action.SEND/);assert.match(parent,/android:mimeType="text\/plain"/);
+  assert.match(parent,/android:allowBackup="false"/);assert.match(parent,/android:usesCleartextTraffic="false"/);
+  const {prepare}=require('../android/prepare-assets.cjs'),out=fs.mkdtempSync(path.join(os.tmpdir(),'kids-parent-boundary-'));
+  try{
+    prepare(out);
+    for(const file of fs.readdirSync(out).filter(x=>/\.(js|html)$/.test(x)))
+      assert.doesNotMatch(fs.readFileSync(path.join(out,file),'utf8'),/github_pat_|TokenVault|Authorization.*Bearer/);
+  }finally{fs.rmSync(out,{recursive:true,force:true});}
+});

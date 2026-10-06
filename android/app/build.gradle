@@ -3,11 +3,11 @@ android {
     namespace 'il.kidsyoutube'
     compileSdk 36
     defaultConfig {
-        applicationId 'il.kidsyoutube.proof'
+        applicationId 'il.kidsyoutube'
         minSdk 23
         targetSdk 35
-        versionCode 1
-        versionName '0.1-newpipe-proof'
+        versionCode 2
+        versionName '0.2-beta'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -37,3 +37,4 @@ dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
     testImplementation 'junit:junit:4.13.2'
 }
+

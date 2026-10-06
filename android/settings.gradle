@@ -8,4 +8,5 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = 'KidsYouTube'
-include ':app'
+include ':app', ':parent'
+
