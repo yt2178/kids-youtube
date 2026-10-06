@@ -109,6 +109,18 @@
     .sort-options .filters { padding:0 18px 16px; margin:0; }
     .sort-options:has(.filters[hidden]) { display:none; }
     @media (max-width:600px) { .shell { padding-inline:14px; } .browse-controls { padding:12px; } .tabs { gap:7px; } .tab { min-height:86px; font-size:15px; padding:8px 4px; } .subtitle { font-size:15px; } .toolbar { align-items:baseline; } #count { flex-shrink:0; } .card-title { font-size:21px; } .filters label { flex-wrap:wrap; } }
+    /* Fit small phones, large text, split-screen and short landscape windows. */
+    .brand,.brand > div,.toolbar h2 { min-width:0; }
+    h1,.tab { overflow-wrap:anywhere; }
+    .toolbar { flex-wrap:wrap; gap:8px 16px; }
+    .filters select { min-width:0; max-width:100%; }
+    @media (max-width:360px) {
+      .shell { padding-inline:10px; } .browse-controls { padding:10px; }
+      .tab { font-size:14px; } .tab span { font-size:23px; }
+      .search-row { gap:6px; } #clear-search { padding-inline:10px; }
+      .filters label { display:block; width:100%; } .filters select { display:block; width:100%; }
+    }
+    @media (max-height:520px) { .browse-controls { position:static; } header { margin-bottom:18px; } .shell { padding-top:16px; } }
     @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none !important; transition:none !important; } }
   </style>
 </head>
@@ -175,4 +187,3 @@
 
 </body>
 </html>
-

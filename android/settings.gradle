@@ -8,5 +8,6 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = 'KidsYouTube'
-include ':app', ':parent'
-
+include ':app'
+// The optional previous companion is retained, but parents now use the browser page.
+if (providers.gradleProperty('includeParentCompanion').orNull == 'true') include ':parent'
