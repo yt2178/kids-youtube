@@ -538,13 +538,10 @@ async function loadApp() {
   try {
     let raw;
     try {
-      try {
-        const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
-        if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
-        raw = remote.list;
-      } catch (_) { raw = await fetchText('./videos.txt'); }
-    }
-    catch (error) {
+      const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+      if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
+      raw = remote.list;
+    } catch (error) {
       if (!previous) throw error;
       config = previous.config; lists = previous.channelLists;
       activeLinkRecords = previous.linkRecords;
