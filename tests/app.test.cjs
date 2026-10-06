@@ -500,7 +500,7 @@ test('online recovery resets cooldown and refreshes whitelist',async()=>{
   const a=await app();const initial=a.calls.length;a.listeners.offline[0]();assert.match(a.elements['status-text'].textContent,/אין חיבור/);a.listeners.online[0]();await until(()=>!a.run('loading'));assert.equal(a.calls.length,initial+1);
 });
 test('clear-cache control evicts API data while preserving parent whitelist source',async()=>{
-  const a=await app(link(1),metadataApi);assert.ok(a.run('providers.snapshot().cacheEntries')>0);a.elements['clear-cache'].listeners.click[0]();await until(()=>!a.run('loading'));assert.equal(a.run('displayed.size'),1);assert.equal(a.calls.filter(c=>c.url==='./videos.txt').length,2);
+  const a=await app(link(1),metadataApi);assert.ok(a.run('providers.snapshot().cacheEntries')>0);a.elements['clear-cache'].listeners.click[0]();await until(()=>!a.run('loading'));assert.equal(a.run('displayed.size'),1);assert.equal(a.calls.filter(c=>c.url.includes('/functions/v1/kids-youtube?action=list')).length,2);
 });
 test('search debounce collapses rapid input and preserves pending input on background render',async()=>{
   const a=await app({videos:[{id:id(1),title:'שיר'}],channels:[]});
