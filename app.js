@@ -498,7 +498,13 @@ async function loadApp() {
   activeLinkRecords = Object.create(null);
   try {
     let raw;
-    try { raw = await fetchText('./videos.txt'); }
+    try {
+      try {
+        const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+        if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
+        raw = remote.list;
+      } catch (_) { raw = await fetchText('./videos.txt'); }
+    }
     catch (error) {
       if (!previous) throw error;
       config = previous.config; lists = previous.channelLists;
