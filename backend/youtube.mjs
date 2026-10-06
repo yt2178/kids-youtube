@@ -13,7 +13,14 @@ const requestContext=new AsyncLocalStorage();
 export async function boundedFetch(input,init={}) {
   const signal=AbortSignal.any([AbortSignal.timeout(8000),init.signal,requestContext.getStore()].filter(Boolean));
   const result=await fetch(input,{...init,signal});
-  if([401,403,429].includes(result.status))throw new AppError(result.status===429?'RATE_LIMITED':'UPSTREAM_BLOCKED');
+  if([401,403,429].includes(result.status)){
+    let location;try{const u=new URL(input instanceof Request?input.url:String(input));location={host:u.hostname,path:u.pathname};}catch{location={};}
+    const code=result.status===429?'RATE_LIMITED':result.status===401?'UNAUTHORIZED':'FORBIDDEN';
+    console.log(JSON.stringify({event:'upstream-http-failed',status:result.status,code,...location}));
+    await result.body?.cancel();
+    // A forbidden metadata/alias API is not proof of a bot challenge in the video player.
+    throw new AppError(code);
+  }
   if(!result.ok)throw new AppError('UPSTREAM_ERROR');
   return result;
 }

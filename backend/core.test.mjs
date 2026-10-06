@@ -99,3 +99,9 @@ test('upstream 401/403/500 or HTML never become successful video responses',asyn
     const r=await fetch(f.base+'/latest_version?id='+ID);assert.equal(r.status,503);assert.match((await r.json()).message,/לא הצלחנו/);
   }
 });
+
+test('ordinary alias API failure never globally blocks a directly approved video',async()=>{
+  const f=fixture(direct+'\nhttps://www.youtube.com/@meirshows');
+  f.adapter.resolveChannel=async()=>{throw new AppError('FORBIDDEN');};
+  assert.equal((await f.service.video(ID)).videoId,ID);
+});
