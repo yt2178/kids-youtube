@@ -26,6 +26,7 @@ const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
 const CACHE_KEY = 'kidsYoutubeVideos';
 const INSTANCE_KEY = 'kidsYoutubeLastInstance';
+const VIEW_KEY = 'kidsYoutubeViewMode';
 const SCOPE = new URL('./', location.href).href;
 // A provider iframe may need its own storage for playback/preferences.
 // Its origin must stay external; CSP also blocks a redirect into our origin.
@@ -35,7 +36,7 @@ function installFramePolicy() {
 }
 installFramePolicy();
 const $ = id => document.getElementById(id);
-const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear'].map(id => [id, $(id)]));
+const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear','view-grid','view-list'].map(id => [id, $(id)]));
 let displayed = new Map();
 let activeConfig = {videos:[], channels:[]};
 let activeLists = Object.create(null);
@@ -63,6 +64,10 @@ const channelProgress = new Map();
 const verifiedChannelVideos = new Map();
 const cardCache = new Map();
 let channelDates = Object.create(null);
+let loadError = false;
+let statusTimer = null;
+const savedView = storageGet(VIEW_KEY);
+let viewStyle = savedView === 'list' ? 'list' : 'grid';
 function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
 const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:fetch, storage:optionalStorage(), timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});
 const diagnosticsEnabled = new URL(location.href).searchParams.get('diagnostics') === '1';
@@ -158,9 +163,21 @@ function saveSnapshot(config, lists) {
   return storageSet(CACHE_KEY, {version:2, scope:SCOPE, savedAt:Date.now(), config, channelLists:pruneLists(config, lists), channelDates:Object.fromEntries(config.channels.map(c=>[c.id,channelDates[c.id] || 0])), linkRecords:activeLinkRecords});
 }
 function status(text, busy = false) {
+  clearTimeout(statusTimer);statusTimer=null;
   ui['status-text'].textContent = text;
-  ui.status.hidden = !text;
-  ui.spinner.hidden = !busy;
+  ui.spinner.hidden = true;
+  if (!text) {ui.status.hidden=true;return;}
+  if (busy && displayed.size) {ui.status.hidden=true;return;}
+  if (busy) {
+    ui.status.hidden=true;
+    statusTimer=setTimeout(()=>{
+      if ((loading || paginationBusy) && !displayed.size) {
+        ui.status.hidden=false;ui.spinner.hidden=false;
+      }
+    },260);
+    return;
+  }
+  ui.status.hidden=false;
 }
 function normalizeSearch(text) {
   return String(text || '').normalize('NFKD').replace(/[\u0300-\u036f\u0591-\u05bd\u05bf-\u05c7]/g,'').toLocaleLowerCase('he-IL').replace(/\s+/g,' ').trim();
@@ -187,6 +204,10 @@ function switchBrowse(mode, channelId = null) {
   render(activeConfig, activeLists);
   scrollToPosition(saved ? saved.scrollY : 0);
 }
+function setViewStyle(mode) {
+  if (!['grid','list'].includes(mode) || viewStyle===mode) return;
+  viewStyle=mode;storageSet(VIEW_KEY,mode);render(activeConfig,activeLists);
+}
 function clearSearch() {
   clearTimeout(searchTimer); searchTimer = null;
   searchQuery = ''; visibleCount = SETTINGS.cardsPerPage;
@@ -195,6 +216,9 @@ function clearSearch() {
 }
 function render(config, lists) {
   activeConfig = config;
+  ui.grid.dataset.view=viewStyle;
+  ui['view-grid'].setAttribute('aria-pressed',String(viewStyle==='grid'));
+  ui['view-list'].setAttribute('aria-pressed',String(viewStyle==='list'));
   activeLists = lists;
   if (selectedChannelId && !config.channels.some(channel => channel.id === selectedChannelId)) {
     browseStates.delete('channel:' + selectedChannelId);
@@ -231,9 +255,9 @@ function render(config, lists) {
   ui['channels-tab'].setAttribute('aria-pressed', String(viewMode === 'channels'));
   ui['channel-heading'].hidden = !selected;
   ui['channel-name'].textContent = selected ? selected.name : '';
-  ui['browse-title'].textContent = isChannels ? 'איזה ערוץ נבחר?' : (selected ? 'הסרטונים של הערוץ' : viewMode === 'videos' ? 'סרטונים שאבא אישר' : 'כל הסרטונים המאושרים');
-  ui['search-label'].textContent = isChannels ? 'איזה ערוץ מחפשים?' : (selected ? 'איזה סרטון מחפשים בערוץ?' : 'איזה סרטון מחפשים?');
-  ui.search.placeholder = isChannels ? 'שם הערוץ' : (selected ? 'שם הסרטון בערוץ' : 'שם הסרטון או הערוץ');
+  ui['browse-title'].textContent = isChannels ? 'הערוצים שלי' : (selected ? 'הסרטונים של הערוץ' : viewMode === 'videos' ? 'הסרטונים שלי' : 'אלה הסרטונים שלי');
+  ui['search-label'].textContent = isChannels ? 'חיפוש בערוצים' : (selected ? 'חיפוש בערוץ' : 'חיפוש בסרטונים');
+  ui.search.placeholder = isChannels ? 'חיפוש בערוצים' : (selected ? 'חיפוש בערוץ' : 'חיפוש בסרטונים');
   if (!searchTimer && ui.search.value !== searchQuery) ui.search.value = searchQuery;
   ui['clear-search'].hidden = !searchQuery;
   ui.grid.setAttribute('aria-label', isChannels ? 'הערוצים המאושרים' : 'הסרטונים המאושרים');
@@ -295,8 +319,23 @@ function render(config, lists) {
   ui.more.textContent = isChannels ? 'עוד ערוצים' : 'עוד סרטונים';
   ui.empty.hidden = items.length > 0 || loading;
   const searching = !!normalizeSearch(searchQuery);
-  ui['empty-clear'].hidden = !searching;
-  ui['empty-clear'].textContent = isChannels ? 'הצגת כל הערוצים' : 'הצגת כל הסרטונים';
+  if (!ui.empty.hidden) {
+    if (searching) {
+      ui['empty-title'].textContent = isChannels ? 'לא מצאתי ערוץ כזה.' : 'לא מצאתי סרטונים כאלה.';
+      ui['empty-text'].textContent = 'אפשר לנסות מילה אחרת או לנקות את החיפוש.';
+      ui['empty-clear'].hidden = false;ui['empty-clear'].dataset.action='clear';
+      ui['empty-clear'].textContent = 'ניקוי החיפוש';
+    } else if (loadError) {
+      ui['empty-title'].textContent = 'לא הצלחנו לטעון את הסרטונים.';
+      ui['empty-text'].textContent = 'בדקו את החיבור ונסו שוב.';
+      ui['empty-clear'].hidden = false;ui['empty-clear'].dataset.action='retry';
+      ui['empty-clear'].textContent = 'נסה שוב';
+    } else {
+      ui['empty-title'].textContent = isChannels ? 'עדיין אין כאן ערוצים.' : 'עדיין אין כאן סרטונים.';
+      ui['empty-text'].textContent = isChannels ? 'כשההורה יוסיף ערוצים, הם יופיעו כאן.' : 'כשההורה יוסיף סרטונים או ערוצים, הם יופיעו כאן.';
+      ui['empty-clear'].hidden = true;ui['empty-clear'].dataset.action='';
+    }
+  }
   ui['empty-title'].textContent = searching ? 'לא מצאנו. נסו שם אחר' : (isChannels ? 'עוד מעט יהיו כאן ערוצים' : 'עוד מעט יהיו כאן סרטונים');
   if (ui['status-text'].textContent.startsWith('אפשר ללחוץ על')) ui.status.hidden=viewMode==='videos' || isChannels;
   ui['empty-text'].textContent = searching ? 'אפשר למחוק את החיפוש ולבחור מתוך הרשימה.' : (isChannels ? 'אחרי שההורה יוסיף ערוצים מאושרים, הם יופיעו כאן.' : viewMode === 'videos' ? 'אבא עוד לא הוסיף סרטונים בודדים. אפשר לבחור ערוץ או לפתוח את כל הסרטונים.' : 'אפשר לרענן או לבחור תוכן אחר שאושר.');
@@ -484,6 +523,7 @@ async function parallelMap(items, worker) {
 }
 async function loadApp() {
   if (loading || paginationBusy || !ui.player.hidden) return;
+  loadError=false;
   channelProgress.clear(); verifiedChannelVideos.clear();
   loading = true; lastLoad = Date.now();
   ui.refresh.disabled = true; ui.grid.setAttribute('aria-busy','true');
@@ -568,21 +608,18 @@ async function loadApp() {
     if (!cacheSaved) messages.push('לא הצלחנו לשמור את הרשימה במכשיר. הצפייה עדיין זמינה עם חיבור לאינטרנט.');
     status(messages.join(' '));
   } catch (_) {
+    loadError=true;
     activeConfig = {videos:[], channels:[]}; activeLists = Object.create(null);
     displayed = new Map(); ui.grid.replaceChildren(); ui.count.textContent = ''; ui.more.hidden = true;
     if (invalidConfig) {
       activeLinkRecords = Object.create(null);
       // Replace the local snapshot with an empty whitelist on a malformed current file.
       saveSnapshot({videos:[], channels:[]}, {});
-      status('הרשימה זקוקה לעדכון של ההורה. נסו שוב אחרי העדכון.');
-    } else status('הסרטונים אינם זמינים כרגע. נסו שוב מאוחר יותר.');
+      status('');
+    } else status('');
   } finally {
     loading = false; ui.refresh.disabled = false; ui.grid.removeAttribute('aria-busy');
     render(activeConfig, activeLists);
-    if (viewMode !== 'channels' && !normalizeSearch(searchQuery) && !displayed.size) {
-    ui['empty-title'].textContent = invalidConfig ? 'מחכים לרשימת הסרטונים' : (config && !config.videos.length && !config.channels.length ? 'עוד מעט יהיו כאן סרטונים' : 'הסרטונים אינם זמינים כרגע');
-    ui['empty-text'].textContent = config && !config.videos.length && !config.channels.length ? 'אחרי שההורה יוסיף סרטונים או ערוצים מאושרים, הם יופיעו כאן.' : 'אפשר לרענן ולנסות שוב מאוחר יותר.';
-    }
   }
 }
 
@@ -786,7 +823,9 @@ ui['channel-filter'].addEventListener('change', () => {channelFilter=ui['channel
 ui['clear-cache'].addEventListener('click', () => {providers.clearCache();providers.resetHealth();loadApp();});
 ui.search.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); flushSearch(); ui.search.blur(); } });
 ui['clear-search'].addEventListener('click', clearSearch);
-ui['empty-clear'].addEventListener('click', clearSearch);
+ui['empty-clear'].addEventListener('click', () => {if(ui['empty-clear'].dataset.action==='retry')loadApp();else clearSearch();});
+ui['view-grid'].addEventListener('click',()=>setViewStyle('grid'));
+ui['view-list'].addEventListener('click',()=>setViewStyle('list'));
 ui.refresh.addEventListener('click', loadApp);
 ui.more.addEventListener('click', loadMoreVideos);
 ui.back.addEventListener('click', () => closePlayer());
