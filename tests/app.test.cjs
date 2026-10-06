@@ -66,7 +66,7 @@ const plain = obj => JSON.parse(JSON.stringify(obj));
 
 test('local JS and service worker parse, no third-party scripts/frameworks',()=>{
   scripts.forEach(s=>new vm.Script(s));new vm.Script(fs.readFileSync(path.join(root,'sw.js'),'utf8'));
-  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006f','./app.js?v=20261006f']);new vm.Script(providerScript);
+  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006g','./app.js?v=20261006g']);new vm.Script(providerScript);
   assert.match(html,/<html lang="he" dir="rtl">/);assert.match(html,/href="\.\/manifest.json"/);
   assert.doesNotMatch(html,/\/kids-youtube\/sw\.js/);
 });
@@ -653,4 +653,12 @@ test('parent diagnostic pause excludes that source from playback and explicit re
   const button=a.elements['provider-controls'].children[0].children[1];button.listeners.click[0]();assert.match(button.textContent,/הפעלת מקור 1 מחדש/);
   a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));assert.match(media(a).src,/tiekoetter/);
   a.elements['retry-video'].listeners.click[0]();await until(()=>!!media(a));assert.match(media(a).src,/tiekoetter/);a.run('closePlayer()');
+});
+
+test('last embed offers a child-friendly failure action and ends without repeating providers',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});a.run('providers.pauseProvider(INVIDIOUS_INSTANCES[0]);providers.pauseProvider(INVIDIOUS_INSTANCES[1]);');
+  a.run(`openPlayer('${id(1)}')`);await until(()=>media(a)?.tagName==='video');emit(media(a),'error');await until(()=>media(a)?.tagName==='iframe');
+  const frame=media(a);a.listeners.message[0]({source:frame.contentWindow,origin:'https://example.test',data:{type:'kids-player-ready',videoId:id(1)}});
+  assert.equal(a.elements['next-player'].hidden,false);assert.equal(a.elements['next-player'].textContent,'הסרטון לא מתחיל');
+  a.elements['next-player'].listeners.click[0]();await until(()=>!a.elements['player-error'].hidden);assert.equal(media(a),undefined);assert.equal(a.run('playback.index'),1);a.run('closePlayer()');
 });

@@ -616,7 +616,7 @@ async function tryPlayer() {
   const session = playback;
   if (!session || session.controller.signal.aborted) return;
   const sequence = ++playerSequence;
-  stopMedia(); ui['player-error'].hidden = true; ui['next-player'].hidden = true;
+  stopMedia(); ui['player-error'].hidden = true; ui['next-player'].hidden = true;ui['next-player'].textContent='נסו נגן אחר';
   playerMessage(session.index ? 'מחפש מקור חלופי...' : 'מתחבר...',true);
   const current = () => playback === session && sequence === playerSequence && !session.controller.signal.aborted;
   try {
@@ -702,8 +702,10 @@ async function tryCompatiblePlayer(session,base,sequence) {
     if (!current() || ui['media-host'].children[0]!==frame || event.source!==frame.contentWindow || event.origin!==new URL(SCOPE).origin || !event.data || event.data.videoId!==session.video.id) return;
     if(event.data.type==='kids-player-error'){failed('FRAME_UNAVAILABLE');return;}
     if(event.data.type!=='kids-player-ready')return;
-    clearTimeout(playerTimer);playerMessage('אם הסרטון לא מתחיל, לחצו על ▶. אפשר גם לנסות מקור אחר.');
-    ui['next-player'].hidden=session.index>=session.instances.length;
+    clearTimeout(playerTimer);
+    const hasAlternative=session.index<session.instances.length;
+    playerMessage(hasAlternative?'אם הסרטון לא מתחיל, לחצו על ▶. אפשר גם לנסות מקור אחר.':'אם הסרטון לא מתחיל, לחצו על ▶ או על ״הסרטון לא מתחיל״.');
+    ui['next-player'].textContent=hasAlternative?'נסו נגן אחר':'הסרטון לא מתחיל';ui['next-player'].hidden=false;
     providers.setCachedData('compatibility:'+base+session.video.id,{preferred:true},10*60*1000);
     providers.record({kind:'embed',provider:base,path:session.video.id,outcome:'loaded-not-playback-proof'});audit();
   };
