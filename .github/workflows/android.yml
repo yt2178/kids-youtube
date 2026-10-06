@@ -2,6 +2,8 @@ name: Test and build Kids YouTube family apps
 on:
   push:
     branches: [android-newpipe-proof, main]
+  pull_request:
+    branches: [main]
     paths: ['android/**', 'tests/**', 'index.html', 'app.js', 'providers.js', 'icons/**', 'manifest.json', '.github/workflows/android.yml']
   workflow_dispatch:
 permissions:
@@ -89,7 +91,7 @@ jobs:
             android/parent/build/test-results/testDebugUnitTest/
   publish:
     needs: android
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
