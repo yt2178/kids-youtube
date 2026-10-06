@@ -48,12 +48,12 @@ test('native transport has a finite deadline',async()=>{
   await assert.rejects(c.KidsNative.call('api','path',undefined,5),e=>e.code==='TIMEOUT');
   assert.equal(messages[1].method,'cancel');
 });
-test('manual whitelist uses the native authoritative read instead of Invidious',async()=>{
+test('approval backend reads use the native authoritative bridge instead of WebView network',async()=>{
   const {c,messages,reply}=context();
-  const p=c.fetch('./videos.txt',{cache:'no-store'});
+  const p=c.fetch('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list',{cache:'no-store'});
   assert.equal(messages[0].method,'whitelist');
   reply({id:messages[0].id,data:'https://youtu.be/mVTlbvQ_010 // parent'});
-  assert.match(await (await p).text(),/mVTlbvQ_010/);
+  const data=await (await p).json();assert.match(data.list,/mVTlbvQ_010/);
 });
 test('native failures are rejected centrally without accepting invalid metadata',async()=>{
   const {c,messages,reply}=context(),manager=c.KidsNative.createManager();
@@ -64,6 +64,12 @@ test('native failures are rejected centrally without accepting invalid metadata'
   const invalid=assert.rejects(q,e=>e.code==='PROVIDER_ERROR');
   reply({id:messages[1].id,data:{bad:true}});await invalid;
 });
+test('native approval source is the direct backend, not the GitHub repository file',()=>{
+  const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  assert.match(source,/supabase\.co\/functions\/v1\/kids-youtube\?action=list&format=text/);
+  assert.doesNotMatch(source,/raw\.githubusercontent\.com/);
+});
+
 test('native activity restricts messages to the packaged main frame and stops media',()=>{
   const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
   assert.match(source,/!isMainFrame/);assert.match(source,/Set.of\(ORIGIN\)/);
