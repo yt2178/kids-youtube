@@ -12,16 +12,27 @@ public class MediaRedirectPolicyTest {
                 .followSslRedirects(false)
                 .build();
         OkHttpClient media=MainActivity.mediaClient(base);
-        assertTrue(media.followRedirects());
+        assertFalse(media.followRedirects());
         assertFalse(media.followSslRedirects());
-        assertEquals(1,media.networkInterceptors().size());
+        assertEquals(1,media.interceptors().size());
+        assertEquals(0,media.networkInterceptors().size());
     }
 
-    @Test public void redirectedMediaStillUsesStrictGooglevideoBoundary() {
-        assertTrue(ApprovalPolicy.safeMedia("https://rr2---sn.example.googlevideo.com/videoplayback?expire=1"));
-        assertFalse(ApprovalPolicy.safeMedia("http://rr2---sn.example.googlevideo.com/videoplayback"));
-        assertFalse(ApprovalPolicy.safeMedia("https://googlevideo.com.evil.example/videoplayback"));
-        assertFalse(ApprovalPolicy.safeMedia("https://user@rr2.googlevideo.com/videoplayback"));
-        assertFalse(ApprovalPolicy.safeMedia("https://rr2.googlevideo.com:444/videoplayback"));
+    @Test public void redirectedMediaStillUsesStrictGooglevideoBoundary() throws Exception {
+        okhttp3.HttpUrl current=okhttp3.HttpUrl.get("https://rr1.googlevideo.com/videoplayback?expire=1");
+        assertEquals("rr2.googlevideo.com",
+                MainActivity.safeMediaRedirect(current,"https://rr2.googlevideo.com/videoplayback?expire=2").host());
+        assertEquals("rr1.googlevideo.com",
+                MainActivity.safeMediaRedirect(current,"/next?expire=2").host());
+        for(String location:new String[]{
+                "http://rr2.googlevideo.com/videoplayback",
+                "https://googlevideo.com.evil.example/videoplayback",
+                "https://user@rr2.googlevideo.com/videoplayback",
+                "https://rr2.googlevideo.com:444/videoplayback",
+                "https://example.com/file"
+        }) {
+            try {MainActivity.safeMediaRedirect(current,location);fail(location);}
+            catch(java.io.IOException expected) {assertEquals("INVALID_MEDIA_REDIRECT",expected.getMessage());}
+        }
     }
 }
