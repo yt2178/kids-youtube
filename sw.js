@@ -1,8 +1,8 @@
 'use strict';
 const CACHE_PREFIX = 'kids-youtube-shell:' + self.registration.scope + ':';
-const SHELL_CACHE = CACHE_PREFIX + 'v14';
+const SHELL_CACHE = CACHE_PREFIX + 'v15';
 const IMAGE_CACHE = 'kids-youtube-images:' + self.registration.scope + ':v1';
-const SHELL_FILES = ['./index.html','./app.js?v=20261006i','./providers.js?v=20261006h','./player.html','./player.js?v=20261006h','./manifest.json','./icons/icon-192.png','./icons/icon-512.png'];
+const SHELL_FILES = ['./index.html','./app.js?v=20261006j','./providers.js?v=20261006h','./manifest.json','./icons/icon-192.png','./icons/icon-512.png'];
 const SCOPE_URL = new URL(self.registration.scope);
 const SHELL_URLS = new Set(SHELL_FILES.map(path => new URL(path,SCOPE_URL).href));
 const IMAGE_TTL = 7*24*60*60*1000;

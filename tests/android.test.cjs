@@ -70,6 +70,9 @@ test('native activity restricts messages to the packaged main frame and stops me
   assert.doesNotMatch(source,/\.addJavascriptInterface\(/);
   assert.match(source,/generation!=playerGeneration/);assert.match(source,/player\.release\(\)/);
   assert.match(source,/setShowNextButton\(false\)/);
+  assert.match(source,/handleDeepLink\(getIntent\(\)\)/);assert.match(source,/ApprovalPolicy\.VIDEO\.matcher\(id\)/);
+  const manifest=fs.readFileSync(path.join(root,'android/app/src/main/AndroidManifest.xml'),'utf8');
+  assert.match(manifest,/android:scheme="kidsyoutube"/);assert.match(manifest,/android:host="video"/);assert.match(manifest,/android.intent.category.BROWSABLE/);
 });
 
 test('parent share target and credentials are isolated from the child app and packaged website',()=>{

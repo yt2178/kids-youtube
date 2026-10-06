@@ -91,6 +91,19 @@ public final class MainActivity extends Activity {
         root.addView(overlay,new FrameLayout.LayoutParams(-1,-1));
         setContentView(root);
         setupWeb();
+        handleDeepLink(getIntent());
+    }
+    @Override protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleDeepLink(intent);
+    }
+    private void handleDeepLink(android.content.Intent intent) {
+        Uri data=intent==null?null:intent.getData();
+        if(data==null || !"kidsyoutube".equals(data.getScheme()) || !"video".equals(data.getHost()))return;
+        List<String> parts=data.getPathSegments();
+        String id=parts.size()==1?parts.get(0):"";
+        if(ApprovalPolicy.VIDEO.matcher(id).matches())openPlayer(id);
     }
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
     private TextView text(String value){TextView v=new TextView(this);v.setTextColor(Color.WHITE);v.setTextSize(20);v.setText(value);v.setPadding(dp(12),dp(8),dp(12),dp(8));return v;}
