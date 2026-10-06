@@ -7,6 +7,7 @@ const INVIDIOUS_INSTANCES = [
   'https://invidious.tiekoetter.com',
   'https://yt.chocolatemoo53.com'
 ];
+const BROWSER_PLAYBACK_DISABLED = true;
 const SETTINGS = Object.freeze({
   requestTimeoutMs: 4000,
   channelBudgetMs: 12500,
@@ -34,7 +35,7 @@ function installFramePolicy() {
 }
 installFramePolicy();
 const $ = id => document.getElementById(id);
-const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear'].map(id => [id, $(id)]));
+const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear'].map(id => [id, $(id)]));
 let displayed = new Map();
 let activeConfig = {videos:[], channels:[]};
 let activeLists = Object.create(null);
@@ -242,7 +243,7 @@ function render(config, lists) {
     const cachedCard = cardCache.get(key);
     if (cachedCard) {
       if (!isChannels) {
-        cachedCard.setAttribute('aria-label','צפייה: '+item.title);
+        cachedCard.setAttribute('aria-label','פתיחה באפליקציה: '+item.title);
         const thumb=cachedCard.children[0], title=cachedCard.children[1]; title.textContent=item.title;
         const author=cachedCard.children[2] || document.createElement('span');author.className='card-author';author.dir='auto';author.textContent=item.author;
         cachedCard.replaceChildren(...(item.author ? [thumb,title,author] : [thumb,title]));
@@ -271,7 +272,7 @@ function render(config, lists) {
       card.append(thumb, title, count);
     } else {
       card.dataset.videoId = item.id;
-      card.setAttribute('aria-label', 'צפייה: ' + item.title);
+      card.setAttribute('aria-label', 'פתיחה באפליקציה: ' + item.title);
       const thumb = document.createElement('span'); thumb.className = 'thumb';
       const image = document.createElement('img');
       image.src = 'https://img.youtube.com/vi/' + item.id + '/hqdefault.jpg';
@@ -619,6 +620,7 @@ function mediaSource(base, id) {
   return url.href;
 }
 async function tryPlayer() {
+  if (BROWSER_PLAYBACK_DISABLED) return;
   const session = playback;
   if (!session || session.controller.signal.aborted) return;
   const sequence = ++playerSequence;
@@ -681,6 +683,7 @@ async function tryPlayer() {
   media.src = mediaSource(base,session.video.id); media.load();
 }
 async function tryCompatiblePlayer(session,base,sequence) {
+  if (BROWSER_PLAYBACK_DISABLED) return;
   const current=()=>playback===session && playerSequence===sequence && !session.controller.signal.aborted;
   if (!current()) return;
   if (Date.now() >= session.deadline) {playerUnavailable();return;}
@@ -722,21 +725,36 @@ async function tryCompatiblePlayer(session,base,sequence) {
   playerTimer=setTimeout(()=>failed('TIMEOUT'),Math.max(1,Math.min(SETTINGS.playerWaitMs,session.deadline-Date.now())));
   ui['media-host'].replaceChildren(frame);
 }
+function launchNativeApp() {
+  const session=playback;
+  if(!session || !session.appPrompt || !VIDEO_ID.test(session.video.id))return;
+  let leftPage=!!document.hidden;
+  const onVisibility=()=>{if(document.hidden)leftPage=true;};
+  document.addEventListener('visibilitychange',onVisibility,{once:true});
+  ui['app-open-message'].textContent='פותחים את האפליקציה…';
+  try { location.href='kidsyoutube://video/'+session.video.id; }
+  catch (_) { ui['app-open-message'].textContent='האפליקציה עדיין לא מותקנת במכשיר הזה.'; return; }
+  setTimeout(()=>{
+    if(playback===session && !leftPage && !document.hidden)
+      ui['app-open-message'].textContent='האפליקציה עדיין לא מותקנת במכשיר הזה.';
+  },1200);
+}
 function openPlayer(id) {
   const video = displayed.get(id);
   if (!video || (!getApprovedVideos().has(id) && !getApprovedChannels().has(video.channelId))) return;
   flushSearch();
   const alreadyOpen = !!playback;
-  if (playback) playback.controller.abort();
+  if (playback && playback.controller) playback.controller.abort();
   else {returnFocus=document.activeElement;returnScrollY=window.scrollY||0;}
   returnVideoId=id;
   stopMedia();
-  playback={video,instances:providers.getHealthyProviders('playback','/embed/'+id),index:0,controller:new AbortController(),deadline:Date.now()+SETTINGS.playerBudgetMs,verified:false,resumeTime:0};
+  playback={video,appPrompt:true,controller:new AbortController(),instances:[],index:0,verified:true,resumeTime:0};
   ui['player-title'].textContent=video.title;
+  ui['player-error'].hidden=false;ui['next-player'].hidden=true;ui['retry-video'].hidden=false;ui['retry-video'].textContent='פתיחה באפליקציה';
+  ui['app-open-message'].textContent='את הסרטון אפשר לפתוח באפליקציית Kids YouTube.';
+  playerMessage('');
   ui.player.hidden=false;ui.app.inert=true;ui.app.setAttribute('aria-hidden','true');document.body.style.overflow='hidden';ui.back.focus();
   if (!alreadyOpen) history.pushState({kidsYoutubePlayer:true},'',location.href);
-  const session=playback;const attempt=tryPlayer();const sequence=playerSequence;
-  attempt.catch(() => {if(playback===session && playerSequence===sequence)playerUnavailable();});
 }
 function closePlayer(fromHistory = false) {
   if (!playback) return;
@@ -774,7 +792,7 @@ ui.more.addEventListener('click', loadMoreVideos);
 ui.back.addEventListener('click', () => closePlayer());
 window.addEventListener('popstate', () => closePlayer(true));
 ui['next-player'].addEventListener('click', () => {
-  if(!playback)return;
+  if(!playback || playback.appPrompt)return;
   const media=ui['media-host'].children[0],base=playback.instances[playback.index-1],id=playback.video.id;
   if(media && Number.isFinite(media.currentTime) && media.currentTime)playback.resumeTime=media.currentTime;
   // User-reported failure applies to this video, never every video on the host.
@@ -782,6 +800,7 @@ ui['next-player'].addEventListener('click', () => {
   playback.deadline=Date.now()+SETTINGS.playerBudgetMs;tryPlayer();
 });
 ui['retry-video'].addEventListener('click', () => {
+  if (playback && playback.appPrompt) {launchNativeApp();return;}
   if (playback) {
     const id=playback.video.id;
     // An explicit tap permits one new bounded round, including authorization
