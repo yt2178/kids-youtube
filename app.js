@@ -594,7 +594,7 @@ function stopMedia() {
 }
 function playerUnavailable() {
   stopMedia(); ui['player-error'].hidden = false; ui['next-player'].hidden = true;
-  playerMessage('לא הצלחנו להפעיל את הסרטון כרגע. נסה שוב בעוד רגע.');
+  playerMessage('');
 }
 async function verifyVideoApproval(session) {
   if (getApprovedVideos().has(session.video.id)) return true;

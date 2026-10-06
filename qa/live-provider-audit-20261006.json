@@ -1,0 +1,262 @@
+{
+  "providers": {
+    "health": {
+      "https://invidious.f5.si": {
+        "api": {
+          "status": "paused",
+          "lastSuccess": 1791251486924,
+          "lastFailure": 1791251850463,
+          "failureCount": 1,
+          "averageResponseTime": 1021.51,
+          "cooldownUntil": 1791251880463,
+          "pausedUntil": 1791252158769
+        },
+        "playback": {
+          "status": "paused",
+          "lastSuccess": 0,
+          "lastFailure": 0,
+          "failureCount": 0,
+          "averageResponseTime": 0,
+          "cooldownUntil": 0,
+          "pausedUntil": 1791252158769
+        },
+        "native": {
+          "status": "paused",
+          "lastSuccess": 0,
+          "lastFailure": 0,
+          "failureCount": 0,
+          "averageResponseTime": 0,
+          "cooldownUntil": 0,
+          "pausedUntil": 1791252158769
+        }
+      },
+      "https://invidious.tiekoetter.com": {
+        "api": {
+          "status": "cooldown",
+          "lastSuccess": 1791251607302,
+          "lastFailure": 1791251853706,
+          "failureCount": 1,
+          "averageResponseTime": 911.4,
+          "cooldownUntil": 1791251883706,
+          "pausedUntil": 0
+        },
+        "playback": {
+          "status": "unknown",
+          "lastSuccess": 0,
+          "lastFailure": 0,
+          "failureCount": 0,
+          "averageResponseTime": 0,
+          "cooldownUntil": 0,
+          "pausedUntil": 0
+        },
+        "native": {
+          "status": "unknown",
+          "lastSuccess": 0,
+          "lastFailure": 0,
+          "failureCount": 0,
+          "averageResponseTime": 0,
+          "cooldownUntil": 0,
+          "pausedUntil": 0
+        }
+      },
+      "https://yt.chocolatemoo53.com": {
+        "api": {
+          "status": "healthy",
+          "lastSuccess": 1791251972798,
+          "lastFailure": 1791251852949,
+          "failureCount": 0,
+          "averageResponseTime": 442.85999999999996,
+          "cooldownUntil": 0,
+          "pausedUntil": 0
+        },
+        "playback": {
+          "status": "unknown",
+          "lastSuccess": 0,
+          "lastFailure": 0,
+          "failureCount": 0,
+          "averageResponseTime": 0,
+          "cooldownUntil": 0,
+          "pausedUntil": 0
+        },
+        "native": {
+          "status": "unknown",
+          "lastSuccess": 0,
+          "lastFailure": 0,
+          "failureCount": 0,
+          "averageResponseTime": 0,
+          "cooldownUntil": 0,
+          "pausedUntil": 0
+        }
+      }
+    },
+    "requests": [
+      {
+        "kind": "cache",
+        "path": "/api/v1/resolveurl?url=https%3A%2F%2Fwww.youtube.com%2F%40meirshows",
+        "outcome": "hit",
+        "at": 1791251852488
+      },
+      {
+        "kind": "cache",
+        "path": "/api/v1/channels/UCV6xoqUxJzkWwCbDmEwMSYw",
+        "outcome": "hit",
+        "at": 1791251852490
+      },
+      {
+        "kind": "api",
+        "provider": "https://yt.chocolatemoo53.com",
+        "path": "/api/v1/videos/mVTlbvQ_010",
+        "outcome": "NETWORK_OR_CORS",
+        "status": 0,
+        "ms": 460,
+        "at": 1791251852949
+      },
+      {
+        "kind": "api",
+        "provider": "https://invidious.tiekoetter.com",
+        "path": "/api/v1/videos/mVTlbvQ_010",
+        "outcome": "NETWORK_OR_CORS",
+        "status": 0,
+        "ms": 757,
+        "at": 1791251853706
+      },
+      {
+        "kind": "playback",
+        "provider": "https://invidious.tiekoetter.com",
+        "path": "mVTlbvQ_010",
+        "outcome": "VIDEO_UNAVAILABLE",
+        "ms": 2470,
+        "at": 1791251866657
+      },
+      {
+        "kind": "embed",
+        "provider": "https://invidious.tiekoetter.com",
+        "path": "mVTlbvQ_010",
+        "outcome": "loaded-not-playback-proof",
+        "at": 1791251870917
+      },
+      {
+        "kind": "playback",
+        "provider": "https://invidious.tiekoetter.com",
+        "videoId": "mVTlbvQ_010",
+        "outcome": "user-requested-alternative",
+        "at": 1791251887489
+      },
+      {
+        "kind": "playback",
+        "provider": "https://yt.chocolatemoo53.com",
+        "path": "mVTlbvQ_010",
+        "outcome": "VIDEO_UNAVAILABLE",
+        "ms": 400,
+        "at": 1791251887893
+      },
+      {
+        "kind": "embed",
+        "provider": "https://yt.chocolatemoo53.com",
+        "path": "mVTlbvQ_010",
+        "outcome": "loaded-not-playback-proof",
+        "at": 1791251888416
+      },
+      {
+        "kind": "api",
+        "provider": "https://yt.chocolatemoo53.com",
+        "path": "/api/v1/stats",
+        "outcome": "success",
+        "ms": 415,
+        "at": 1791251972798
+      }
+    ],
+    "cacheEntries": 3,
+    "inflight": 0
+  },
+  "approvedVideos": 1,
+  "approvedChannels": 1,
+  "loadedVideos": 1,
+  "renderedCards": 1,
+  "resources": [
+    {
+      "url": "https://yt2178.github.io/kids-youtube/icons/icon-192.png",
+      "ms": 137,
+      "bytes": 0,
+      "type": "img"
+    },
+    {
+      "url": "https://yt2178.github.io/kids-youtube/providers.js?v=20261006f",
+      "ms": 226,
+      "bytes": 4190,
+      "type": "script"
+    },
+    {
+      "url": "https://yt2178.github.io/kids-youtube/app.js?v=20261006f",
+      "ms": 232,
+      "bytes": 15051,
+      "type": "script"
+    },
+    {
+      "url": "https://yt2178.github.io/kids-youtube/manifest.json",
+      "ms": 158,
+      "bytes": 0,
+      "type": "link"
+    },
+    {
+      "url": "https://yt2178.github.io/kids-youtube/videos.txt",
+      "ms": 98,
+      "bytes": 779,
+      "type": "fetch"
+    },
+    {
+      "url": "https://yt2178.github.io/kids-youtube/icons/icon-192.png",
+      "ms": 120,
+      "bytes": 0,
+      "type": "other"
+    },
+    {
+      "url": "https://yt.chocolatemoo53.com/api/v1/videos/mVTlbvQ_010",
+      "ms": 457,
+      "bytes": 0,
+      "type": "fetch"
+    },
+    {
+      "url": "https://img.youtube.com/vi/mVTlbvQ_010/hqdefault.jpg",
+      "ms": 24,
+      "bytes": 0,
+      "type": "img"
+    },
+    {
+      "url": "https://invidious.tiekoetter.com/api/v1/videos/mVTlbvQ_010",
+      "ms": 755,
+      "bytes": 0,
+      "type": "fetch"
+    },
+    {
+      "url": "https://invidious.tiekoetter.com/latest_version?id=mVTlbvQ_010&itag=18&local=true",
+      "ms": 2383,
+      "bytes": 0,
+      "type": "video"
+    },
+    {
+      "url": "https://yt2178.github.io/kids-youtube/player.html",
+      "ms": 41,
+      "bytes": 929,
+      "type": "iframe"
+    },
+    {
+      "url": "https://yt.chocolatemoo53.com/latest_version?id=mVTlbvQ_010&itag=18&local=true",
+      "ms": 388,
+      "bytes": 0,
+      "type": "video"
+    },
+    {
+      "url": "https://yt2178.github.io/kids-youtube/player.html",
+      "ms": 121,
+      "bytes": 929,
+      "type": "iframe"
+    },
+    {
+      "url": "https://yt.chocolatemoo53.com/api/v1/stats",
+      "ms": 412,
+      "bytes": 0,
+      "type": "fetch"
+    }
+  ]
+}

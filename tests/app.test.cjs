@@ -66,7 +66,7 @@ const plain = obj => JSON.parse(JSON.stringify(obj));
 
 test('local JS and service worker parse, no third-party scripts/frameworks',()=>{
   scripts.forEach(s=>new vm.Script(s));new vm.Script(fs.readFileSync(path.join(root,'sw.js'),'utf8'));
-  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006g','./app.js?v=20261006g']);new vm.Script(providerScript);
+  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006h','./app.js?v=20261006h']);new vm.Script(providerScript);
   assert.match(html,/<html lang="he" dir="rtl">/);assert.match(html,/href="\.\/manifest.json"/);
   assert.doesNotMatch(html,/\/kids-youtube\/sw\.js/);
 });
@@ -199,7 +199,7 @@ test('actual media and embed errors automatically advance to the next instance',
 test('all finite player attempts failing show a friendly retry state',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));
   for(let i=0;i<6;i++){const v=media(a);assert.ok(v);emit(v,'error');await new Promise(r=>setTimeout(r,0));}
-  await until(()=>!a.elements['player-error'].hidden);assert.equal(media(a),undefined);assert.match(a.elements['player-message'].textContent,/לא הצלחנו להפעיל/);a.run('closePlayer()');
+  await until(()=>!a.elements['player-error'].hidden);assert.equal(media(a),undefined);assert.equal(a.elements['player-message'].textContent,'');assert.equal(a.elements['player-error'].getAttribute('role'),'alert');a.run('closePlayer()');
 });
 test('closing cancels an in-progress native source and ignores its late events',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));const v=media(a);
