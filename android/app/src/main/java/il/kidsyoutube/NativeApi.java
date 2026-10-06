@@ -1,0 +1,308 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package il.kidsyoutube;
+
+import android.content.Context;
+import java.io.IOException;
+import java.net.URI;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import okhttp3.*;
+import org.json.*;
+import org.schabi.newpipe.extractor.*;
+import org.schabi.newpipe.extractor.channel.ChannelInfo;
+import org.schabi.newpipe.extractor.channel.tabs.*;
+import org.schabi.newpipe.extractor.linkhandler.ListLinkHandler;
+import org.schabi.newpipe.extractor.stream.*;
+
+/** Local equivalent of the existing UI's small Invidious metadata contract. */
+final class NativeApi {
+    static final String LIST_URL="https://raw.githubusercontent.com/yt2178/kids-youtube/main/videos.txt";
+    static final long LIST_TTL=30000, META_TTL=6*60*60*1000, CHANNEL_TTL=5*60*1000;
+    private final Context context;
+    final ExtractorDownloader downloader=new ExtractorDownloader();
+    private volatile ApprovalPolicy policy=ApprovalPolicy.parse("");
+    private volatile String raw="";
+    private volatile long checkedAt;
+    private final Map<String,Alias> aliases=new ConcurrentHashMap<>();
+    private final Map<String,Cache> cache=new ConcurrentHashMap<>();
+    private final Map<String,Cursor> cursors=new ConcurrentHashMap<>();
+    private volatile long cooldownUntil;
+    NativeApi(Context context) {
+        this.context=context.getApplicationContext();
+        NewPipe.init(downloader);
+    }
+    private static final class Alias {
+        final String id;final long expires;
+        Alias(String id){this.id=id;expires=System.currentTimeMillis()+CHANNEL_TTL;}
+    }
+    private static final class Cache {
+        final Object data;final long expires;final String authority;
+        Cache(Object data,long ttl,String authority){this.data=data;expires=System.currentTimeMillis()+ttl;this.authority=authority;}
+    }
+    private static final class Cursor {
+        final String channel,authority;
+        final List<ListLinkHandler> tabs;
+        final int tab;
+        final Page page;
+        final long expires=System.currentTimeMillis()+10*60*1000;
+        Cursor(String channel,String authority,List<ListLinkHandler> tabs,int tab,Page page) {
+            this.channel=channel;this.authority=authority;this.tabs=tabs;this.tab=tab;this.page=page;
+        }
+    }
+    synchronized String whitelist(boolean force) throws Exception {
+        if(!force && checkedAt>0 && System.currentTimeMillis()-checkedAt<LIST_TTL)return raw;
+        RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
+        okhttp3.Request request=new okhttp3.Request.Builder().url(LIST_URL)
+                .header("Cache-Control","no-cache").build();
+        Call call=downloader.client.newCall(request);
+        if(scope!=null)scope.add(call);
+        try(okhttp3.Response response=call.execute()){
+            if(!response.isSuccessful())throw new IOException("WHITELIST_UNAVAILABLE");
+            String text=ExtractorDownloader.readBounded(response.body(),1000000);
+            if(text.trim().startsWith("{"))throw new IOException("PLAIN_LIST_REQUIRED");
+            ApprovalPolicy next=ApprovalPolicy.parse(text);
+            if(!next.fingerprint.equals(policy.fingerprint)) {
+                cache.clear();cursors.clear();
+                aliases.keySet().retainAll(next.channelUrls);
+            }
+            raw=text;policy=next;checkedAt=System.currentTimeMillis();
+            // Private native snapshot is for display only. Playback always requires
+            // a fresh successful whitelist check and does not trust this file.
+            context.getSharedPreferences("native-list",Context.MODE_PRIVATE).edit()
+                    .putString("display",text).putLong("savedAt",checkedAt).apply();
+            return text;
+        } finally {if(scope!=null)scope.remove(call);}
+    }
+    String displayWhitelist() throws Exception {
+        try{return whitelist(true);}
+        catch(Exception e){
+            long saved=context.getSharedPreferences("native-list",0).getLong("savedAt",0);
+            String text=context.getSharedPreferences("native-list",0).getString("display",null);
+            if(text!=null && saved>0 && System.currentTimeMillis()-saved<7*24*60*60*1000)return text;
+            throw e;
+        }
+    }
+    private void checkNetwork() throws IOException {
+        RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
+        if(System.currentTimeMillis()<cooldownUntil)throw new IOException("UPSTREAM_BLOCKED");
+    }
+    private Set<String> approvedChannels() {
+        Set<String> result=new HashSet<>(policy.channels);
+        aliases.forEach((url,alias)->{
+            if(policy.channelUrls.contains(url) && System.currentTimeMillis()<alias.expires)result.add(alias.id);
+        });
+        return result;
+    }
+    private ChannelInfo channel(String url) throws Exception {
+        checkNetwork();
+        ChannelInfo info=ChannelInfo.getInfo(ServiceList.YouTube,url);
+        if(!ApprovalPolicy.CHANNEL.matcher(info.getId()).matches())throw new IOException("INVALID_CHANNEL");
+        return info;
+    }
+    private ChannelInfo approvedChannel(String id) throws Exception {
+        if(!approvedChannels().contains(id))throw new IOException("NOT_APPROVED");
+        Cache item=cache.get("channel:"+id);
+        if(valid(item))return (ChannelInfo)item.data;
+        ChannelInfo info=channel("https://www.youtube.com/channel/"+id);
+        if(!id.equals(info.getId()))throw new IOException("INVALID_CHANNEL");
+        put("channel:"+id,info,CHANNEL_TTL);return info;
+    }
+    private boolean valid(Cache item) {
+        return item!=null && item.expires>System.currentTimeMillis() && item.authority.equals(policy.fingerprint);
+    }
+    private void put(String key,Object value,long ttl) {
+        cache.entrySet().removeIf(e->!valid(e.getValue()));
+        if(cache.size()>=200)cache.clear();
+        cache.put(key,new Cache(value,ttl,policy.fingerprint));
+    }
+    Object request(String path) throws Exception {
+        whitelist(false);
+        if(path==null || path.length()>22000)throw new IOException("INVALID_REQUEST");
+        Cache hit=cache.get(path);if(valid(hit))return hit.data;
+        try {
+            Object result;
+            if(path.startsWith("/api/v1/resolveurl?url=")) {
+                String input=java.net.URLDecoder.decode(path.substring(23),java.nio.charset.StandardCharsets.UTF_8);
+                ApprovalPolicy.Link link=ApprovalPolicy.classify(input);
+                if(link.videoId!=null || !policy.channelUrls.contains(link.url))throw new IOException("NOT_APPROVED");
+                ChannelInfo info=channel(link.url);
+                aliases.put(link.url,new Alias(info.getId()));
+                put("channel:"+info.getId(),info,CHANNEL_TTL);
+                result=new JSONObject().put("ucid",info.getId()).put("browseId",info.getId());
+            } else if(path.matches("/api/v1/videos/[A-Za-z0-9_-]{11}")) {
+                String id=path.substring("/api/v1/videos/".length());
+                StreamExtractor extractor=extractVideo(id);
+                String author=authorId(extractor.getUploaderUrl());
+                if(!policy.allows(id,author,approvedChannels()))throw new IOException("NOT_APPROVED");
+                result=metadata(extractor,id,author);
+            } else if(path.matches("/api/v1/channels/UC[A-Za-z0-9_-]{22}")) {
+                ChannelInfo info=approvedChannel(path.substring("/api/v1/channels/".length()));
+                JSONArray images=new JSONArray();
+                for(Image image:info.getAvatars())images.put(new JSONObject().put("url",image.getUrl())
+                        .put("width",image.getWidth()).put("height",image.getHeight()));
+                result=new JSONObject().put("authorId",info.getId()).put("author",clean(info.getName()))
+                        .put("authorThumbnails",images).put("subCount",info.getSubscriberCount());
+            } else if(path.matches("/api/v1/channels/UC[A-Za-z0-9_-]{22}/videos(\\?continuation=[A-Za-z0-9%-]+)?")) {
+                String rest=path.substring("/api/v1/channels/".length());
+                String id=rest.substring(0,24);
+                String token=path.contains("?") ? ApprovalPolicy.query(URI.create("https://local"+path).getRawQuery(),"continuation") : null;
+                result=channelPage(id,token);
+            } else throw new IOException("INVALID_REQUEST");
+            put(path,result,path.startsWith("/api/v1/videos/")?META_TTL:CHANNEL_TTL);
+            return result;
+        } catch(Exception e){recordFailure(e);throw e;}
+    }
+    private StreamExtractor extractVideo(String id) throws Exception {
+        if(!ApprovalPolicy.VIDEO.matcher(id).matches())throw new IOException("INVALID_REQUEST");
+        checkNetwork();
+        StreamExtractor extractor=ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v="+id);
+        extractor.fetchPage();
+        if(!id.equals(extractor.getId()))throw new IOException("INVALID_VIDEO");
+        return extractor;
+    }
+    private static String authorId(String url) {
+        try {
+            ApprovalPolicy.Link link=ApprovalPolicy.classify(url);
+            return link.channelId==null ? "" : link.channelId;
+        } catch(RuntimeException e){return "";}
+    }
+    private static String clean(String value) {
+        if(value==null || value.trim().isEmpty())return "סרטון מאושר";
+        return value.trim().substring(0,Math.min(value.trim().length(),300));
+    }
+    private static JSONObject metadata(StreamExtractor e,String id,String author) throws Exception {
+        long published=0;
+        try{if(e.getUploadDate()!=null)published=e.getUploadDate().getInstant().getEpochSecond();}catch(Exception ignored){}
+        return new JSONObject().put("videoId",id).put("title",clean(e.getName()))
+                .put("authorId",author).put("author",clean(e.getUploaderName())).put("published",published);
+    }
+    private Object channelPage(String id,String token) throws Exception {
+        approvedChannel(id);
+        Cursor cursor;
+        if(token==null) {
+            ChannelInfo info=approvedChannel(id);
+            List<ListLinkHandler> tabs=new ArrayList<>();
+            for(String kind:List.of(ChannelTabs.VIDEOS,ChannelTabs.SHORTS,ChannelTabs.LIVESTREAMS))
+                for(ListLinkHandler handler:info.getTabs())
+                    if(handler.getContentFilters().contains(kind))tabs.add(handler);
+            cursor=new Cursor(id,policy.fingerprint,tabs,0,null);
+        } else {
+            cursor=cursors.get(token);
+            if(cursor==null || !cursor.channel.equals(id) || !cursor.authority.equals(policy.fingerprint)
+                    || cursor.expires<=System.currentTimeMillis())throw new IOException("INVALID_PAGE");
+        }
+        if(cursor.tab>=cursor.tabs.size())return new JSONObject().put("videos",new JSONArray()).put("continuation",JSONObject.NULL);
+        checkNetwork();
+        ListLinkHandler handler=cursor.tabs.get(cursor.tab);
+        List<InfoItem> rows;
+        Page next;
+        if(Page.isValid(cursor.page)) {
+            ListExtractor.InfoItemsPage<InfoItem> page=ChannelTabInfo.getMoreItems(ServiceList.YouTube,handler,cursor.page);
+            rows=page.getItems();next=page.getNextPage();
+        } else {
+            ChannelTabInfo page=ChannelTabInfo.getInfo(ServiceList.YouTube,handler);
+            if(!page.getErrors().isEmpty() && page.getRelatedItems().isEmpty())throw new IOException("PROVIDER_ERROR");
+            rows=page.getRelatedItems();next=page.getNextPage();
+        }
+        JSONArray videos=new JSONArray();Set<String> ids=new HashSet<>();
+        for(InfoItem row:rows) {
+            if(!(row instanceof StreamInfoItem))continue;
+            StreamInfoItem video=(StreamInfoItem)row;
+            String vid=ServiceList.YouTube.getStreamLHFactory().getId(video.getUrl());
+            String author=authorId(video.getUploaderUrl());
+            if(!ApprovalPolicy.VIDEO.matcher(vid).matches() || (!author.isEmpty() && !id.equals(author)) || !ids.add(vid))continue;
+            long published=video.getUploadDate()==null?0:video.getUploadDate().getInstant().getEpochSecond();
+            videos.put(new JSONObject().put("videoId",vid).put("title",clean(video.getName()))
+                    .put("authorId",id).put("author",clean(video.getUploaderName())).put("published",published));
+        }
+        int nextTab=Page.isValid(next)?cursor.tab:cursor.tab+1;
+        String continuation=null;
+        if(nextTab<cursor.tabs.size()) {
+            cursors.entrySet().removeIf(e->e.getValue().expires<System.currentTimeMillis());
+            if(cursors.size()>=500)cursors.clear();
+            continuation=UUID.randomUUID().toString();
+            cursors.put(continuation,new Cursor(id,policy.fingerprint,cursor.tabs,nextTab,Page.isValid(next)?next:null));
+        }
+        return new JSONObject().put("videos",videos).put("continuation",continuation==null?JSONObject.NULL:continuation);
+    }
+    static final class Source {
+        final String video,audio;
+        Source(String video,String audio){this.video=video;this.audio=audio;}
+    }
+    static final class Playback {
+        final String id,title;
+        final List<Source> sources;
+        Playback(String id,String title,List<Source> sources){this.id=id;this.title=title;this.sources=sources;}
+    }
+    Playback playback(String id) throws Exception {
+        whitelist(false);
+        try {
+            StreamExtractor extractor=extractVideo(id);
+            String author=authorId(extractor.getUploaderUrl());
+            if(!policy.videos.contains(id) && !approvedChannels().contains(author)) {
+                // Handles can be resolved again when their five-minute mapping expires.
+                for(String url:policy.channelUrls) {
+                    if(policy.channels.contains(ApprovalPolicy.classify(url).channelId))continue;
+                    ChannelInfo info=channel(url);aliases.put(url,new Alias(info.getId()));
+                }
+            }
+            if(!policy.allows(id,author,approvedChannels()))throw new IOException("NOT_APPROVED");
+            if(extractor.getAgeLimit()>0)throw new IOException("VIDEO_UNAVAILABLE");
+            List<Source> sources=new ArrayList<>();
+            List<VideoStream> combined=new ArrayList<>(extractor.getVideoStreams());
+            combined.sort(Comparator.comparingInt(NativeApi::resolution).reversed());
+            Set<String> seen=new HashSet<>();
+            for(VideoStream video:combined) {
+                if(compatible(video) && !video.isVideoOnly() && seen.add(video.getContent()))
+                    sources.add(new Source(video.getContent(),null));
+                if(sources.size()==2)break;
+            }
+            // Native Media3 can join separate video/audio tracks, unlike a plain
+            // <video src> MP4. No SABR protocol or authorization bypass is added.
+            List<VideoStream> only=new ArrayList<>(extractor.getVideoOnlyStreams());
+            only.sort(Comparator.comparingInt(NativeApi::resolution).reversed());
+            AudioStream audio=null;
+            for(AudioStream candidate:extractor.getAudioStreams())
+                if(candidate.getFormat()==MediaFormat.M4A && candidate.isUrl()
+                        && candidate.getDeliveryMethod()==DeliveryMethod.PROGRESSIVE_HTTP
+                        && ApprovalPolicy.safeMedia(candidate.getContent())) {audio=candidate;break;}
+            if(audio!=null)for(VideoStream video:only)
+                if(compatible(video) && video.isVideoOnly() && seen.add(video.getContent())) {
+                    sources.add(new Source(video.getContent(),audio.getContent()));break;
+                }
+            if(sources.isEmpty())throw new IOException("NO_SUPPORTED_STREAM");
+            RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
+            // A later whitelist refresh may revoke a grant while extraction is pending.
+            if(!policy.allows(id,author,approvedChannels()))throw new IOException("NOT_APPROVED");
+            return new Playback(id,clean(extractor.getName()),sources);
+        }catch(Exception e){recordFailure(e);throw e;}
+    }
+    private static int resolution(VideoStream stream) {
+        try{return Integer.parseInt(stream.getResolution().replaceAll("[^0-9].*$",""));}catch(Exception e){return 0;}
+    }
+    private static boolean compatible(VideoStream stream) {
+        int height=resolution(stream);
+        return stream.getFormat()==MediaFormat.MPEG_4 && stream.isUrl()
+                && stream.getDeliveryMethod()==DeliveryMethod.PROGRESSIVE_HTTP
+                && height>0 && height<=720 && ApprovalPolicy.safeMedia(stream.getContent());
+    }
+    static String errorCode(Throwable error) {
+        for(Throwable cause=error;cause!=null;cause=cause.getCause()) {
+            String text=String.valueOf(cause.getMessage());
+            if(cause instanceof org.schabi.newpipe.extractor.exceptions.ReCaptchaException
+                    || text.contains("UPSTREAM_BLOCKED") || text.contains("LOGIN_REQUIRED")
+                    || text.toLowerCase(Locale.ROOT).contains("not a bot"))return "UPSTREAM_BLOCKED";
+            if(text.contains("RATE_LIMITED"))return "RATE_LIMITED";
+            if(cause instanceof java.io.InterruptedIOException)return "TIMEOUT";
+            if(text.contains("NOT_APPROVED"))return "NOT_APPROVED";
+        }
+        return "VIDEO_UNAVAILABLE";
+    }
+    void recordFailure(Throwable error) {
+        String code=errorCode(error);
+        if(code.equals("UPSTREAM_BLOCKED"))cooldownUntil=System.currentTimeMillis()+15*60*1000;
+        else if(code.equals("RATE_LIMITED"))cooldownUntil=System.currentTimeMillis()+2*60*1000;
+    }
+    void clear() {cache.clear();cursors.clear();checkedAt=0; /* A block cooldown survives a cache clear. */ }
+    void cancelAll() {downloader.client.dispatcher().cancelAll();}
+}
