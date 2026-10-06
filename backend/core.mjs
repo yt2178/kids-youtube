@@ -66,7 +66,7 @@ export class PlaybackService {
     this.adapter=adapter;this.loadWhitelist=loadWhitelist;this.now=now;
     this.approvals=null;this.approvalsAt=0;this.approvalTask=null;
     this.cache=new Map();this.pending=new Map();this.pages=new Map();
-    this.blockedUntil=0;
+    this.blockedUntil=0;this.failures=new Map();
   }
   async cached(key,ttl,fn) {
     const entry=this.cache.get(key);if(entry&&entry.until>this.now())return entry.value;
@@ -91,7 +91,7 @@ export class PlaybackService {
       await Promise.all(Array.from({length:Math.min(3,queue.length)},async()=>{
         while(cursor<queue.length&&this.now()<budget){
           const x=queue[cursor++];
-          try{const id=await this.upstream(()=>this.adapter.resolveChannel(x.url));if(!CHANNEL_ID.test(id))throw new AppError('INVALID_CHANNEL');channels.add(id);aliases.set(x.url,id);}catch{}
+          try{const id=await this.upstream(()=>this.adapter.resolveChannel(x.url),'resolve:'+x.url);if(!CHANNEL_ID.test(id))throw new AppError('INVALID_CHANNEL');channels.add(id);aliases.set(x.url,id);}catch{}
         }
       }));
       const fingerprint=createHash('sha256').update(text+JSON.stringify([...aliases])).digest('hex');
@@ -100,10 +100,17 @@ export class PlaybackService {
     })().catch(e=>{this.approvals=null;this.pages.clear();throw e;}).finally(()=>this.approvalTask=null);
     return this.approvalTask;
   }
-  async upstream(fn) {
+  async upstream(fn,key='provider') {
     if(this.blockedUntil>this.now())throw new AppError('UPSTREAM_BLOCKED');
-    try{return await fn();}catch(e){
+    const failure=this.failures.get(key);
+    if(failure&&failure.until>this.now())throw new AppError(failure.code,failure.status);
+    try{const result=await fn();this.failures.delete(key);return result;}catch(e){
       if(e?.code==='UPSTREAM_BLOCKED'){this.blockedUntil=this.now()+15*60*1000;this.cache.clear();}
+      else {
+        const ttl=e?.code==='RATE_LIMITED'?120000:60000;
+        if(this.failures.size>=200)this.failures.delete(this.failures.keys().next().value);
+        this.failures.set(key,{code:e instanceof AppError?e.code:'PROVIDER_ERROR',status:e instanceof AppError?e.status:503,until:this.now()+ttl});
+      }
       throw e;
     }
   }
@@ -111,7 +118,7 @@ export class PlaybackService {
     if(!VIDEO_ID.test(id))throw new AppError('INVALID_ID',400);
     const approved=await this.currentApprovals();
     if(!approved.videos.has(id)&&!approved.channels.size)throw new AppError('NOT_APPROVED',403);
-    const data=await this.cached('video:'+id,5*60*1000,()=>this.upstream(()=>this.adapter.video(id)));
+    const data=await this.cached('video:'+id,5*60*1000,()=>this.upstream(()=>this.adapter.video(id),'video:'+id));
     if(data?.videoId!==id||!CHANNEL_ID.test(data.authorId||''))throw new AppError('INVALID_METADATA');
     if(!approved.videos.has(id)&&!approved.channels.has(data.authorId))throw new AppError('NOT_APPROVED',403);
     return data;
@@ -125,9 +132,9 @@ export class PlaybackService {
       const saved=this.pages.get(continuation);
       if(!saved||saved.id!==id||saved.fingerprint!==approvals.fingerprint||saved.until<this.now())
         throw new AppError('INVALID_CONTINUATION',400);
-      page=await this.cached('page:'+continuation,60000,()=>this.upstream(()=>saved.feed.getContinuation()));
+      page=await this.cached('page:'+continuation,60000,()=>this.upstream(()=>saved.feed.getContinuation(),'page:'+continuation));
     }else{
-      page=await this.cached('channel:'+id,60000,()=>this.upstream(()=>this.adapter.channel(id)));
+      page=await this.cached('channel:'+id,60000,()=>this.upstream(()=>this.adapter.channel(id),'channel:'+id));
     }
     const videos=[],seen=new Set();
     for(const item of this.adapter.rows(page,id)){
@@ -151,7 +158,7 @@ export class PlaybackService {
   }
   async media(id) {
     const info=await this.video(id);
-    const media=await this.cached('media:'+id,60000,()=>this.upstream(()=>this.adapter.media(info)));
+    const media=await this.cached('media:'+id,60000,()=>this.upstream(()=>this.adapter.media(info),'media:'+id));
     safeMediaURL(media.url);
     if(!Number.isSafeInteger(media.length)||media.length<1||!/^video\/mp4(?:;|$)/.test(media.type))throw new AppError('VIDEO_UNAVAILABLE');
     return media;

@@ -3,6 +3,11 @@ on:
   push:
     branches: [playback-cloud-proof]
   workflow_dispatch:
+    inputs:
+      run_live_probe:
+        description: 'Run live media proof only after the upstream restriction has changed'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -30,11 +35,15 @@ jobs:
       - name: Backend approval, HTTP and range tests
         run: npm test --prefix backend
       - name: Install video decoder for real media validation
+        if: github.event_name == 'workflow_dispatch' && inputs.run_live_probe
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg
       - name: Live approved video, CORS, MP4 bytes and decoded frames
+        if: github.event_name == 'workflow_dispatch' && inputs.run_live_probe
         run: node backend/live-probe.mjs
+      - name: Print dependency lock for reproducibility
+        run: node -e "console.log('LOCK_START'); console.log(require('fs').readFileSync('backend/package-lock.json','utf8')); console.log('LOCK_END')"
       - name: Save actual proof result and dependency lock
         if: always()
         uses: actions/upload-artifact@v4

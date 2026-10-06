@@ -10,7 +10,7 @@ function fixture(text=direct){
     channel:async()=>({has_continuation:false,videos:[{videoId:ID,authorId:UC}]}),rows:p=>p.videos,
     media:async()=>({url:'https://r1---sn-abcd.googlevideo.com/videoplayback?id=xx',length:100,type:'video/mp4'})};
   const service=new PlaybackService({adapter,loadWhitelist:async()=>value,now:()=>clock});
-  return{service,adapter,setText:t=>value=t,tick:()=>clock+=31000,getCalls:()=>calls};
+  return{service,adapter,setText:t=>value=t,tick:(ms=31000)=>clock+=ms,getCalls:()=>calls};
 }
 test('plain list accepts comments, video variants and channel aliases without approving examples',()=>{
   assert.equal(parseWhitelist('\uFEFF// https://youtu.be/'+OTHER+'\r\n'+direct+' // הערה\r\nhttps://www.youtube.com/@meirshows').length,2);
@@ -104,4 +104,13 @@ test('ordinary alias API failure never globally blocks a directly approved video
   const f=fixture(direct+'\nhttps://www.youtube.com/@meirshows');
   f.adapter.resolveChannel=async()=>{throw new AppError('FORBIDDEN');};
   assert.equal((await f.service.video(ID)).videoId,ID);
+});
+
+test('ordinary failed resource has bounded cooldown without blocking different approvals',async()=>{
+  const f=fixture(direct+'\nhttps://youtu.be/'+OTHER);let calls=0;
+  f.adapter.video=async id=>{calls++;if(id===ID)throw new AppError('FORBIDDEN');return{videoId:id,authorId:UC};};
+  await assert.rejects(f.service.video(ID),/FORBIDDEN/);
+  await assert.rejects(f.service.video(ID),/FORBIDDEN/);assert.equal(calls,1);
+  assert.equal((await f.service.video(OTHER)).videoId,OTHER);assert.equal(calls,2);
+  f.tick(61000);await assert.rejects(f.service.video(ID),/FORBIDDEN/);assert.equal(calls,3);
 });
