@@ -1,22 +1,95 @@
 <!doctype html>
-<html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>הוספת תוכן לילדים — להורה</title><meta name="theme-color" content="#1a1a2e">
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ניהול Kids YouTube — להורה</title>
+<meta name="theme-color" content="#171725">
+<meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://img.youtube.com; connect-src 'self' https://jxhelpxhrmwvzrrfrjuh.supabase.co; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'">
 <style>
-*{box-sizing:border-box}body{margin:0;background:#1a1a2e;color:#faf9ff;font:18px/1.6 system-ui}main{max-width:680px;margin:auto;padding:24px 18px 48px}h1{font-size:clamp(26px,5vw,36px)}p{color:#ccc8dc}.panel{background:#24243c;border:1px solid #48405a;border-radius:24px;padding:22px;margin:20px 0}label{display:block;font-weight:700;margin:12px 0 8px}input,textarea,select,button,.button{font:inherit;border-radius:14px;width:100%;min-height:56px;padding:12px 16px}input,textarea,select{background:#151528;color:white;border:1px solid #625875}textarea{resize:vertical}button,.button{display:block;text-align:center;background:#e94560;color:white;border:0;text-decoration:none;font-weight:700;margin-top:16px;cursor:pointer}button:disabled{opacity:.45;cursor:default}.secondary{background:#34314b}a{color:#ffb9c7}img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:18px;background:#34314b}.type{color:#ffb9c7;font-size:22px;font-weight:700}.check{display:flex;gap:12px;align-items:start;font-weight:500}.check input{width:26px;min-height:26px;height:26px;flex-shrink:0;margin-top:5px}[hidden]{display:none!important}:focus-visible{outline:3px solid #ffe389;outline-offset:4px}#status,#auth-status{overflow-wrap:anywhere}small{display:block;color:#c6c0d4}.channel-symbol{font-size:70px;text-align:center}.link{direction:ltr;unicode-bidi:plaintext;overflow-wrap:anywhere}.approved{white-space:pre-wrap;direction:ltr;text-align:left;background:#151528;padding:12px;border-radius:12px;max-height:260px;overflow:auto}
-</style><script src="./parent-links.js" defer></script><script src="./parents.js" defer></script></head>
-<body><main><h1>הוספה לילדים</h1>
-<section id="auth" class="panel"><h2 id="auth-title">כניסת הורה</h2><p id="auth-help">הכניסה נדרשת רק כדי שהילדים לא יוכלו להוסיף תוכן.</p><label for="password">סיסמה</label><input id="password" type="password" autocomplete="current-password" maxlength="128"><label class="check"><input id="remember" type="checkbox" checked><span>זכור אותי במכשיר הזה</span></label><button id="login" type="button">כניסה</button><p id="auth-status" role="status"></p></section>
+:root{color-scheme:dark;--bg:#171725;--surface:#24243a;--surface2:#2d2b45;--line:#454158;--accent:#e94560;--text:#fbfaff;--muted:#c7c3d6;--danger:#ff758b}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at top right,#38223f 0%,var(--bg) 55%);color:var(--text);font:17px/1.5 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+main{width:min(100%,760px);margin:auto;padding:max(18px,env(safe-area-inset-top)) 14px max(40px,env(safe-area-inset-bottom))}
+h1,h2,p{margin-top:0}h1{font-size:clamp(26px,5vw,36px);margin-bottom:4px}h2{font-size:22px}.muted,small{color:var(--muted)}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.topbar>div{min-width:0}.topbar p{margin:0}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:clamp(16px,4vw,22px);margin:14px 0;box-shadow:0 8px 24px #0002}
+label{display:block;font-weight:750;margin:12px 0 7px}
+input,textarea,button,.button{font:inherit;border-radius:13px;min-height:50px;padding:10px 14px}
+input,textarea{width:100%;background:#171728;color:var(--text);border:1px solid #625c76}textarea{resize:vertical;min-height:82px}
+button,.button{border:0;background:var(--accent);color:white;font-weight:750;cursor:pointer;text-decoration:none;text-align:center;display:inline-flex;align-items:center;justify-content:center}
+button:disabled{opacity:.48;cursor:default}.secondary{background:var(--surface2);border:1px solid #565069}.danger{background:#572936;color:#ffdce2;border:1px solid #874050}
+button:focus-visible,input:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid #ffe389;outline-offset:3px}
+.full{width:100%}.auth-actions{margin-top:14px}.check{display:flex;gap:10px;align-items:flex-start;font-weight:500}.check input{width:24px;height:24px;min-height:24px;flex:none;margin-top:2px}
+#auth-status,#status,#list-status{min-height:24px;margin:10px 0 0;color:var(--muted);overflow-wrap:anywhere}
+.preview-head{display:flex;align-items:center;gap:12px}.type{font-size:21px;font-weight:800;color:#ffb9c7}.preview-image{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:16px;background:#34314b}.channel-symbol{font-size:64px;text-align:center;padding:18px}
+.link{direction:ltr;unicode-bidi:plaintext;overflow-wrap:anywhere;font-size:14px;color:var(--muted);background:#19192a;padding:9px 10px;border-radius:10px}
+.preview-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:13px}.preview-actions .button{min-width:0}
+.list-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.list-head h2{margin-bottom:0}#approved-count{font-size:14px;color:var(--muted)}
+.approved-list{display:grid;gap:10px;margin-top:14px}.approved-empty{padding:24px;text-align:center;color:var(--muted);border:1px dashed #55516c;border-radius:15px}
+.approved-item{display:grid;grid-template-columns:88px minmax(0,1fr) auto;gap:12px;align-items:center;background:#1b1b2d;border:1px solid #3d3950;border-radius:15px;padding:10px;min-width:0}
+.approved-thumb{width:88px;aspect-ratio:16/9;object-fit:cover;border-radius:10px;background:#302d43}.approved-symbol{width:88px;min-height:50px;display:grid;place-items:center;font-size:30px;background:#302d43;border-radius:10px}
+.approved-info{min-width:0}.approved-type{font-weight:800}.approved-url{font-size:13px;color:var(--muted);direction:ltr;unicode-bidi:plaintext;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.approved-note{font-size:14px;margin-top:3px;overflow-wrap:anywhere}
+.remove{min-height:44px;padding:8px 11px;white-space:nowrap}
+#logout{min-height:44px;padding:8px 12px}
+@media(max-width:560px){main{padding-inline:9px}.topbar{align-items:flex-start}.approved-item{grid-template-columns:74px minmax(0,1fr);}.approved-thumb,.approved-symbol{width:74px}.remove{grid-column:1/-1;width:100%}.preview-actions{grid-template-columns:1fr}}
+@media(max-width:360px){body{font-size:16px}.panel{padding:14px;border-radius:16px}.topbar{gap:8px}#logout{font-size:14px;padding-inline:9px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+</style>
+<script src="./parent-links.js" defer></script>
+<script src="./parents.js" defer></script>
+</head>
+<body>
+<main>
+<section id="auth" class="panel">
+  <h1 id="auth-title">כניסת הורה</h1>
+  <p id="auth-help" class="muted">הכניסה נדרשת כדי שרק הורה יוכל לשנות את הרשימה.</p>
+  <label for="password">סיסמה</label>
+  <input id="password" type="password" autocomplete="current-password" maxlength="128" enterkeyhint="done">
+  <label class="check"><input id="remember" type="checkbox" checked><span>זכור אותי במכשיר הזה</span></label>
+  <div class="auth-actions"><button id="login" class="full" type="button">כניסה</button></div>
+  <p id="auth-status" role="status" aria-live="polite"></p>
+</section>
+
 <section id="parent-area" hidden>
-<p>ב־YouTube לוחצים ״שיתוף״ → ״העתקת קישור״, מדביקים כאן ובודקים.</p>
-<section class="panel"><label for="link">קישור לסרטון או לערוץ</label><textarea id="link" dir="auto" rows="2" maxlength="20000" placeholder="הדביקו כאן את הקישור"></textarea><button id="inspect" type="button">בדיקת הקישור</button><p id="status" role="status" aria-live="polite"></p></section>
-<section id="preview" class="panel" hidden><div id="kind" class="type"></div><img id="thumbnail" alt="תמונת הסרטון" hidden><div id="channel-symbol" class="channel-symbol" hidden>📺</div>
-<p id="identified"></p><p id="canonical" class="link"></p><a id="verify" class="button secondary" target="_blank" rel="noopener noreferrer">פתיחת התוכן ב־YouTube לבדיקה</a>
-<label for="operation">מה עושים?</label><select id="operation"><option value="add">הוספה לרשימה</option><option value="remove">ביטול אישור</option></select>
-<p id="channel-warning" hidden>אישור ערוץ מאפשר את כל הסרטונים שלו וגם סרטונים חדשים בעתיד.</p>
-<label for="note">הערה לעצמי (לא חובה)</label><input id="note" maxlength="500" placeholder="למשל: סרטון לשעת הפסקה">
-<label class="check"><input id="checked" type="checkbox"><span>פתחתי את הקישור ובדקתי שזה הסרטון או הערוץ הרצוי.</span></label>
-<button id="save" type="button" disabled>הוסף לילדים</button></section>
-<section class="panel"><h2>הרשימה המאושרת</h2><div id="approved" class="approved"></div><button id="refresh-list" class="secondary" type="button">רענון הרשימה</button></section>
-<button id="logout" class="secondary" type="button">יציאה</button>
-</section></main></body></html>
+  <header class="topbar">
+    <div><h1>ניהול התוכן</h1><p class="muted">מוסיפים רק מה שבדקתם.</p></div>
+    <button id="logout" class="secondary" type="button">יציאה</button>
+  </header>
+
+  <section class="panel">
+    <h2>הוספת סרטון או ערוץ</h2>
+    <p class="muted">ב־YouTube: שיתוף → העתקת קישור. מדביקים כאן.</p>
+    <label for="link">קישור</label>
+    <textarea id="link" dir="auto" rows="2" maxlength="20000" placeholder="הדביקו קישור של סרטון או ערוץ"></textarea>
+    <button id="inspect" class="full" type="button">בדיקת הקישור</button>
+    <p id="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section id="preview" class="panel" hidden>
+    <div class="preview-head"><div id="kind" class="type"></div></div>
+    <img id="thumbnail" class="preview-image" alt="תמונת הסרטון" hidden>
+    <div id="channel-symbol" class="channel-symbol" hidden aria-hidden="true">📺</div>
+    <p id="identified"></p>
+    <p id="canonical" class="link"></p>
+    <p id="channel-warning" class="muted" hidden>אישור ערוץ מאפשר גם סרטונים חדשים שיעלו אליו בעתיד.</p>
+    <div class="preview-actions">
+      <a id="verify" class="button secondary" target="_blank" rel="noopener noreferrer">פתיחה ב־YouTube לבדיקה</a>
+      <button id="save" type="button" disabled>הוסף לילדים</button>
+    </div>
+    <label for="note">הערה לעצמי <span class="muted">(לא חובה)</span></label>
+    <input id="note" maxlength="500" placeholder="למשל: שיר לשעת הפסקה">
+    <label class="check"><input id="checked" type="checkbox"><span>פתחתי ובדקתי שזה התוכן שאני רוצה לאשר.</span></label>
+  </section>
+
+  <section class="panel">
+    <div class="list-head"><h2>מה מאושר עכשיו</h2><span id="approved-count"></span></div>
+    <div id="approved" class="approved-list"></div>
+    <p id="list-status" role="status" aria-live="polite"></p>
+    <button id="refresh-list" class="secondary full" type="button">רענון הרשימה</button>
+  </section>
+</section>
+</main>
+</body>
+</html>
