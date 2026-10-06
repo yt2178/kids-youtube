@@ -36,7 +36,7 @@ function installFramePolicy() {
 }
 installFramePolicy();
 const $ = id => document.getElementById(id);
-const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear','view-grid','view-list'].map(id => [id, $(id)]));
+const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear','view-grid','view-list','sort-options'].map(id => [id, $(id)]));
 let displayed = new Map();
 let activeConfig = {videos:[], channels:[]};
 let activeLists = Object.create(null);
@@ -244,7 +244,7 @@ function render(config, lists) {
     (!channelVideos || channelVideos.has(video.id)) && (viewMode !== 'videos' || (manualIds.has(video.id) && !approvedChannelIds.has(video.authorId) && !videoChannels.has(video.id))) && (viewMode === 'videos' || !channelFilter || selected || video.authorId === channelFilter || (lists[channelFilter] || []).some(v => v.id === video.id)) && matchesSearch(video.title + ' ' + (video.author || '') + ' ' + (videoChannels.get(video.id) || '')));
   if (!isChannels && sortMode === 'newest') items.sort((a,b) => b.published-a.published || a.title.localeCompare(b.title,'he'));
   if (!isChannels && sortMode === 'name') items.sort((a,b) => a.title.localeCompare(b.title,'he'));
-  ui.filters.hidden = isChannels;
+  ui.filters.hidden = isChannels;ui['sort-options'].hidden=isChannels;
   const options = document.createDocumentFragment();
   const allOption = document.createElement('option'); allOption.value = ''; allOption.textContent = 'כל הערוצים'; options.append(allOption);
   for (const c of config.channels) { const option = document.createElement('option'); option.value = c.id; option.textContent = c.name; options.append(option); }
