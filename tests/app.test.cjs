@@ -387,7 +387,7 @@ test('channel tab lists only whole-channel approvals, not creators of manual vid
   a.elements['channels-tab'].listeners.click[0]();
   assert.deepEqual(a.elements.grid.children.map(card=>card.dataset.channelId),[A]);
   assert.equal(a.elements['channels-tab'].getAttribute('aria-pressed'),'true');
-  assert.match(a.elements['search-label'].textContent,/ערוץ/);
+  assert.match(a.elements['search-label'].textContent,/ערוצ/);
 });
 test('live search matches titles, authors and approved channel names without network requests',async()=>{
   const a=await app({videos:[{id:id(3),title:'שִׁיר לשבת',author:'יוצר יחיד'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
