@@ -243,22 +243,37 @@ public final class MainActivity extends Activity {
     }
     static OkHttpClient mediaClient(OkHttpClient base) {
         // Extractor requests intentionally keep redirects disabled. Signed Googlevideo
-        // media URLs may redirect between HTTPS media hosts, so playback follows only
-        // same-scheme redirects and validates every network exchange before sending it.
+        // media URLs can redirect between HTTPS media hosts. Follow those redirects
+        // ourselves so every Location target is validated before connecting to it.
         return base.newBuilder()
-                .followRedirects(true)
+                .followRedirects(false)
                 .followSslRedirects(false)
-                .addNetworkInterceptor(chain->{
-                    if(!ApprovalPolicy.safeMedia(chain.request().url().toString()))
-                        throw new IOException("INVALID_MEDIA_REDIRECT");
-                    okhttp3.Response response=chain.proceed(chain.request());
-                    if(response.code()==401 || response.code()==403){
-                        response.close();throw new IOException("UPSTREAM_BLOCKED");
+                .addInterceptor(chain->{
+                    okhttp3.Request request=chain.request();
+                    for(int redirects=0;;redirects++){
+                        if(!ApprovalPolicy.safeMedia(request.url().toString()))
+                            throw new IOException("INVALID_MEDIA_REDIRECT");
+                        okhttp3.Response response=chain.proceed(request);
+                        if(!response.isRedirect()){
+                            if(response.code()==401 || response.code()==403){
+                                response.close();throw new IOException("UPSTREAM_BLOCKED");
+                            }
+                            if(response.code()==429){
+                                response.close();throw new IOException("RATE_LIMITED");
+                            }
+                            return response;
+                        }
+                        if(redirects>=4){
+                            response.close();throw new IOException("TOO_MANY_MEDIA_REDIRECTS");
+                        }
+                        String location=response.header("Location");
+                        okhttp3.HttpUrl next=location==null?null:response.request().url().resolve(location);
+                        if(next==null || !ApprovalPolicy.safeMedia(next.toString())){
+                            response.close();throw new IOException("INVALID_MEDIA_REDIRECT");
+                        }
+                        response.close();
+                        request=request.newBuilder().url(next).build();
                     }
-                    if(response.code()==429){
-                        response.close();throw new IOException("RATE_LIMITED");
-                    }
-                    return response;
                 }).build();
     }
     private void trySource(long generation) {
