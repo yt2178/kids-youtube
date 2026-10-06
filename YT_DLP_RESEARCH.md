@@ -54,3 +54,20 @@ playback. The separate NewPipe Android proof remains isolated and unchanged.
 - https://github.com/yt-dlp/yt-dlp/wiki/Extractors
 - https://github.com/yt-dlp/yt-dlp/issues/17647
 - https://github.com/yausername/youtubedl-android
+
+
+## Observed result
+
+Run: https://github.com/yt2178/kids-youtube/actions/runs/37434572106
+Date: 2026-10-06, stable yt-dlp 2026.08.19, Python3.12 and Node24.
+Eight probe guard tests and 122 existing website tests passed.
+The actual live attempt **failed** in 1347ms with UPSTREAM_AUTH_REQUIRED:
+HTTP200 response body contained a playability verification/login requirement.
+The guard stopped immediately after the first YouTube response. No media format
+URLs, bytes or decoded video were obtained. Channel enumeration was not attempted
+after the known authorization block. Android/browser playback remains untested.
+
+Conclusion: this test does not support replacing our player with yt-dlp in a free
+cloud backend. yt-dlp remains technically usable in a native application via a
+compatible wrapper, but that would need a separate device test and runtime audit;
+it is not a proven fix. No change has been made to the deployed website.

@@ -1,0 +1,28 @@
+{
+  "tool": "yt-dlp",
+  "version": "2026.08.19",
+  "videoId": "mVTlbvQ_010",
+  "environment": "GitHub Actions Linux (cloud network)",
+  "whitelistVerified": true,
+  "metadata": false,
+  "mediaBytes": false,
+  "decodedVideo": false,
+  "browserPlayback": false,
+  "androidPlayback": false,
+  "channelListing": "not_attempted",
+  "requests": [
+    {
+      "status": 200,
+      "ms": 185
+    }
+  ],
+  "warnings": [],
+  "noCookies": true,
+  "noProxy": true,
+  "noTokenProvider": true,
+  "noClientOverrides": true,
+  "stoppedOnAuthorizationBlock": true,
+  "outcome": "UPSTREAM_AUTH_REQUIRED",
+  "elapsedMs": 1347,
+  "runUrl": "https://github.com/yt2178/kids-youtube/actions/runs/37434572106"
+}
