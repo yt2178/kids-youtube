@@ -63,14 +63,5 @@
       try{return classify(value.split(/\s+\/\//,1)[0]).url!==link.url;}catch(_){return true;}
     }).join('\n');
   }
-  function issueURL(link,operation,note){
-    const valid=classify(link),u=new URL('https://github.com/yt2178/kids-youtube/issues/new');
-    u.searchParams.set('template','parent-approval.yml');u.searchParams.set('title','[אישור הורה] '+(operation==='remove'?'ביטול':'הוספה')+' '+valid.label);
-    u.searchParams.set('link',valid.url);u.searchParams.set('note',comment(note)||'ללא הערה');
-    if(!['add','remove'].includes(operation))throw Error('INVALID_OPERATION');
-    u.searchParams.set('operation',operation==='remove'?'ביטול אישור':'הוספה לרשימה');
-    // GitHub pre-fills text inputs; the parent chooses the operation and checks confirmation there.
-    return u.href;
-  }
-  return {classify,share,entries,comment,edit,issueURL};
+  return {classify,share,entries,comment,edit};
 });
