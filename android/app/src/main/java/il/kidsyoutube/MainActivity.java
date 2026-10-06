@@ -56,16 +56,29 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         api=new NativeApi(this);
         FrameLayout root=new FrameLayout(this);root.setBackgroundColor(Color.rgb(26,26,46));
+        if(Build.VERSION.SDK_INT>=30){
+            getWindow().setDecorFitsSystemWindows(false);
+            root.setOnApplyWindowInsetsListener((view,insets)->{
+                android.graphics.Insets safe=insets.getInsets(WindowInsets.Type.systemBars()
+                    |WindowInsets.Type.displayCutout()|WindowInsets.Type.ime());
+                view.setPadding(safe.left,safe.top,safe.right,safe.bottom);
+                // Native root handles these once; CSS must not pad the same insets again.
+                return WindowInsets.CONSUMED;
+            });
+            root.requestApplyInsets();
+        }
         web=new WebView(this);root.addView(web,new FrameLayout.LayoutParams(-1,-1));
         overlay=new LinearLayout(this);overlay.setOrientation(LinearLayout.VERTICAL);
         overlay.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         overlay.setBackgroundColor(Color.rgb(15,15,29));overlay.setVisibility(View.GONE);
         LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);
         Button back=button("← חזרה");back.setOnClickListener(v->closePlayer());
-        title=text("");title.setMaxLines(2);
-        bar.addView(back,new LinearLayout.LayoutParams(dp(128),dp(64)));
-        bar.addView(title,new LinearLayout.LayoutParams(0,dp(64),1));
-        overlay.addView(bar,new LinearLayout.LayoutParams(-1,dp(72)));
+        title=text("");title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        bar.setPadding(dp(8),dp(4),dp(8),dp(4));bar.setMinimumHeight(dp(64));
+        back.setTextDirection(View.TEXT_DIRECTION_LTR);
+        bar.addView(back,new LinearLayout.LayoutParams(dp(116),-2));
+        bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        overlay.addView(bar,new LinearLayout.LayoutParams(-1,-2));
         message=text("מתחבר...");message.setGravity(Gravity.CENTER);message.setMinHeight(dp(48));
         overlay.addView(message,new LinearLayout.LayoutParams(-1,-2));
         retry=button("נסו שוב");retry.setVisibility(View.GONE);
@@ -82,9 +95,11 @@ public final class MainActivity extends Activity {
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
     private TextView text(String value){TextView v=new TextView(this);v.setTextColor(Color.WHITE);v.setTextSize(20);v.setText(value);v.setPadding(dp(12),dp(8),dp(12),dp(8));return v;}
     private Button button(String value){Button b=new Button(this);b.setText(value);b.setTextSize(20);b.setTextColor(Color.WHITE);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(233,69,96)));b.setMinHeight(dp(60));return b;}
+    private void showMessage(String value){message.setText(value);message.setVisibility(value.isEmpty()?View.GONE:View.VISIBLE);}
     private void setupWeb() {
         WebSettings settings=web.getSettings();
         settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);
+        settings.setTextZoom(Math.round(getResources().getConfiguration().fontScale*100));
         settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);settings.setSupportMultipleWindows(false);
@@ -112,7 +127,7 @@ public final class MainActivity extends Activity {
         });
         if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)){
             web.setVisibility(View.GONE);
-            overlay.setVisibility(View.VISIBLE);message.setText("כדי לפתוח את האפליקציה, בקשו מההורה לעדכן את Android System WebView.");
+            overlay.setVisibility(View.VISIBLE);showMessage("כדי לפתוח את האפליקציה, בקשו מההורה לעדכן את Android System WebView.");
             return;
         }
         WebViewCompat.addWebMessageListener(web,"KidsAndroid",Set.of(ORIGIN),
@@ -177,13 +192,15 @@ public final class MainActivity extends Activity {
         });
     }
     private void openPlayer(String id) {
+        android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+        if(keyboard!=null)keyboard.hideSoftInputFromWindow(web.getWindowToken(),0);
         long generation=++playerGeneration;
         if(playTask!=null)playTask.abort();
         stopMedia();
         active=new NativeApi.Playback(id,"הסרטון שלנו",List.of());
         sourceIndex=0;resumeAt=0;
         overlay.setVisibility(View.VISIBLE);web.setVisibility(View.INVISIBLE);
-        title.setText("הסרטון שלנו");message.setText("מתחבר...");retry.setVisibility(View.GONE);
+        title.setText("הסרטון שלנו");showMessage("מתחבר...");retry.setVisibility(View.GONE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         RequestScope scope=new RequestScope(20000);
         playTask=new Task("player",scope,()->{
@@ -210,7 +227,7 @@ public final class MainActivity extends Activity {
         if(destroyed || generation!=playerGeneration || active==null)return;
         stopMedia();
         if(sourceIndex>=active.sources.size()){unavailable();return;}
-        message.setText(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
+        showMessage(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
         NativeApi.Source source=active.sources.get(sourceIndex++);
         // Validate every network request again, including any redirected media URL.
         OkHttpClient mediaClient=api.downloader.client.newBuilder().addInterceptor(chain->{
@@ -246,9 +263,9 @@ public final class MainActivity extends Activity {
             @Override public void onPlaybackStateChanged(int state){
                 if(generation!=playerGeneration || player!=attempt || failed)return;
                 if(state==Player.STATE_READY){
-                    ready=true;cancelPlayerTimeout();message.setText("");
+                    ready=true;cancelPlayerTimeout();showMessage("");
                 }else if(state==Player.STATE_ENDED){
-                    cancelPlayerTimeout();message.setText("הסרטון הסתיים. אפשר לחזור ולבחור סרטון אחר.");
+                    cancelPlayerTimeout();showMessage("הסרטון הסתיים. אפשר לחזור ולבחור סרטון אחר.");
                     getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 }else if(state==Player.STATE_BUFFERING && ready && attempt.getPlayWhenReady()){
                     cancelPlayerTimeout();
@@ -272,7 +289,7 @@ public final class MainActivity extends Activity {
         if(player!=null){playerView.setPlayer(null);player.stop();player.release();player=null;}
     }
     private void unavailable(){
-        stopMedia();message.setText("לא הצלחנו להפעיל את הסרטון כרגע. נסה שוב בעוד רגע.");
+        stopMedia();showMessage("לא הצלחנו להפעיל את הסרטון כרגע. נסה שוב בעוד רגע.");
         retry.setVisibility(View.VISIBLE);getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     private void closePlayer(){

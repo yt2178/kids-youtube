@@ -1,0 +1,12 @@
+# Local IDE/build state and private signing material
+.idea/
+*.iml
+**/.gradle/
+**/build/
+**/local.properties
+*.jks
+*.keystore
+*.apk
+*.aab
+_site/
+

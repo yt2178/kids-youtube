@@ -1,45 +1,49 @@
-# Kids YouTube — Android family beta
+# פתיחת הפרויקט ב־Android Studio
 
-Two separate Android apps, both free and without a hosted backend:
+כל הפרויקט נמצא בריפו **yt2178/kids-youtube**, והפרויקט של אפליקציית הילדים בתיקיית **android**.
 
-- **app / il.kidsyoutube / סרטונים לילדים**: packaged Hebrew RTL three-tab UI and the original NewPipeExtractor 0.26.5 + AndroidX Media3 player. No parent account, token, link-entry form or sharing receiver. The original prototype's physical playback was reported successful by the user; this is not our independent device audit.
-- **parent / il.kidsyoutube.parent / הוספה לילדים**: text/plain ACTION_SEND receiver and launcher. Classifies a single video/channel link with the same ApprovalPolicy, obtains an actual metadata preview through NewPipe, and requires explicit approval. Channels require a second all-content confirmation. Parents may open the canonical YouTube link to inspect before approval; children cannot do this. Pending links are local and are not approvals.
+1. הורידו את **Kids-YouTube-AndroidStudio.zip** מה־[Releases](https://github.com/yt2178/kids-youtube/releases), או GitHub → Code → Download ZIP.
+2. חלצו את **כל** הקובץ. אין להוריד רק את תיקיית android — היא משתמשת בממשק ובאייקונים שנמצאים לידה בריפו.
+3. ב־Android Studio בחרו **Open** ופתחו את תיקיית **android** בתוך התיקייה שחילצתם.
+4. המתינו ל־Gradle Sync. אם Studio מציע התקנת SDK, אשרו התקנת Android SDK 36 וכלי בנייה 35.0.0. השתמשו ב־Gradle JDK 17 או ב־JDK תואם של Studio.
+5. בחרו **app**, חברו מכשיר Android ולחצו ▶ Run.
 
-The parent app uses the GitHub Contents API, fixed to yt2178/kids-youtube/main/videos.txt. Each edit reads the latest SHA and reapplies the single operation after a conflict, at most three attempts. No whole-list overwrite based on an old local snapshot. Credentials are Android Keystore AES-GCM encrypted, backups disabled, never included in the child APK or website. HTTPS only; authenticated calls do not follow redirects. See [parent instructions](../PARENTS.md), including collaborator/token limitations.
+לא צריך להתקין Node, framework, שרת, מסד נתונים או Gradle בנפרד. Gradle Wrapper הרשמי נמצא בריפו, עם בדיקת SHA-256 להפצה. בהורדה ובבנייה הראשונות נדרש אינטרנט כדי להביא את SDK והתלויות. האתר הסטטי עדיין אינו דורש build.
 
-The web UI is copied by prepare-assets.cjs, with checked integration anchors and a packaged-only native message adapter. Website source is preserved. SW registration and external frames are disabled in the packaged child UI. Only the packaged main frame may call WebMessageListener; untrusted frames cannot call native methods. Java repeats whitelist authorization; display caches and JS are not grants.
+## מבנה
 
-Player behavior remains unchanged: up to two combined MP4 formats and one joined video/audio alternative, maximum 720p, finite media attempts, request cancellation/generation guards, cooldown after explicit blocking, no next-video chain. It does not bypass YouTube verification/auth/rate-limit blocks. Requires Android 6+ and updated Android System WebView.
-
-## Build and tests
-
-JDK 17, Android SDK 36/build tools 35, Node, Gradle 8.13:
-
-```bash
-node --test tests/*.test.cjs
-cd android
-gradle :app:testDebugUnitTest :parent:testDebugUnitTest :app:assembleDebug :parent:assembleDebug
+```text
+kids-youtube/
+├── android/
+│   ├── settings.gradle
+│   ├── build.gradle
+│   ├── gradlew / gradlew.bat
+│   ├── gradle/wrapper/
+│   ├── prepare-assets.gradle
+│   └── app/                 ← אפליקציית הילדים
+├── index.html / app.js      ← מסך הילדים המשותף
+├── icons/
+├── parents.html            ← עמוד ההורים, ללא התקנה
+└── videos.txt              ← הרשימה המשותפת
 ```
 
-GitHub Actions installs the tools, runs all website/bridge and native tests, and builds both APKs. On main, a dependent publishing job uploads the exact tested APKs and SHA256 checksums to a commit-specific prerelease. Parent source filters reuse the unchanged downloader, RequestScope and ApprovalPolicy; no player/UI classes or JS bridge are included in the parent module.
+מודול parent מהניסוי הקודם נשמר בקוד אך אינו נפתח כברירת מחדל ואינו נדרש להורה. למפתח בלבד: `-PincludeParentCompanion=true`.
 
-APKs: app/build/outputs/apk/debug/app-debug.apk and parent/build/outputs/apk/debug/parent-debug.apk. Source is GPL-3.0-or-later. Dependencies and build requirements apply only to Android, not the static website.
+נגן NewPipeExtractor/Media3 המקורי נשמר; נעשו התאמות UI לאזורי מערכת, מקלדת, טקסט מוגדל ומסכים נמוכים. הממשק כולל שלושה טאבים, חיפוש מקומי, thumbnails עצלים ועמודים. אין נגן YouTube חיצוני, שיתוף או רצף ניגון באפליקציית הילדים.
 
-## Install and limits
+דורש **Android 6 ומעלה** ו־WebView מעודכן. התאמה לגדלי מסך אינה הבטחה לכל גרסת Android ישנה. אין יעד iOS בפרויקט.
 
-Use [Releases](https://github.com/yt2178/kids-youtube/releases), install Kids-YouTube.apk on the child tablet and Kids-YouTube-Parent.apk only on the parent phone. New child ID il.kidsyoutube installs alongside the earlier il.kidsyoutube.proof; the old signing key was not retained. Keep the working old app until you verify the new one.
+## בנייה ובדיקות
 
-Beta builds are debug-signed on an ephemeral CI runner. Later builds can require uninstall/reinstall (including reconnecting the parent); stable in-place updates need a persistent private signing key stored outside the public repository. No secret key was committed or public signing cache added.
+```bash
+cd android
+./gradlew :app:testDebugUnitTest :app:assembleDebug
+```
 
-## Physical acceptance still required
+ב־Windows משתמשים ב־`gradlew.bat`. ה־APK נמצא ב־`app/build/outputs/apk/debug/app-debug.apk`.
 
-Automated tests cover actual parser/list/network code with fake upstream data; they do not prove physical sharing, Keystore persistence, or every YouTube stream. On the target phone/tablet verify:
+CI בונה עם Wrapper את הפרויקט המוגדר כברירת מחדל, בודק שאריזת הממשק ב־Gradle זהה לאריזה שנבדקה ב־Node, ובודק גם את קוד ההורה הקודם. Node נדרש רק למפתח שמריץ את בדיקות האתר, לא לפתיחת הפרויקט ובנייתו ב־Studio.
 
-1. Share one real video and one real channel; verify actual title/image and inspect content before approval.
-2. Connect GitHub on the parent phone, approve, wait for Pages deployment, refresh the child app and play with picture and sound.
-3. Confirm individual/channel/union views and deduplication; revoke both forms and refresh.
-4. Share a second link during saving, and update from a second parent; check neither operation overwrites another parent.
-5. Cancel while connecting, immediately open another video, rotate/resume, go offline/online, and confirm no late playback or next-video chain.
-6. Check a missing/unavailable video, failed metadata and media-format fallback. A YouTube authorization block stops attempts and is not bypassed.
+קובץ ה־ZIP בפרסום נוצר מתוך ה־commit המדויק שנבנה ונבדק. קובצי APK לבטא חתומים ב־debug; חתימה יכולה להשתנות בבנייה הבאה ולחייב הסרה/התקנה מחדש. עדכונים רציפים דורשים מפתח חתימה פרטי קבוע מחוץ לריפו הציבורי.
 
-See ../AUDIT.md for the older web audit; it is not a hardware audit of this new parent app.
+השיתוף/האישור בדפדפן, המקלדת, rotation וניגון בגרסה החדשה צריכים גם בדיקה במכשיר אמיתי. המשתמש דיווח שהנגן המקורי עובד במכשיר שלו; זו אינה בדיקה פיזית עצמאית שלנו.

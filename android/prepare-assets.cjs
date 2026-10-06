@@ -23,8 +23,8 @@ function prepare(output = target) {
   fs.copyFileSync(path.join(root,'providers.js'),path.join(output,'providers.js'));
   fs.copyFileSync(path.join(root,'manifest.json'),path.join(output,'manifest.json'));
   fs.cpSync(path.join(root,'icons'),path.join(output,'icons'),{recursive:true});
-  fs.mkdirSync(path.join(__dirname,'app/src/main/res/mipmap'),{recursive:true});
-  fs.copyFileSync(path.join(root,'icons/icon-192.png'),path.join(__dirname,'app/src/main/res/mipmap/ic_launcher.png'));
+  fs.mkdirSync(path.join(__dirname,'app/build/generated/kidsRes/mipmap'),{recursive:true});
+  fs.copyFileSync(path.join(root,'icons/icon-192.png'),path.join(__dirname,'app/build/generated/kidsRes/mipmap/ic_launcher.png'));
   return {html,app};
 }
 if (require.main === module) prepare();

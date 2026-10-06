@@ -33,9 +33,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Native unit tests and both APKs
+      - name: Build the default Android Studio child project with the checked-in wrapper
         working-directory: android
-        run: gradle --no-daemon :app:testDebugUnitTest :parent:testDebugUnitTest :app:assembleDebug :parent:assembleDebug --stacktrace
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Check identical Gradle packaging and optional old companion regressions
+        run: |
+          node android/check-bundle.cjs
+          cd android
+          ./gradlew --no-daemon -PincludeParentCompanion=true :parent:testDebugUnitTest --stacktrace
+      - name: Verify live GitHub permission endpoint without changing approvals
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const permission=await github.rest.repos.getCollaboratorPermissionLevel({...context.repo,username:context.repo.owner});
+            if(permission.data.permission!=='admin') throw new Error('Owner permission unavailable');
+            const list=await github.rest.repos.getContent({...context.repo,path:'videos.txt',ref:'main'});
+            if(list.data.encoding!=='base64') throw new Error('Whitelist unavailable');
+            console.log('Parent workflow permission API and current whitelist read verified; no approvals changed');
       - name: Verify native reports
         run: |
           python3 - <<'PY'
@@ -59,10 +73,10 @@ jobs:
         run: |
           mkdir -p family
           cp android/app/build/outputs/apk/debug/app-debug.apk family/Kids-YouTube.apk
-          cp android/parent/build/outputs/apk/debug/parent-debug.apk family/Kids-YouTube-Parent.apk
+          git archive --format=zip --prefix=kids-youtube/ HEAD -o family/Kids-YouTube-AndroidStudio.zip
           cp android/native-test-counts.json family/
           cd family
-          sha256sum *.apk > SHA256SUMS.txt
+          sha256sum *.apk *.zip > SHA256SUMS.txt
       - name: APKs and native reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -95,21 +109,21 @@ jobs:
             if(counts.app < 10 || counts.parent < 25) throw new Error('Missing native test results');
             const tag = 'family-beta-'+context.sha.slice(0,12);
             const body = [
-              'שתי אפליקציות Android: סרטונים לילדים + הוספה לילדים (להורה בלבד).',
-              'YouTube → שיתוף → הוספה לילדים → בדיקת השם והתמונה → אישור.',
-              'נדרש חיבור GitHub חד־פעמי בטלפון ההורה עם הרשאת כתיבה לרשימה. אין שרת נוסף או תשלום.',
-              'נגן NewPipeExtractor/Media3 המקורי נשמר. המשתמש דיווח שהגרסה הקודמת מנגנת היטב; השיתוף והעיצוב החדשים עדיין דורשים בדיקה בטלפון.',
-              counts.app+' בדיקות Java לילדים ו־'+counts.parent+' להורה עברו, בנוסף לבדיקות האתר/הגשר.',
+              'אפליקציית הילדים ופרויקט מלא לפתיחה ב־Android Studio, בתוך אותו ריפו.',
+              'הורידו Kids-YouTube-AndroidStudio.zip, חלצו ופתחו ב־Android Studio את kids-youtube/android. אין צורך ב־Node או Gradle מותקן בנפרד.',
+              'להורה יש עמוד בדפדפן: העתקת קישור → בדיקה → אישור בחשבון GitHub. ללא אפליקציית הורה או מפתח אישי. הורה נוסף צריך הרשאת כתיבה לריפו.',
+              'התאמות למסך קטן/גדול/לרוחב, טקסט מוגדל, אזורי מערכת ומקלדת. מנגנון הניגון המקורי נשמר; השינויים החדשים דורשים גם בדיקה פיזית.',
+              counts.app+' בדיקות Java לילדים ו־'+counts.parent+' בדיקות נסיגה של ההורה הקודם עברו, בנוסף לבדיקות האתר/הגשר/הורה בדפדפן.',
               'Android 6 ומעלה ו־WebView מעודכן. אלו APK לבדיקת בטא בחתימת debug; עדכון עתידי עשוי לדרוש הסרה והתקנה מחדש.',
-              'הגרסה החדשה לילדים (il.kidsyoutube) מותקנת לצד גרסת הבדיקה הקודמת (il.kidsyoutube.proof).',
+              'אם גרסת בטא קודמת עם אותו מזהה מותקנת, חתימת debug חדשה עשויה לדרוש הסרה לפני התקנה.',
               'להורה: https://github.com/'+context.repo.owner+'/'+context.repo.repo+'/blob/'+context.sha+'/PARENTS.md',
               'מקור: '+context.sha
             ].join('\n\n');
             let release;
             try { release=(await github.rest.repos.getReleaseByTag({...context.repo,tag})).data; }
             catch(e) { if(e.status!==404) throw e; release=(await github.rest.repos.createRelease({...context.repo,
-              tag_name:tag,target_commitish:context.sha,name:'Kids YouTube — family beta',body,prerelease:true,draft:false})).data; }
-            for(const name of ['Kids-YouTube.apk','Kids-YouTube-Parent.apk','SHA256SUMS.txt']) {
+              tag_name:tag,target_commitish:context.sha,name:'Kids YouTube — Android Studio + browser parent',body,prerelease:true,draft:false})).data; }
+            for(const name of ['Kids-YouTube.apk','Kids-YouTube-AndroidStudio.zip','SHA256SUMS.txt']) {
               const data=fs.readFileSync(directory+name);
               if(name.endsWith('.apk') && data.readUInt32LE(0)!==0x04034b50) throw new Error('Invalid APK');
               const existing=release.assets.find(asset=>asset.name===name);

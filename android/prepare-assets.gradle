@@ -1,0 +1,41 @@
+// Pure Gradle packaging: opening Android Studio does not require Node.
+def webRoot = rootProject.projectDir.parentFile
+def outputAssets = layout.buildDirectory.dir('generated/kidsAssets')
+def outputRes = layout.buildDirectory.dir('generated/kidsRes')
+tasks.register('prepareKidsAssets') {
+    inputs.files(['index.html','app.js','providers.js','manifest.json','android/native-adapter.js',
+        'android/LICENSE','android/THIRD_PARTY_NOTICES.md'].collect { new File(webRoot,it) })
+    inputs.files(fileTree(new File(webRoot,'icons')) { include '*.png' })
+    outputs.dir outputAssets
+    outputs.dir outputRes
+    doLast {
+        def once = { String text, String needle, String replacement ->
+            if (text.split(java.util.regex.Pattern.quote(needle),-1).length != 2)
+                throw new GradleException('Frontend adapter anchor changed')
+            text.replace(needle,replacement)
+        }
+        def target = outputAssets.get().asFile
+        project.delete(target); target.mkdirs()
+        String html = new File(webRoot,'index.html').getText('UTF-8')
+        html = once(html,"if ('serviceWorker' in navigator)","if (false && 'serviceWorker' in navigator)")
+        html = once(html,'<script src="./providers.js?v=20261006h" defer></script>',
+            '<script src="./providers.js?v=20261006h" defer></script>\n  <script src="./native-adapter.js" defer></script>')
+        String app = new File(webRoot,'app.js').getText('UTF-8')
+        app = once(app,'const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:fetch, storage:optionalStorage(), timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});',
+            'const providers = KidsNative.createManager();')
+        app = once(app,'function openPlayer(id) {\n  const video = displayed.get(id);',
+            'function openPlayer(id) {\n  const video = displayed.get(id);\n  if (video && (getApprovedVideos().has(id) || getApprovedChannels().has(video.channelId))) KidsNative.openPlayer(id);\n  return;\n  // Browser player remains in the source for website regression checks.')
+        html = html.replace('<head>', '<head><meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\' \'unsafe-inline\'; style-src \'self\' \'unsafe-inline\'; img-src \'self\' https://img.youtube.com https://*.ytimg.com https://*.ggpht.com https://*.googleusercontent.com; connect-src \'self\'; frame-src \'none\'; object-src \'none\'; base-uri \'self\'; form-action \'none\'">')
+        new File(target,'index.html').setText(html,'UTF-8')
+        new File(target,'app.js').setText(app,'UTF-8')
+        ['android/LICENSE':'LICENSE.txt','android/THIRD_PARTY_NOTICES.md':'THIRD_PARTY_NOTICES.txt',
+            'android/native-adapter.js':'native-adapter.js','providers.js':'providers.js','manifest.json':'manifest.json'].each { src,dst ->
+            new File(target,dst).bytes = new File(webRoot,src).bytes
+        }
+        project.copy { from new File(webRoot,'icons'); into new File(target,'icons') }
+        def icons = new File(outputRes.get().asFile,'mipmap'); icons.mkdirs()
+        new File(icons,'ic_launcher.png').bytes = new File(webRoot,'icons/icon-192.png').bytes
+    }
+}
+preBuild.dependsOn tasks.named('prepareKidsAssets')
+
