@@ -62,7 +62,8 @@ const channelProgress = new Map();
 const verifiedChannelVideos = new Map();
 const cardCache = new Map();
 let channelDates = Object.create(null);
-const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:fetch, storage:localStorage, timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});
+function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
+const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:fetch, storage:optionalStorage(), timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});
 const diagnosticsEnabled = new URL(location.href).searchParams.get('diagnostics') === '1';
 ui['diagnostic-panel'].hidden = !diagnosticsEnabled;
 function audit() {
@@ -594,7 +595,8 @@ async function verifyVideoApproval(session) {
   if (verifiedChannelVideos.get(session.video.id) === expected) return true;
   // Persisted metadata is useful for display, but not proof of channel membership.
   const data = await getVideoMetadata(session.video.id,session.controller.signal,true);
-  return data.authorId === expected && getApprovedChannels().has(data.authorId);
+  if(data.authorId !== expected || !getApprovedChannels().has(data.authorId))return false;
+  verifiedChannelVideos.set(session.video.id,data.authorId);return true;
 }
 function mediaSource(base, id) {
   if (!INVIDIOUS_INSTANCES.includes(base) || !VIDEO_ID.test(id)) throw new KidsProviders.AppError('INVALID_REQUEST');
@@ -610,11 +612,11 @@ async function tryPlayer() {
   playerMessage(session.index ? 'מחפש מקור חלופי...' : 'מתחבר...',true);
   const current = () => playback === session && sequence === playerSequence && !session.controller.signal.aborted;
   try {
-    if (!session.verified) {
-      session.verified = await verifyVideoApproval(session);
-      if (!current()) return;
-      if (!session.verified) {playerUnavailable();return;}
-    }
+    // Recheck grants on every switch. Fresh channel proof stays in memory only;
+    // a prior manual approval cannot authorize a later, revoked fallback.
+    session.verified = await verifyVideoApproval(session);
+    if (!current()) return;
+    if (!session.verified) {playerUnavailable();return;}
   } catch (_) {if (current()) playerUnavailable(); return;}
   if (!current()) return;
   if (Date.now() >= session.deadline || session.index >= session.instances.length) {playerUnavailable();return;}
@@ -667,21 +669,28 @@ async function tryCompatiblePlayer(session,base,sequence) {
   if (!current()) return;
   if (Date.now() >= session.deadline) {playerUnavailable();return;}
   playerMessage('מחפש מקור חלופי...',true);
-  // Metadata validates this exact ID before the bounded compatibility embed.
-  // iframe load itself is not evidence of playback, and is never logged as such.
-  const cached=providers.getCachedData('/api/v1/videos/'+session.video.id,d=>validVideoMetadata(d,session.video.id));
-  const data=providers.getDataProvider(cached)===base ? cached : await providers.fetchFromProvider(base,'/api/v1/videos/'+session.video.id,{signal:session.controller.signal,validate:d=>validVideoMetadata(d,session.video.id),timeoutMs:Math.min(SETTINGS.requestTimeoutMs,Math.max(1,session.deadline-Date.now()))});
-  if (!current()) return;
-  if (!getApprovedVideos().has(session.video.id) && !getApprovedChannels().has(data.authorId)) throw new KidsProviders.AppError('VIDEO_UNAVAILABLE');
+  // Approval was established by verifyVideoApproval: direct parent approval or
+  // fresh channel membership. Do not make a second API request a prerequisite
+  // for this exact-ID embed; an iframe does not need API CORS permission.
+  // Recheck current grants so a revoked channel cannot reuse an old session.
+  if (!session.verified || (!getApprovedVideos().has(session.video.id) && !getApprovedChannels().has(session.video.authorId || session.video.channelId))) throw new KidsProviders.AppError('VIDEO_UNAVAILABLE');
   stopMedia();
+  const started=Date.now();let settled=false;
   const frame=document.createElement('iframe'); frame.id='compatible-frame'; frame.title='צפייה: '+session.video.title;
   if (new URL(base).origin===new URL(SCOPE).origin) throw new KidsProviders.AppError('INVALID_REQUEST');
   // This outer frame is our own trusted document. Its inner provider frame is
   // sandboxed and governed by an exact embed path, separately for every video.
   frame.setAttribute('allow','autoplay; fullscreen; picture-in-picture');frame.referrerPolicy='no-referrer';
+  const failed=code=>{
+    if(!current() || settled || ui['media-host'].children[0]!==frame)return;
+    settled=true;clearTimeout(playerTimer);
+    providers.markResourceFailure(base,'/embed/'+session.video.id);
+    if(code==='TIMEOUT')providers.updateProviderHealth(base,'playback',false,Date.now()-started,new KidsProviders.AppError(code));
+    providers.record({kind:'embed',provider:base,path:session.video.id,outcome:code,ms:Date.now()-started});audit();tryPlayer();
+  };
   const onMessage=event=>{
     if (!current() || ui['media-host'].children[0]!==frame || event.source!==frame.contentWindow || event.origin!==new URL(SCOPE).origin || !event.data || event.data.videoId!==session.video.id) return;
-    if(event.data.type==='kids-player-error'){tryPlayer();return;}
+    if(event.data.type==='kids-player-error'){failed('FRAME_UNAVAILABLE');return;}
     if(event.data.type!=='kids-player-ready')return;
     clearTimeout(playerTimer);playerMessage('אם הסרטון לא מתחיל, לחצו על ▶. אפשר גם לנסות מקור אחר.');
     ui['next-player'].hidden=session.index>=session.instances.length;
@@ -690,9 +699,9 @@ async function tryCompatiblePlayer(session,base,sequence) {
   };
   window.addEventListener('message',onMessage);frameCleanup=()=>window.removeEventListener('message',onMessage);
   frame.addEventListener('load',()=>{if(current())frame.contentWindow.postMessage({type:'kids-player-init',provider:base,videoId:session.video.id,title:session.video.title},new URL(SCOPE).origin);},{once:true});
-  frame.addEventListener('error',()=>{if(current())tryPlayer();},{once:true});
+  frame.addEventListener('error',()=>failed('FRAME_UNAVAILABLE'),{once:true});
   frame.src=new URL('./player.html',SCOPE).href;
-  playerTimer=setTimeout(()=>{if(current() && ui['media-host'].children[0]===frame)tryPlayer();},Math.max(1,Math.min(SETTINGS.playerWaitMs,session.deadline-Date.now())));
+  playerTimer=setTimeout(()=>failed('TIMEOUT'),Math.max(1,Math.min(SETTINGS.playerWaitMs,session.deadline-Date.now())));
   ui['media-host'].replaceChildren(frame);
 }
 function openPlayer(id) {
@@ -704,7 +713,7 @@ function openPlayer(id) {
   else {returnFocus=document.activeElement;returnScrollY=window.scrollY||0;}
   returnVideoId=id;
   stopMedia();
-  playback={video,instances:providers.getHealthyProviders('playback'),index:0,controller:new AbortController(),deadline:Date.now()+SETTINGS.playerBudgetMs,verified:false,resumeTime:0};
+  playback={video,instances:providers.getHealthyProviders('playback','/embed/'+id),index:0,controller:new AbortController(),deadline:Date.now()+SETTINGS.playerBudgetMs,verified:false,resumeTime:0};
   ui['player-title'].textContent=video.title;
   ui.player.hidden=false;ui.app.inert=true;ui.app.setAttribute('aria-hidden','true');document.body.style.overflow='hidden';ui.back.focus();
   if (!alreadyOpen) history.pushState({kidsYoutubePlayer:true},'',location.href);
@@ -748,7 +757,15 @@ ui.back.addEventListener('click', () => closePlayer());
 window.addEventListener('popstate', () => closePlayer(true));
 ui['next-player'].addEventListener('click', () => {if (playback) {const media=ui['media-host'].children[0];if(media && Number.isFinite(media.currentTime) && media.currentTime)playback.resumeTime=media.currentTime;playback.deadline=Date.now()+SETTINGS.playerBudgetMs;tryPlayer();}});
 ui['retry-video'].addEventListener('click', () => {
-  if (playback) {providers.resetHealth('playback');providers.clearResourceFailures('/media/'+playback.video.id);playback.instances=providers.getHealthyProviders('playback');playback.index=0;playback.deadline=Date.now()+SETTINGS.playerBudgetMs;tryPlayer();}
+  if (playback) {
+    const id=playback.video.id;
+    // An explicit tap permits one new bounded round, including authorization
+    // metadata and the native route, rather than reusing a known failed embed.
+    providers.resetHealth();
+    for(const path of ['/native/','/embed/','/api/v1/videos/'])providers.clearResourceFailures(path+id);
+    for(const base of INVIDIOUS_INSTANCES)providers.removeCachedData('compatibility:'+base+id);
+    playback.instances=providers.getHealthyProviders('playback','/embed/'+id);playback.index=0;playback.deadline=Date.now()+SETTINGS.playerBudgetMs;tryPlayer();
+  }
 });
 document.addEventListener('keydown', event => {
   if (ui.player.hidden) return;

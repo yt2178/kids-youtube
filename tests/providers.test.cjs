@@ -78,3 +78,9 @@ test('cache storage failures do not interrupt requests or playback health',async
   const p=manager(async()=>ok({valid:true}),{storage:{getItem(){throw new Error('blocked');},setItem(){throw new Error('full');}}});
   assert.equal((await p.request('/api/v1/test',{ttl:1000})).valid,true);p.updateProviderHealth(bases[0],'playback',true,10);assert.equal(p.getHealthyProviders('playback')[0],bases[0]);
 });
+
+test('targeted cache removal persists while preserving other video metadata',()=>{
+  const store=new Map(),storage={getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)};
+  const p=manager(async()=>ok({}),{storage});p.setCachedData('compatibility:first',{preferred:true},60000);p.setCachedData('/api/v1/videos/second',{title:'keep'},60000);
+  p.removeCachedData('compatibility:first');const restored=manager(async()=>ok({}),{storage});assert.equal(restored.getCachedData('compatibility:first'),null);assert.deepEqual(restored.getCachedData('/api/v1/videos/second'),{title:'keep'});
+});

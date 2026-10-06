@@ -140,6 +140,7 @@
       try {return await work;} finally {if (inflight.get(path)===work) inflight.delete(path);}
     }
     function clearCache() {cache.clear();resourceFailures.clear();save(dataKey,{entries:[]});}
+    function removeCachedData(key) {if(cache.delete(key))save(dataKey,{entries:[...cache.values()]});}
     function markResourceFailure(base,resource) {if (bases.includes(base))resourceFailures.set(base+resource,clock()+30000);}
     function clearResourceFailures(resource) {for (const base of bases) resourceFailures.delete(base+resource);}
     function resetHealth(kind) {for (const base of bases) for (const k of kind?[kind]:['api','playback','native']) states[base][k].cooldownUntil=0;save(healthKey,states);}
@@ -151,7 +152,7 @@
       const base=candidates[0];
       try {await fetchFromProvider(base,'/api/v1/stats',{validate:data=>!!data && !!data.software});} catch (_) { /* Captured in diagnostics. */ }
     }
-    return {getDataProvider:data=>data && typeof data==='object' ? dataProviders.get(data) : null,isNetworkData:data=>!!data && typeof data==='object' && networkData.has(data),request,fetchFromProvider,getHealthyProviders,getCachedData,setCachedData,updateProviderHealth,healthCheck,clearCache,resetHealth,markResourceFailure,clearResourceFailures,record,snapshot:()=>({health:JSON.parse(JSON.stringify(states)),requests:diagnostics.slice(),cacheEntries:cache.size,inflight:inflight.size})};
+    return {getDataProvider:data=>data && typeof data==='object' ? dataProviders.get(data) : null,isNetworkData:data=>!!data && typeof data==='object' && networkData.has(data),request,fetchFromProvider,getHealthyProviders,getCachedData,setCachedData,removeCachedData,updateProviderHealth,healthCheck,clearCache,resetHealth,markResourceFailure,clearResourceFailures,record,snapshot:()=>({health:JSON.parse(JSON.stringify(states)),requests:diagnostics.slice(),cacheEntries:cache.size,inflight:inflight.size})};
   }
   return {AppError,classifyError,httpError,fetchJSON,createManager};
 });

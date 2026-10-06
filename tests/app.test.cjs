@@ -55,6 +55,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});if(String(url)==='./videos.txt')return options.offline?fail():json(config);return api(String(url),opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
+  if(options.storageAccessDenied)Object.defineProperty(context,'localStorage',{get(){throw new Error('SecurityError: storage access denied');}});
   vm.runInContext(scripts[0],context,{filename:'service-worker-registration.js'});
   vm.runInContext(providerScript,context,{filename:'providers.js'});
   vm.runInContext(scripts[1],context,{filename:'index-inline.js'});
@@ -65,7 +66,7 @@ const plain = obj => JSON.parse(JSON.stringify(obj));
 
 test('local JS and service worker parse, no third-party scripts/frameworks',()=>{
   scripts.forEach(s=>new vm.Script(s));new vm.Script(fs.readFileSync(path.join(root,'sw.js'),'utf8'));
-  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006d','./app.js?v=20261006d']);new vm.Script(providerScript);
+  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006e','./app.js?v=20261006e']);new vm.Script(providerScript);
   assert.match(html,/<html lang="he" dir="rtl">/);assert.match(html,/href="\.\/manifest.json"/);
   assert.doesNotMatch(html,/\/kids-youtube\/sw\.js/);
 });
@@ -189,14 +190,15 @@ test('player enforces approved IDs, native media, no iframe navigation, and stop
   a.run('closePlayer()');assert.equal(video.src,'');assert.equal(video.paused,true);assert.equal(a.elements.player.hidden,true);assert.equal(a.elements.app.inert,false);
   assert.doesNotMatch(html,/allowfullscreen|sandbox="allow-scripts allow-same-origin/);
 });
-test('actual media errors automatically advance to the next instance',async()=>{
+test('actual media and embed errors automatically advance to the next instance',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});
   a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a)?.src);const first=media(a);emit(first,'error');await until(()=>media(a)!==first);
+  const frame=media(a);assert.equal(frame.tagName,'iframe');emit(frame,'error');await until(()=>media(a)!==frame);
   assert.match(media(a).src,/tiekoetter/);emit(first,'canplay');assert.match(media(a).src,/tiekoetter/);a.run('closePlayer()');
 });
 test('all finite player attempts failing show a friendly retry state',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));
-  for(let i=0;i<3;i++){const v=media(a);emit(v,'error');await new Promise(r=>setTimeout(r,0));}
+  for(let i=0;i<6;i++){const v=media(a);assert.ok(v);emit(v,'error');await new Promise(r=>setTimeout(r,0));}
   await until(()=>!a.elements['player-error'].hidden);assert.equal(media(a),undefined);assert.match(a.elements['player-message'].textContent,/לא הצלחנו להפעיל/);a.run('closePlayer()');
 });
 test('closing cancels an in-progress native source and ignores its late events',async()=>{
@@ -548,9 +550,9 @@ test('native failure automatically opens the validated compatibility embed with 
   emit(frame,'load');assert.equal(frame.sentMessages[0].message.videoId,id(1));a.listeners.message[0]({source:frame.contentWindow,origin:'https://example.test',data:{type:'kids-player-ready',videoId:id(1)}});assert.equal(a.run('providers.snapshot().requests.at(-1).outcome'),'loaded-not-playback-proof');
   a.run('closePlayer()');assert.equal(frame.src,'');assert.equal(a.elements.player.hidden,true);
 });
-test('compatibility fallback never trusts mismatched metadata or a cancelled session',async()=>{
-  const a=await app({videos:[{id:id(1)}],channels:[]},()=>json({videoId:id(2),title:'wrong'}));a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.src?.includes('tiekoetter'));
-  assert.equal(media(a).tagName,'video');a.run('closePlayer()');
+test('direct approval keeps the exact embed ID without depending on unrelated metadata',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]},()=>json({videoId:id(2),title:'wrong'}));a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.tagName==='iframe');
+  emit(media(a),'load');assert.equal(media(a).sentMessages[0].message.videoId,id(1));assert.equal(a.calls.length,1);a.run('closePlayer()');
 });
 
 test('metadata updates reuse thumbnail nodes while updating literal title and author text',async()=>{
@@ -595,4 +597,45 @@ test('global channel filter does not hide manual approvals or block pagination i
   a.run(`channelFilter='${A}';switchBrowse('videos')`);assert.deepEqual(visibleVideoIds(a),[id(9)]);
   a.run(`switchBrowse('channels','${B}')`);assert.equal(a.elements['channel-filter'].value,B);assert.equal(a.elements.more.hidden,false);
   const before=a.calls.length;await a.run('loadMoreVideos()');assert.equal(a.calls.length,before+1);assert.deepEqual(visibleVideoIds(a),[id(2),id(3)]);
+});
+
+test('direct approved embed remains reachable after API 401, 403, 500 or network/CORS failure',async()=>{
+  for(const status of [401,403,500,'network']){
+    const a=await app(link(1),()=>{if(status==='network')throw new TypeError('Failed to fetch');return {ok:false,status};});
+    const initialCalls=a.calls.length;assert.ok(initialCalls>1);
+    a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.tagName==='iframe');
+    emit(media(a),'load');assert.equal(media(a).sentMessages[0].message.videoId,id(1));assert.equal(a.calls.length,initialCalls);a.run('closePlayer()');
+  }
+});
+test('fresh approved channel rows do not need a second metadata request for compatibility',async()=>{
+  const a=await app({videos:[],channels:[{id:A}]},()=>json({videos:[row(1)],continuation:null}));const initialCalls=a.calls.length;
+  a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.tagName==='iframe');
+  assert.equal(a.calls.length,initialCalls);a.run('closePlayer()');
+});
+test('cached-only channel approval still requires fresh membership when every API is unavailable',async()=>{
+  const store=new Map(),config={videos:[],channels:[{id:A}]};await app(config,()=>json({videos:[row(1)],continuation:null}),store);
+  for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
+  const a=await app(config,fail,store);assert.equal(a.run('displayed.size'),1);
+  a.run(`openPlayer('${id(1)}')`);await until(()=>!a.elements['player-error'].hidden);assert.equal(media(a),undefined);a.run('closePlayer()');
+});
+test('retry explicitly resets both transports and authorization failures for one bounded round',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});
+  a.run(`for(const base of INVIDIOUS_INSTANCES){providers.markResourceFailure(base,'/native/${id(1)}');providers.markResourceFailure(base,'/embed/${id(1)}');providers.markResourceFailure(base,'/api/v1/videos/${id(1)}');providers.setCachedData('compatibility:'+base+'${id(1)}',{preferred:true},60000);providers.updateProviderHealth(base,'native',false,1,new KidsProviders.AppError('TIMEOUT'));providers.updateProviderHealth(base,'playback',false,1,new KidsProviders.AppError('TIMEOUT'));}`);
+  a.run(`openPlayer('${id(1)}')`);await until(()=>!a.elements['player-error'].hidden);a.elements['retry-video'].listeners.click[0]();await until(()=>media(a)?.tagName==='video');
+  assert.equal(a.run(`providers.getHealthyProviders('api','/api/v1/videos/${id(1)}').length`),3);assert.equal(a.run(`providers.getHealthyProviders('native','/native/${id(1)}').length`),3);
+  assert.equal(a.run(`INVIDIOUS_INSTANCES.some(base=>providers.getCachedData('compatibility:'+base+'${id(1)}'))`),false);assert.equal(a.run('playback.index'),1);a.run('closePlayer()');
+});
+test('failed compatibility resource is skipped for the same video without disabling other videos',async()=>{
+  const a=await app({videos:[{id:id(1)},{id:id(2)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.tagName==='iframe');emit(media(a),'error');a.run('closePlayer()');
+  a.run(`openPlayer('${id(1)}')`);await until(()=>media(a)?.tagName==='video');assert.match(media(a).src,/tiekoetter/);a.run('closePlayer()');
+  a.run(`openPlayer('${id(2)}')`);await until(()=>media(a)?.tagName==='video');assert.match(media(a).src,/f5/);a.run('closePlayer()');
+});
+test('blocked localStorage property getter cannot prevent startup or approved playback',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]},undefined,new Map(),{storageAccessDenied:true});assert.equal(a.run('displayed.size'),1);
+  a.run(`openPlayer('${id(1)}')`);await until(()=>media(a)?.tagName==='video');a.run('closePlayer()');
+});
+
+test('revoking an approval during playback prevents the next fallback source',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.tagName==='iframe');
+  a.run('activeConfig=normalizeConfig({videos:[],channels:[]})');emit(media(a),'error');await until(()=>!a.elements['player-error'].hidden);assert.equal(media(a),undefined);assert.equal(a.run('playback.index'),1);a.run('closePlayer()');
 });

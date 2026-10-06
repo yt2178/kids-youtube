@@ -11,6 +11,9 @@
     let base;
     try {base=new URL(provider);if(base.protocol!=='https:'||base.origin!==provider||base.username||base.password||base.origin===location.origin)return;} catch(_){return;}
     initialized=true;
+    document.addEventListener('securitypolicyviolation',event=>{
+      if(event.disposition==='enforce' && event.effectiveDirective==='frame-src')window.parent.postMessage({type:'kids-player-error',videoId},location.origin);
+    });
     const embed=new URL('/embed/'+videoId,base);
     const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';policy.content="frame-src "+embed.href+"; object-src 'none'; base-uri 'none'";document.head.append(policy);
     const frame=document.createElement('iframe');frame.id='approved-embed';frame.title=typeof title==='string'?title.slice(0,300):'סרטון מאושר';
