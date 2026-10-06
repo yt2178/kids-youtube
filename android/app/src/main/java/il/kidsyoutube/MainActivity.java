@@ -241,22 +241,52 @@ public final class MainActivity extends Activity {
         });
         try{workers.execute(playTask);}catch(RejectedExecutionException e){playTask.abort();unavailable();}
     }
+    static OkHttpClient mediaClient(OkHttpClient base) {
+        // Extractor requests intentionally keep redirects disabled. Signed Googlevideo
+        // media URLs can redirect between HTTPS media hosts. Follow those redirects
+        // ourselves so every Location target is validated before connecting to it.
+        return base.newBuilder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .addInterceptor(chain->{
+                    okhttp3.Request request=chain.request();
+                    for(int redirects=0;;redirects++){
+                        if(!ApprovalPolicy.safeMedia(request.url().toString()))
+                            throw new IOException("INVALID_MEDIA_REDIRECT");
+                        okhttp3.Response response=chain.proceed(request);
+                        if(!response.isRedirect()){
+                            if(response.code()==401 || response.code()==403){
+                                response.close();throw new IOException("UPSTREAM_BLOCKED");
+                            }
+                            if(response.code()==429){
+                                response.close();throw new IOException("RATE_LIMITED");
+                            }
+                            return response;
+                        }
+                        if(redirects>=4){
+                            response.close();throw new IOException("TOO_MANY_MEDIA_REDIRECTS");
+                        }
+                        okhttp3.HttpUrl next;
+                        try {next=safeMediaRedirect(response.request().url(),response.header("Location"));}
+                        catch(IOException error){response.close();throw error;}
+                        response.close();
+                        request=request.newBuilder().url(next).build();
+                    }
+                }).build();
+    }
+    static okhttp3.HttpUrl safeMediaRedirect(okhttp3.HttpUrl current,String location) throws IOException {
+        okhttp3.HttpUrl next=location==null?null:current.resolve(location);
+        if(next==null || !ApprovalPolicy.safeMedia(next.toString()))
+            throw new IOException("INVALID_MEDIA_REDIRECT");
+        return next;
+    }
     private void trySource(long generation) {
         if(destroyed || generation!=playerGeneration || active==null)return;
         stopMedia();
         if(sourceIndex>=active.sources.size()){unavailable();return;}
         showMessage(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
         NativeApi.Source source=active.sources.get(sourceIndex++);
-        // Validate every network request again, including any redirected media URL.
-        OkHttpClient mediaClient=api.downloader.client.newBuilder().addInterceptor(chain->{
-            if(!ApprovalPolicy.safeMedia(chain.request().url().toString()))throw new IOException("INVALID_MEDIA");
-            okhttp3.Response response=chain.proceed(chain.request());
-            if(response.code()==401 || response.code()==403){
-                response.close();throw new IOException("UPSTREAM_BLOCKED");
-            }
-            if(response.code()==429){response.close();throw new IOException("RATE_LIMITED");}
-            return response;
-        }).build();
+        OkHttpClient mediaClient=mediaClient(api.downloader.client);
         OkHttpDataSource.Factory dataSource=new OkHttpDataSource.Factory(mediaClient);
         ProgressiveMediaSource.Factory factory=new ProgressiveMediaSource.Factory(dataSource)
                 .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(0));
