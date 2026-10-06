@@ -8,6 +8,10 @@ function context() {
   c.window=c;vm.createContext(c);vm.runInContext(adapter,c);
   return {c,messages,reply:(data)=>bridge.onmessage({data:JSON.stringify(data)})};
 }
+test('native packaging accepts Windows line endings at its checked anchors',()=>{
+  const {once}=require('../android/prepare-assets.cjs');
+  assert.equal(once('first\r\nsecond\r\n','first\nsecond','replaced'),'replaced\n');
+});
 test('native bundle parses and keeps the three-tab UI without changing website source',()=>{
   const {prepare}=require('../android/prepare-assets.cjs'),out=fs.mkdtempSync(path.join(os.tmpdir(),'kids-native-'));
   try {

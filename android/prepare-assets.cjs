@@ -2,6 +2,7 @@
 const fs = require('node:fs'), path = require('node:path');
 const root = path.resolve(__dirname, '..'), target = path.join(__dirname, 'app/build/generated/kidsAssets');
 function once(text, needle, replacement) {
+  text = text.replace(/\r\n/g,'\n');
   if (text.split(needle).length !== 2) throw new Error('Frontend adapter anchor changed: ' + needle.slice(0,60));
   return text.replace(needle, replacement);
 }
