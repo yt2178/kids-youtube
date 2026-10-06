@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-06T07:33:42.617Z",
+  "commit": "1f2e812d5de784b9ede9036469b73ef66a6a8e95",
+  "workflowRun": 37430365068,
+  "source": "youtubei.js@18.1.0",
+  "videoId": "mVTlbvQ_010",
+  "whitelist": {
+    "status": 200,
+    "ms": 152
+  },
+  "video": {
+    "status": 503,
+    "ms": 890,
+    "error": "UPSTREAM_BLOCKED"
+  },
+  "metadata": false,
+  "mediaBytes": false,
+  "decodedVideo": false,
+  "browserPlayback": false,
+  "result": "failed",
+  "frontendTests": 122,
+  "backendTests": 17,
+  "note": "The source requires login/verification. No working playback has been proven; prototype not connected to production. No Render service created."
+}
