@@ -30,8 +30,7 @@ const SCOPE = new URL('./', location.href).href;
 // Its origin must stay external; CSP also blocks a redirect into our origin.
 function installFramePolicy() {
   if (!document.head) return;
-  const origins=INVIDIOUS_INSTANCES.filter(base=>{try {const u=new URL(base);return u.protocol==='https:' && u.origin===base && u.origin!==new URL(SCOPE).origin && !u.username && !u.password;} catch (_) {return false;}});
-  const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';policy.content="frame-src "+(origins.join(' ') || "'none'")+"; object-src 'none'; base-uri 'self'";document.head.append(policy);
+  const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';policy.content="frame-src 'self'; object-src 'none'; base-uri 'self'";document.head.append(policy);
 }
 installFramePolicy();
 const $ = id => document.getElementById(id);
@@ -46,6 +45,7 @@ let lastLoad = 0;
 let installPrompt = null;
 let playback = null;
 let playerTimer = null;
+let frameCleanup = null;
 let returnFocus = null;
 let returnVideoId = null;
 let returnScrollY = 0;
@@ -574,6 +574,7 @@ function playerMessage(text, busy = false) {
   ui['player-message'].textContent = text; ui['player-spinner'].hidden = !busy;
 }
 function stopMedia() {
+  if(frameCleanup){frameCleanup();frameCleanup=null;}
   clearTimeout(playerTimer);
   const media = ui['media-host'].children[0];
   if (media) {
@@ -675,23 +676,22 @@ async function tryCompatiblePlayer(session,base,sequence) {
   stopMedia();
   const frame=document.createElement('iframe'); frame.id='compatible-frame'; frame.title='צפייה: '+session.video.title;
   if (new URL(base).origin===new URL(SCOPE).origin) throw new KidsProviders.AppError('INVALID_REQUEST');
-  // The provider needs its own origin/storage. Parent origin access remains
-  // forbidden, with frame-src CSP also forbidding redirects into the app origin.
-  // No popups, forms or top-level navigation are granted.
-  frame.setAttribute('sandbox','allow-scripts allow-same-origin allow-presentation');
+  // This outer frame is our own trusted document. Its inner provider frame is
+  // sandboxed and governed by an exact embed path, separately for every video.
   frame.setAttribute('allow','autoplay; fullscreen; picture-in-picture');frame.referrerPolicy='no-referrer';
-  frame.addEventListener('load',()=>{
-    if (!current() || ui['media-host'].children[0]!==frame) return;
+  const onMessage=event=>{
+    if (!current() || ui['media-host'].children[0]!==frame || event.source!==frame.contentWindow || event.origin!==new URL(SCOPE).origin || !event.data || event.data.videoId!==session.video.id) return;
+    if(event.data.type==='kids-player-error'){tryPlayer();return;}
+    if(event.data.type!=='kids-player-ready')return;
     clearTimeout(playerTimer);playerMessage('אם הסרטון לא מתחיל, לחצו על ▶. אפשר גם לנסות מקור אחר.');
     ui['next-player'].hidden=session.index>=session.instances.length;
     providers.setCachedData('compatibility:'+base+session.video.id,{preferred:true},10*60*1000);
     providers.record({kind:'embed',provider:base,path:session.video.id,outcome:'loaded-not-playback-proof'});audit();
-  },{once:true});
+  };
+  window.addEventListener('message',onMessage);frameCleanup=()=>window.removeEventListener('message',onMessage);
+  frame.addEventListener('load',()=>{if(current())frame.contentWindow.postMessage({type:'kids-player-init',provider:base,videoId:session.video.id,title:session.video.title},new URL(SCOPE).origin);},{once:true});
   frame.addEventListener('error',()=>{if(current())tryPlayer();},{once:true});
-  const url=new URL('/embed/'+session.video.id,base);url.search='autoplay=1&related_videos=false&continue=0&comments=false&iv_load_policy=3&quality=dash&local=true';
-  // Set the URL before insertion: an initial about:blank load must not consume
-  // the real load listener or clear the deadline before it is installed.
-  frame.src=url.href;
+  frame.src=new URL('./player.html',SCOPE).href;
   playerTimer=setTimeout(()=>{if(current() && ui['media-host'].children[0]===frame)tryPlayer();},Math.max(1,Math.min(SETTINGS.playerWaitMs,session.deadline-Date.now())));
   ui['media-host'].replaceChildren(frame);
 }

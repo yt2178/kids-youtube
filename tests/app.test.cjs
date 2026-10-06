@@ -21,7 +21,7 @@ async function until(check) {
   throw new Error('Test condition did not complete');
 }
 class Element {
-  constructor(tag='div',fragment=false) { this.tagName=tag;this.fragment=fragment;this.hidden=false;this.children=[];this.attributes={};this.dataset={};this.style={};this.listeners={};this.isConnected=true; }
+  constructor(tag='div',fragment=false) { this.tagName=tag;this.fragment=fragment;this.hidden=false;this.children=[];this.attributes={};this.dataset={};this.style={};this.listeners={};this.isConnected=true;this.sentMessages=[];this.contentWindow={postMessage:(message,origin)=>this.sentMessages.push({message,origin})}; }
   append(...nodes) { this.children.push(...nodes.flatMap(n=>n.fragment?n.children:[n]));for(const n of nodes)if(n.tagName==='iframe' && !n.src)for(const fn of n.listeners.load || [])fn(); }
   replaceChildren(...nodes) { this.children=[];this.append(...nodes); }
   setAttribute(k,v) { this.attributes[k]=String(v); }
@@ -53,7 +53,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
     navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/'},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});if(String(url)==='./videos.txt')return options.offline?fail():json(config);return api(String(url),opts);},
-    addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn)});
+    addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
   vm.runInContext(scripts[0],context,{filename:'service-worker-registration.js'});
   vm.runInContext(providerScript,context,{filename:'providers.js'});
@@ -65,7 +65,7 @@ const plain = obj => JSON.parse(JSON.stringify(obj));
 
 test('local JS and service worker parse, no third-party scripts/frameworks',()=>{
   scripts.forEach(s=>new vm.Script(s));new vm.Script(fs.readFileSync(path.join(root,'sw.js'),'utf8'));
-  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006c','./app.js?v=20261006c']);new vm.Script(providerScript);
+  assert.equal(scripts.length,2);assert.deepEqual([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]),['./providers.js?v=20261006d','./app.js?v=20261006d']);new vm.Script(providerScript);
   assert.match(html,/<html lang="he" dir="rtl">/);assert.match(html,/href="\.\/manifest.json"/);
   assert.doesNotMatch(html,/\/kids-youtube\/sw\.js/);
 });
@@ -233,7 +233,7 @@ test('service worker installs shell, activates, excludes whitelist and cross-ori
     caches:{open:async()=>cache,keys:async()=>['kids-youtube-shell:'+scope+':old','some-other-app'],delete:async k=>deleted.push(k),match:async k=>cached.get(k)},
     fetch:async()=>{throw new Error('offline');}});
   vm.runInContext(fs.readFileSync(path.join(root,'sw.js'),'utf8'),context);
-  let work;handlers.install({waitUntil:p=>work=p});await work;assert.equal(skip,1);assert.equal(cached.size,6);
+  let work;handlers.install({waitUntil:p=>work=p});await work;assert.equal(skip,1);assert.equal(cached.size,8);
   handlers.activate({waitUntil:p=>work=p});await work;assert.equal(claim,1);assert.equal(deleted.length,1);assert.match(deleted[0],/old$/);
   for(const url of [scope+'videos.txt','https://invidious.example/api/v1/videos/abc']){
     let intercepted=false;handlers.fetch({request:{url,method:'GET',mode:'cors'},respondWith:()=>intercepted=true});assert.equal(intercepted,false);
@@ -543,9 +543,9 @@ test('search debounce collapses rapid input and preserves pending input on backg
 test('native failure automatically opens the validated compatibility embed with restricted cross-origin sandbox',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]},()=>json({videoId:id(1),title:'שם הסרטון'}));
   a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));const old=media(a);emit(old,'error');await until(()=>media(a)?.tagName==='iframe');const frame=media(a);
-  const url=new URL(frame.src);assert.equal(url.pathname,'/embed/'+id(1));assert.equal(url.searchParams.get('continue'),'0');assert.equal(url.searchParams.get('related_videos'),'false');
-  assert.equal(frame.getAttribute('sandbox'),'allow-scripts allow-same-origin allow-presentation');assert.equal(frame.getAttribute('allow'),'autoplay; fullscreen; picture-in-picture');assert.equal(frame.getAttribute('allowfullscreen'),null);
-  emit(frame,'load');assert.equal(a.run('providers.snapshot().requests.at(-1).outcome'),'loaded-not-playback-proof');
+  const url=new URL(frame.src);assert.equal(url.pathname,'/kids-youtube/player.html');
+  assert.equal(frame.getAttribute('sandbox'),null);assert.equal(frame.getAttribute('allow'),'autoplay; fullscreen; picture-in-picture');assert.equal(frame.getAttribute('allowfullscreen'),null);
+  emit(frame,'load');assert.equal(frame.sentMessages[0].message.videoId,id(1));a.listeners.message[0]({source:frame.contentWindow,origin:'https://example.test',data:{type:'kids-player-ready',videoId:id(1)}});assert.equal(a.run('providers.snapshot().requests.at(-1).outcome'),'loaded-not-playback-proof');
   a.run('closePlayer()');assert.equal(frame.src,'');assert.equal(a.elements.player.hidden,true);
 });
 test('compatibility fallback never trusts mismatched metadata or a cancelled session',async()=>{
@@ -561,13 +561,26 @@ test('metadata updates reuse thumbnail nodes while updating literal title and au
 
 test('compatibility iframe URL and deadline exist before the first load event',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]},()=>json({videoId:id(1),title:'מאושר'}));a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.tagName==='iframe');
-  assert.match(media(a).src,/\/embed\//);assert.ok(a.run('playerTimer'));assert.equal(a.run('providers.snapshot().requests.some(r=>r.kind==="embed")'),false);
-  emit(media(a),'load');assert.ok(a.run('providers.snapshot().requests.some(r=>r.kind==="embed")'));a.run('closePlayer()');
+  assert.match(media(a).src,/\/player\.html/);assert.ok(a.run('playerTimer'));assert.equal(a.run('providers.snapshot().requests.some(r=>r.kind==="embed")'),false);
+  emit(media(a),'load');a.listeners.message[0]({source:media(a).contentWindow,origin:'https://example.test',data:{type:'kids-player-ready',videoId:id(1)}});assert.ok(a.run('providers.snapshot().requests.some(r=>r.kind==="embed")'));a.run('closePlayer()');
 });
 
-test('frame CSP permits only configured external providers, never the parent app origin',async()=>{
+test('parent frame CSP permits only its trusted local bridge',async()=>{
   const a=await app();const meta=a.document.head.children[0];assert.equal(meta.httpEquiv,'Content-Security-Policy');
-  assert.match(meta.content,/frame-src https:\/\/invidious\.f5\.si/);assert.match(meta.content,/object-src 'none'/);assert.doesNotMatch(meta.content,/example\.test|\*|data:|blob:/);
+  assert.match(meta.content,/frame-src 'self'/);assert.match(meta.content,/object-src 'none'/);assert.doesNotMatch(meta.content,/example\.test|\*|data:|blob:/);
+});
+
+test('compatibility status messages reject forged senders and detach on close',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]},()=>json({videoId:id(1),title:'מאושר'}));
+  a.run(`openPlayer('${id(1)}')`);await until(()=>!!media(a));emit(media(a),'error');await until(()=>media(a)?.tagName==='iframe');
+  const frame=media(a),handler=a.listeners.message[0],payload={type:'kids-player-ready',videoId:id(1)};
+  handler({source:{},origin:'https://example.test',data:payload});
+  handler({source:frame.contentWindow,origin:'https://attacker.test',data:payload});
+  handler({source:frame.contentWindow,origin:'https://example.test',data:{...payload,videoId:id(2)}});
+  assert.equal(a.run('providers.snapshot().requests.some(r=>r.kind==="embed")'),false);assert.ok(a.run('playerTimer'));
+  a.run('closePlayer()');assert.equal(a.listeners.message.length,0);
+  handler({source:frame.contentWindow,origin:'https://example.test',data:payload});
+  assert.equal(a.run('providers.snapshot().requests.some(r=>r.kind==="embed")'),false);assert.equal(a.elements.player.hidden,true);
 });
 
 test('expired compatibility budget terminates in friendly error rather than a stuck loading state',async()=>{

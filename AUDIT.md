@@ -6,9 +6,9 @@
 
 ## קוד ו־CI
 
-103 בדיקות Node עברו באמצעות `node --test tests/*.test.cjs`, ללא התקנת packages. הקוד האמיתי של app.js/providers.js/service worker נבדק; ה־DOM, המדיה וה־API מדומים בבדיקות היחידה. בדיקות אלו אינן הוכחה לניגון אצל ספק חיצוני. GitHub Actions מריץ את הבדיקות לפני פריסה סטטית; אין build step.
+108 בדיקות Node עברו באמצעות `node --test tests/*.test.cjs`, ללא התקנת packages. הקוד האמיתי של app.js/providers.js/player.js/service worker נבדק; ה־DOM, המדיה וה־API מדומים בבדיקות היחידה. בדיקות אלו אינן הוכחה לניגון אצל ספק חיצוני. GitHub Actions מריץ את הבדיקות לפני פריסה סטטית; אין build step.
 
-הבדיקות מכסות שלושה טאבים והפרדת הרשאות, קישורים/הערות/כינויים ושמות אוטומטיים, ביטול אישורים ומטמון, channel ID שאינו מתאים, pagination לפי דרישה, maxVideos, כפילויות, token שחוזר וגבול 100 עמודים, חיפוש מקומי, מיון/סינון, מטמון TTL וכשל quota, 401/403/404/429/500, TypeError של רשת/CORS, timeout גם בגוף התשובה, cooldown, coalescing, health check, ביטול בקשות ולחיצות מהירות, אירועי מדיה מאוחרים, autoplay חסום, סגירה, מסלול תאימות, CSP, deadline לנגן, PWA, shell offline ונתיבים יחסיים.
+הבדיקות מכסות שלושה טאבים והפרדת הרשאות, קישורים/הערות/כינויים ושמות אוטומטיים, ביטול אישורים ומטמון, channel ID שאינו מתאים, pagination לפי דרישה, maxVideos, כפילויות, token שחוזר וגבול 100 עמודים, חיפוש מקומי, מיון/סינון, מטמון TTL וכשל quota, 401/403/404/429/500, TypeError של רשת/CORS, timeout גם בגוף התשובה, cooldown, coalescing, health check, ביטול בקשות ולחיצות מהירות, אירועי מדיה מאוחרים, autoplay חסום, סגירה, מסלול תאימות, אימות מקור/שולח בהודעות הנגן וניתוק listener בסגירה, CSP עם נתיב הסרטון המדויק, deadline לנגן, PWA, shell offline ונתיבים יחסיים.
 
 ## דפדפן אמיתי
 
@@ -38,9 +38,9 @@
 
 ## Sandbox ומגבלות אבטחה
 
-Sandbox של נגן התאימות מאפשר scripts/same-origin/presentation לצורכי מקור/אחסון/העדפות של הנגן החיצוני. אינו מאפשר popups, forms או top navigation. קוד דוחה provider בעל אותו origin כמו האפליקציה. CSP frame-src מוגדר מהרשימה הקבועה ומונע iframe שמופנה אל מקור האפליקציה או אל מקור שאינו ברשימה. אין allowfullscreen כפול; הרשאות באמצעות allow בלבד. השילוב נבדק מול ההסבר ב־MDN, ולא הוסף באופן אוטומטי לכל כתובת.
+האפליקציה הראשית מאפשרת iframe ממקור מקומי בלבד. `player.html`/`player.js` המקומיים מקבלים הודעת אתחול רק מההורה האמיתי ומאותו origin; סרטון קבוע אחד לכל מסמך. לפני יצירת iframe חיצוני נקבע CSP frame-src לכתובת embed המדויקת של הסרטון שנבחר. כתובת עם credentials, ID לא תקין או ספק בעל origin זהה לאפליקציה נדחים. Sandbox חיצוני מאפשר scripts/same-origin/presentation לצורכי מקור/אחסון/העדפות של הנגן, בלי popups, forms או top navigation. אין allowfullscreen כפול; הרשאות באמצעות allow בלבד. השילוב נבדק מול ההסבר ב־MDN, ולא הוסף באופן אוטומטי לכל כתובת. מדיניות המסך המקומי והודעותיו נבדקו ביחידות; ניגון חי דרכו לא נבדק מחדש אחרי חסימת הספק.
 
-ה־sandbox אינו whitelist של **נתיבים פנימיים** בתוך אתר הספק. ניווט פנימי לתוכן אחר באותו Invidious אינו ניתן לחסימה מלאה על ידי ההורה במקור חיצוני. localStorage אינו מחסום נגד מי שיש לו גישה ל־DevTools/למכשיר. מכשיר offline אינו יכול לדעת מיד על אישור שבוטל מרחוק. התקנה ונעיצת מסך על Android פיזי עדיין לא נבדקו.
+ה־sandbox לבדו אינו whitelist של נתיבים. המסך המקומי מוסיף הגבלה לנתיב embed המדויק ומונע ניווט רגיל ל־watch/search/embed אחר. אין טענה לסינון מלא: CSP מתעלם מהתאמת נתיב אחרי HTTP redirect, והספק עדיין שולט בתוכן שמוגש בכתובת המותרת. localStorage אינו מחסום נגד מי שיש לו גישה ל־DevTools/למכשיר. מכשיר offline אינו יכול לדעת מיד על אישור שבוטל מרחוק. התקנה ונעיצת מסך על Android פיזי עדיין לא נבדקו.
 
 ## Console
 
@@ -50,7 +50,7 @@ Sandbox של נגן התאימות מאפשר scripts/same-origin/presentation �
 
 התקנה על Android אמיתי; ניגון מוצלח של כל ספק וכל transport בגרסה הסופית; התאוששות מכל שגיאה פנימית ב־iframe בלי התערבות; סטרימינג offline; זמינות מתמדת של ציבור Invidious. אין בממצאים בסיס לטענה שהמערכת כבר אמינה ב־100% או שכל הדרישות הללו הושלמו.
 
-מקורות ראשוניים: https://docs.invidious.io/api/ , https://docs.invidious.io/url-parameters/ , https://docs.invidious.io/instances/ , https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe .
+מקורות ראשוניים: https://docs.invidious.io/api/ , https://docs.invidious.io/url-parameters/ , https://docs.invidious.io/instances/ , https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe , https://www.w3.org/TR/CSP/#match-url-to-source-expression .
 
 ## צילום ממשק וחיפוש
 
