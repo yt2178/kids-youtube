@@ -1,27 +1,24 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 'use strict';
-const parentUI=Object.fromEntries(['link','inspect','status','preview','kind','thumbnail','channel-symbol','identified','canonical','verify','operation','note','checked','save','channel-warning'].map(id=>[id,document.getElementById(id)]));
-let parentLink=null;
-function resetParentPreview(){parentLink=null;parentUI.preview.hidden=true;parentUI.checked.checked=false;parentUI.save.disabled=true;parentUI.thumbnail.removeAttribute('src');}
-parentUI.link.addEventListener('input',resetParentPreview);
-parentUI.inspect.addEventListener('click',()=>{
-  resetParentPreview();
-  try{
-    parentLink=KidsParentLinks.share(parentUI.link.value);const channel=parentLink.kind==='channel';
-    parentUI.kind.textContent=channel?'📺 ערוץ שלם':'▶ סרטון אחד';
-    parentUI.identified.textContent=channel?'הערוץ: '+parentLink.label:'סרטון מזוהה לפי הקישור. פתחו אותו ובדקו את שמו והתוכן.';
-    parentUI.canonical.textContent=parentLink.url;parentUI.verify.href=parentLink.url;
-    parentUI.thumbnail.hidden=channel;parentUI['channel-symbol'].hidden=!channel;
-    if(!channel)parentUI.thumbnail.src='https://img.youtube.com/vi/'+parentLink.id+'/hqdefault.jpg';
-    parentUI['channel-warning'].hidden=!channel;
-    parentUI.preview.hidden=false;parentUI.status.textContent='הקישור זוהה. בדקו את התוכן לפני אישור.';
-  }catch(_){parentUI.status.textContent='הדביקו קישור אחד של סרטון או ערוץ YouTube.';}
-});
-parentUI.thumbnail.addEventListener('error',()=>{parentUI.thumbnail.hidden=true;});
-parentUI.checked.addEventListener('change',()=>{parentUI.save.disabled=!parentLink||!parentUI.checked.checked;});
-parentUI.operation.addEventListener('change',()=>{parentUI.checked.checked=false;parentUI.save.disabled=true;});
-parentUI.save.addEventListener('click',()=>{
-  if(!parentLink||!parentUI.checked.checked)return;
-  location.assign(KidsParentLinks.issueURL(parentLink.url,parentUI.operation.value,parentUI.note.value));
-});
-
+const API='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
+const ids=['auth','auth-title','auth-help','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','thumbnail','channel-symbol','identified','canonical','verify','operation','note','checked','save','channel-warning','approved','refresh-list','logout'];
+const ui=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));let parentLink=null,setupRequired=false;
+function token(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
+function storeToken(value,remember){try{localStorage.removeItem('kidsParentToken');sessionStorage.removeItem('kidsParentToken');(remember?localStorage:sessionStorage).setItem('kidsParentToken',value);}catch(_){}}
+function clearToken(){try{localStorage.removeItem('kidsParentToken');sessionStorage.removeItem('kidsParentToken');}catch(_){}}
+async function api(action,options={}){const headers={'Content-Type':'application/json',...(options.auth&&token()?{Authorization:'Bearer '+token()}:{})};const r=await fetch(API+'?action='+encodeURIComponent(action),{method:options.method||'GET',headers,body:options.body?JSON.stringify(options.body):undefined});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(Error(data.error||'FAILED'),{status:r.status});return data;}
+function showParent(list){ui.auth.hidden=true;ui['parent-area'].hidden=false;renderList(list||'');}
+function renderList(raw){ui.approved.textContent=String(raw||'').split(/\r?\n/).filter(x=>x.trim()&&!x.trim().startsWith('//')).join('\n')||'אין עדיין קישורים מאושרים.';}
+async function loadList(){const d=await api('list');setupRequired=!!d.setupRequired;renderList(d.list);return d;}
+async function boot(){try{const d=await loadList();if(token()){try{const s=await api('status',{method:'POST',auth:true});if(s.authenticated){showParent(d.list);return;}}catch(_){}clearToken();}ui['auth-title'].textContent=setupRequired?'בחירת סיסמה ראשונה':'כניסת הורה';ui['auth-help'].textContent=setupRequired?'בחרו עכשיו סיסמה. מהכניסה הבאה האתר יזכור את ההורה במכשיר אם תסמנו ״זכור אותי״.':'הזינו את הסיסמה המשפחתית.';}catch(_){ui['auth-status'].textContent='לא הצלחנו להתחבר כרגע. נסו שוב.';}}
+ui.login.addEventListener('click',async()=>{ui.login.disabled=true;ui['auth-status'].textContent='';try{const password=ui.password.value;if(password.length<4){ui['auth-status'].textContent='הסיסמה צריכה להכיל לפחות 4 תווים.';return;}const d=await api(setupRequired?'setup':'login',{method:'POST',body:{password,remember:ui.remember.checked}});storeToken(d.token,ui.remember.checked);const list=await loadList();ui.password.value='';showParent(list.list);}catch(e){ui['auth-status'].textContent=e.message==='WRONG_PASSWORD'?'סיסמה שגויה.':'הכניסה לא הצליחה. נסו שוב.';}finally{ui.login.disabled=false;}});
+function resetPreview(){parentLink=null;ui.preview.hidden=true;ui.checked.checked=false;ui.save.disabled=true;ui.thumbnail.removeAttribute('src');}
+ui.link.addEventListener('input',resetPreview);
+ui.inspect.addEventListener('click',()=>{resetPreview();try{parentLink=KidsParentLinks.share(ui.link.value);const channel=parentLink.kind==='channel';ui.kind.textContent=channel?'📺 ערוץ שלם':'▶ סרטון אחד';ui.identified.textContent=channel?'הערוץ: '+parentLink.label:'סרטון מזוהה לפי הקישור. פתחו אותו ובדקו את תוכנו.';ui.canonical.textContent=parentLink.url;ui.verify.href=parentLink.url;ui.thumbnail.hidden=channel;ui['channel-symbol'].hidden=!channel;if(!channel)ui.thumbnail.src='https://img.youtube.com/vi/'+parentLink.id+'/hqdefault.jpg';ui['channel-warning'].hidden=!channel;ui.preview.hidden=false;ui.status.textContent='הקישור זוהה. בדקו את התוכן לפני אישור.';}catch(_){ui.status.textContent='הדביקו קישור אחד של סרטון או ערוץ YouTube.';}});
+ui.thumbnail.addEventListener('error',()=>{ui.thumbnail.hidden=true;});
+ui.checked.addEventListener('change',()=>{ui.save.disabled=!parentLink||!ui.checked.checked;});
+ui.operation.addEventListener('change',()=>{ui.checked.checked=false;ui.save.disabled=true;ui.save.textContent=ui.operation.value==='remove'?'בטל אישור':'הוסף לילדים';});
+ui.save.addEventListener('click',async()=>{if(!parentLink||!ui.checked.checked)return;ui.save.disabled=true;ui.status.textContent='שומר…';try{const d=await api('mutate',{method:'POST',auth:true,body:{operation:ui.operation.value,link:parentLink.url,note:ui.note.value}});renderList(d.list);ui.status.textContent=d.changed?(ui.operation.value==='remove'?'האישור בוטל ✓':'נוסף לילדים ✓'):'לא היה צורך בשינוי — הקישור כבר במצב הזה.';ui.link.value='';ui.note.value='';resetPreview();}catch(e){if(e.status===401){clearToken();location.reload();return;}ui.status.textContent='השמירה לא הצליחה. נסו שוב.';}finally{if(parentLink)ui.save.disabled=!ui.checked.checked;}});
+ui['refresh-list'].addEventListener('click',()=>loadList().catch(()=>{}));
+ui.logout.addEventListener('click',()=>{clearToken();location.reload();});
+boot();
