@@ -37,7 +37,11 @@ const SCOPE = new URL('./', location.href).href;
 // Its origin must stay external; CSP also blocks a redirect into our origin.
 function installFramePolicy() {
   if (!document.head) return;
-  const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';policy.content="frame-src 'self'; object-src 'none'; base-uri 'self'";document.head.append(policy);
+  const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';
+  policy.content=PARENT_CATALOG
+    ? "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https://img.youtube.com https://i.ytimg.com https://yt3.ggpht.com https://yt3.googleusercontent.com; connect-src 'self' https://jxhelpxhrmwvzrrfrjuh.supabase.co; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
+    : "frame-src 'self'; object-src 'none'; base-uri 'self'";
+  document.head.append(policy);
 }
 installFramePolicy();
 const $ = id => document.getElementById(id);
@@ -74,16 +78,27 @@ let channelDates = Object.create(null);
 let loadError = false;
 let statusTimer = null;
 let approvalMarker = '';
+let authorizationReloadPending = false;
 const savedView = storageGet(VIEW_KEY);
 let viewStyle = savedView === 'list' ? 'list' : 'grid';
 function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
 function parentToken(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
-function providerFetch(input,options={}) {
+async function providerFetch(input,options={}) {
   if(!PARENT_CATALOG)return fetch(input,options);
-  let target;try{target=new URL(String(input),location.href);}catch(_){return fetch(input,options);}
-  if(!INVIDIOUS_INSTANCES.includes(target.origin))return fetch(input,options);
+  let target;try{target=new URL(String(input),location.href);}catch(_){throw new Error('INVALID_PARENT_PROVIDER');}
+  if(!INVIDIOUS_INSTANCES.includes(target.origin))throw new Error('INVALID_PARENT_PROVIDER');
   const value=parentToken(),headers={...(options.headers||{}),...(value?{Authorization:'Bearer '+value}:{})};
-  return fetch(PARENT_API+'?action=provider&target='+encodeURIComponent(target.href),{...options,headers});
+  const response=await fetch(PARENT_API+'?action=provider&target='+encodeURIComponent(target.href),{...options,headers});
+  if(response.status===401){
+    try{window.parent.postMessage({type:'kids-parent-auth-expired'},location.origin);}catch(_){}
+    return response;
+  }
+  const upstream=Number(response.headers.get('X-Kids-Provider-Status')||0);
+  if(upstream>=400&&upstream<=599){
+    const body=await response.text();
+    return new Response(body,{status:upstream,headers:{'Content-Type':'application/json'}});
+  }
+  return response;
 }
 const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:providerFetch, storage:optionalStorage(), timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});
 const diagnosticsEnabled = new URL(location.href).searchParams.get('diagnostics') === '1';
@@ -186,7 +201,7 @@ function status(text, busy = false) {
   if (busy) {
     ui.status.hidden=true;
     statusTimer=setTimeout(()=>{
-      if ((loading || paginationBusy) && !displayed.size) {
+      if (loading || paginationBusy) {
         ui.status.hidden=false;ui.spinner.hidden=false;
       }
     },260);
@@ -425,7 +440,8 @@ function safeChannelImage(value, base) {
   if (typeof value !== 'string' || !value || value.length > 4096) return '';
   try {
     const url = base ? new URL(value, base) : new URL(value);
-    const allowed = ['ggpht.com','googleusercontent.com','ytimg.com'].some(host => url.hostname === host || url.hostname.endsWith('.' + host)) || INVIDIOUS_INSTANCES.includes(url.origin);
+    const googleImage=['img.youtube.com','i.ytimg.com','yt3.ggpht.com','yt3.googleusercontent.com'].includes(url.hostname);
+    const allowed=googleImage || (!PARENT_CATALOG && INVIDIOUS_INSTANCES.includes(url.origin));
     return url.protocol === 'https:' && !url.username && !url.password && !url.port && allowed ? url.href : '';
   } catch (_) { return ''; }
 }
@@ -528,7 +544,16 @@ async function loadMoreVideos() {
       saveSnapshot(activeConfig,activeLists); render(activeConfig,activeLists);
       if (result.failed) status('חלק מהסרטונים אינם זמינים כרגע. אפשר לנסות שוב מאוחר יותר.');
     })]);
-  } finally {paginationBusy = false;delete ui.more.dataset.busy;render(activeConfig,activeLists);if(ui['status-text'].textContent===loadingText)status('');}
+  } finally {
+    paginationBusy=false;delete ui.more.dataset.busy;
+    if(authorizationReloadPending){
+      authorizationReloadPending=false;
+      await loadApp();
+    }else{
+      render(activeConfig,activeLists);
+      if(ui['status-text'].textContent===loadingText)status('');
+    }
+  }
 }
 async function parallelMap(items, worker) {
   let index = 0;
@@ -640,7 +665,11 @@ async function checkAuthorizationFreshness() {
     const remote=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
     if(!remote||typeof remote.list!=='string')throw new Error('INVALID_REMOTE_LIST');
     const marker=String(remote.updatedAt||'')+'\0'+remote.list;
-    if(!approvalMarker||marker!==approvalMarker)await loadApp();
+    if(!approvalMarker||marker!==approvalMarker){
+      failClosedAuthorization('רשימת ההורה השתנתה. מאמתים אותה מחדש…');
+      if(paginationBusy){authorizationReloadPending=true;return;}
+      await loadApp();
+    }
   }catch(_){failClosedAuthorization();}
 }
 
@@ -786,13 +815,15 @@ async function tryCompatiblePlayer(session,base,sequence) {
 function launchNativeApp() {
   const session=playback;
   if(!session || !session.appPrompt || !VIDEO_ID.test(session.video.id))return;
-  let leftPage=!!document.hidden;
-  const onVisibility=()=>{if(document.hidden)leftPage=true;};
-  document.addEventListener('visibilitychange',onVisibility,{once:true});
+  let leftPage=!!document.hidden,finished=false;
+  const cleanup=()=>{if(finished)return;finished=true;document.removeEventListener('visibilitychange',onVisibility);};
+  const onVisibility=()=>{if(document.hidden){leftPage=true;cleanup();}};
+  document.addEventListener('visibilitychange',onVisibility);
   ui['app-open-message'].textContent='פותחים את האפליקציה…';
   try { location.href='kidsyoutube://video/'+session.video.id; }
-  catch (_) { ui['app-open-message'].textContent='האפליקציה עדיין לא מותקנת במכשיר הזה.'; return; }
+  catch (_) {cleanup();ui['app-open-message'].textContent='האפליקציה עדיין לא מותקנת במכשיר הזה.';return;}
   setTimeout(()=>{
+    cleanup();
     if(playback===session && !leftPage && !document.hidden)
       ui['app-open-message'].textContent='האפליקציה עדיין לא מותקנת במכשיר הזה.';
   },1200);
@@ -917,13 +948,16 @@ window.addEventListener('appinstalled', () => { installPrompt = null; ui.install
 window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
 window.addEventListener('online', () => {providers.resetHealth();loadApp();});
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && navigator.onLine !== false) {providers.healthCheck().then(audit);checkAuthorizationFreshness();}
+  if (!document.hidden && navigator.onLine !== false) {
+    if(!PARENT_CATALOG)providers.healthCheck().then(audit);
+    checkAuthorizationFreshness();
+  }
   if (!document.hidden && Date.now() - lastLoad > SETTINGS.refreshOnReturnMs) loadApp();
 });
 if (history.state && history.state.kidsYoutubePlayer) history.replaceState(null, '', location.href);
 loadApp();
 
-if (typeof setInterval === 'function') {
+if (typeof setInterval === 'function' && !PARENT_CATALOG) {
   setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
-  if(!PARENT_CATALOG)setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
+  setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
 }
