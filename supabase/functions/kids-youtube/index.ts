@@ -15,6 +15,7 @@ const MAX_PROVIDER_BYTES = 2000000;
 const MAX_YOUTUBE_HTML_BYTES = 4000000;
 const MAX_BODY_BYTES = 1100000;
 const SAFE_IMAGE_HOSTS = new Set(["img.youtube.com","i.ytimg.com","yt3.ggpht.com","yt3.googleusercontent.com"]);
+const YOUTUBE_PAGE_HOSTS = new Set(["youtube.com","www.youtube.com","m.youtube.com","music.youtube.com"]);
 const ROW = BASE + "/rest/v1/kids_youtube_state?singleton=eq.true&select=list_text,password_hash,session_secret,version,updated_at";
 
 function cors(origin:string|null){
@@ -136,6 +137,23 @@ function safeThumbnail(raw:string){
     return u.protocol==="https:"&&!u.username&&!u.password&&!u.port&&SAFE_IMAGE_HOSTS.has(h)?u.href:"";
   }catch{return "";}
 }
+function safeYoutubePage(raw:string,base?:string){
+  const u=base?new URL(raw,base):new URL(raw);
+  const h=u.hostname.toLowerCase();
+  if(u.protocol!=="https:"||u.username||u.password||u.port||!YOUTUBE_PAGE_HOSTS.has(h))throw Error("INVALID_YOUTUBE_REDIRECT");
+  return u;
+}
+async function fetchYoutubePage(raw:string,signal:AbortSignal){
+  let current=safeYoutubePage(raw);
+  for(let redirects=0;redirects<=3;redirects++){
+    const r=await fetch(current,{redirect:"manual",signal,headers:{"User-Agent":"Mozilla/5.0","Accept-Language":"he,en;q=0.8"}});
+    if(r.status<300||r.status>=400)return r;
+    if(redirects===3)throw Error("TOO_MANY_YOUTUBE_REDIRECTS");
+    const location=r.headers.get("location");if(!location)throw Error("INVALID_YOUTUBE_REDIRECT");
+    current=safeYoutubePage(location,current.href);
+  }
+  throw Error("INVALID_YOUTUBE_REDIRECT");
+}
 function providerTarget(raw:string){
   if(typeof raw!=="string"||raw.length>24000)throw Error("INVALID_PROVIDER");
   const u=new URL(raw);
@@ -204,7 +222,7 @@ async function metadata(input:string){
   let title="",thumbnail="";
   try{
     await timed(METADATA_TIMEOUT_MS,async signal=>{
-      const r=await fetch(url,{redirect:"manual",signal,headers:{"User-Agent":"Mozilla/5.0","Accept-Language":"he,en;q=0.8"}});
+      const r=await fetchYoutubePage(url,signal);
       if(!r.ok||oversized(r,MAX_YOUTUBE_HTML_BYTES))return;
       const html=await r.text();if(html.length>MAX_YOUTUBE_HTML_BYTES)return;
       title=metaContent(html,"og:title");
