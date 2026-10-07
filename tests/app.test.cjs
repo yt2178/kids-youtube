@@ -128,7 +128,7 @@ test('all instances failing preserve the previous approved channel list',async()
   await app(config,()=>json({videos:[row(2)],continuation:null}),store);
   for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
   const a=await app(config,fail,store);
-  assert.equal(a.run('displayed.size'),2);assert.match(a.elements['status-text'].textContent,/השמורים/);
+  assert.equal(a.run('displayed.size'),2);assert.match(a.elements['status-text'].textContent,/התוכן שכבר נטען עדיין מוצג/);
 });
 test('offline whitelist fails closed instead of showing stale approvals',async()=>{
   const store=new Map();await app({videos:[{id:id(1)}],channels:[]},undefined,store);
@@ -633,10 +633,11 @@ test('authorization change detected during pagination fails closed immediately a
 });
 test('native-app launch visibility listener is cleaned up even when the app is not installed',async()=>{
   const a=await app({videos:[{id:id(1),title:'סרטון'}],channels:[]},undefined,new Map(),{timerCap:5});
+  const before=(a.docListeners.visibilitychange||[]).length;
   a.run(`openPlayer('${id(1)}');launchNativeApp()`);
-  assert.equal((a.docListeners.visibilitychange||[]).length,1);
+  assert.equal((a.docListeners.visibilitychange||[]).length,before+1);
   await new Promise(r=>setTimeout(r,12));
-  assert.equal((a.docListeners.visibilitychange||[]).length,0);
+  assert.equal((a.docListeners.visibilitychange||[]).length,before);
 });
 test('re-rendering keeps existing thumbnail nodes rather than issuing duplicate loads',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});const image=a.elements.grid.children[0].children[0].children[0];a.run('render(activeConfig,activeLists)');assert.equal(a.elements.grid.children[0].children[0].children[0],image);assert.equal(image.loading,'lazy');
