@@ -12,7 +12,17 @@ function prepare(output = target) {
   html = once(html, "if ('serviceWorker' in navigator)", "if (false && 'serviceWorker' in navigator)");
   html = once(html, '<script src="./providers.js?v=20261006h" defer></script>', '<script src="./providers.js?v=20261006h" defer></script>\n  <script src="./native-adapter.js" defer></script>');
   let app = fs.readFileSync(path.join(root,'app.js'),'utf8');
-  app = once(app, 'const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:fetch, storage:optionalStorage(), timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});', 'const providers = KidsNative.createManager();');
+  app = once(app, `function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
+function parentToken(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
+function providerFetch(input,options={}) {
+  if(!PARENT_CATALOG)return fetch(input,options);
+  let target;try{target=new URL(String(input),location.href);}catch(_){return fetch(input,options);}
+  if(!INVIDIOUS_INSTANCES.includes(target.origin))return fetch(input,options);
+  const value=parentToken(),headers={...(options.headers||{}),...(value?{Authorization:'Bearer '+value}:{})};
+  return fetch(PARENT_API+'?action=provider&target='+encodeURIComponent(target.href),{...options,headers});
+}
+const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:providerFetch, storage:optionalStorage(), timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});`, `function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
+const providers = KidsNative.createManager();`);
   app = once(app, 'function openPlayer(id) {\n  const video = displayed.get(id);', "function openPlayer(id) {\n  const video = displayed.get(id);\n  if (video && (getApprovedVideos().has(id) || getApprovedChannels().has(video.channelId))) KidsNative.openPlayer(id);\n  return;\n  // Browser player remains in the source for website regression checks.");
   // No iframe, external scripts, or external document may run in the native WebView.
   html = html.replace('<head>', '<head><meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\' \'unsafe-inline\'; style-src \'self\' \'unsafe-inline\'; img-src \'self\' https://img.youtube.com https://*.ytimg.com https://*.ggpht.com https://*.googleusercontent.com; connect-src \'self\' https://jxhelpxhrmwvzrrfrjuh.supabase.co; frame-src \'none\'; object-src \'none\'; base-uri \'self\'; form-action \'none\'">');
