@@ -31,7 +31,7 @@ async function parentApp(handler,{local=new Map(),session=new Map()}={}){
     KidsParentLinks:links,URL,Map,Object,String,JSON,Error,encodeURIComponent,confirm:()=>true,location:{origin:'https://example.test',reload(){reloads++;}},addEventListener:(k,fn)=>(windowListeners[k]??=[]).push(fn),
     fetch:async(url,options={})=>{const action=new URL(String(url)).searchParams.get('action');calls.push({action,options});const result=await handler(action,options);return {ok:result.status===undefined||result.status<400,status:result.status??200,json:async()=>result.body??result};}
   });
-  vm.runInContext(fs.readFileSync('parents.js','utf8'),context,{filename:'parents.js'});await new Promise(r=>setImmediate(r));
+  context.window=context;vm.runInContext(fs.readFileSync('parents.js','utf8'),context,{filename:'parents.js'});await new Promise(r=>setImmediate(r));
   async function fire(id,type='click'){for(const fn of elements[id].listeners[type]||[])await fn();await new Promise(r=>setImmediate(r));}
   return {elements,calls,local,session,windowListeners,fire,reloads:()=>reloads};
 }
