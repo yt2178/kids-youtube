@@ -36,6 +36,7 @@ public final class MainActivity extends Activity {
     private NativeApi api;
     private LinearLayout overlay;
     private TextView title,message;
+    private ProgressBar loading;
     private Button retry;
     private PlayerView playerView;
     private ExoPlayer player;
@@ -81,7 +82,10 @@ public final class MainActivity extends Activity {
         bar.addView(back,new LinearLayout.LayoutParams(dp(116),-2));
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         overlay.addView(bar,new LinearLayout.LayoutParams(-1,-2));
-        message=text("מתחבר...");message.setGravity(Gravity.CENTER);message.setMinHeight(dp(48));
+        loading=new ProgressBar(this);loading.setIndeterminate(true);loading.setVisibility(View.GONE);
+        LinearLayout.LayoutParams loadingParams=new LinearLayout.LayoutParams(dp(42),dp(42));loadingParams.gravity=Gravity.CENTER_HORIZONTAL;
+        overlay.addView(loading,loadingParams);
+        message=text("מתחבר...");message.setGravity(Gravity.CENTER);message.setMinHeight(dp(42));
         overlay.addView(message,new LinearLayout.LayoutParams(-1,-2));
         retry=button("נסו שוב");retry.setVisibility(View.GONE);
         retry.setOnClickListener(v->{if(active!=null)openPlayer(active.id);});
@@ -111,6 +115,7 @@ public final class MainActivity extends Activity {
     private TextView text(String value){TextView v=new TextView(this);v.setTextColor(Color.WHITE);v.setTextSize(20);v.setText(value);v.setPadding(dp(12),dp(8),dp(12),dp(8));return v;}
     private Button button(String value){Button b=new Button(this);b.setText(value);b.setTextSize(20);b.setTextColor(Color.WHITE);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(233,69,96)));b.setMinHeight(dp(60));return b;}
     private void showMessage(String value){message.setText(value);message.setVisibility(value.isEmpty()?View.GONE:View.VISIBLE);}
+    private void showLoading(boolean value){loading.setVisibility(value?View.VISIBLE:View.GONE);}
     private void setupWeb() {
         WebSettings settings=web.getSettings();
         settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);
@@ -218,7 +223,7 @@ public final class MainActivity extends Activity {
         active=new NativeApi.Playback(id,"הסרטון שלנו",List.of());
         sourceIndex=0;resumeAt=0;
         overlay.setVisibility(View.VISIBLE);web.setVisibility(View.INVISIBLE);
-        title.setText("הסרטון שלנו");showMessage("מתחבר...");retry.setVisibility(View.GONE);
+        title.setText("הסרטון שלנו");showLoading(true);showMessage("מתחבר...");retry.setVisibility(View.GONE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         RequestScope scope=new RequestScope(20000);
         playTask=new Task("player",scope,()->{
@@ -284,7 +289,7 @@ public final class MainActivity extends Activity {
         if(destroyed || generation!=playerGeneration || active==null)return;
         stopMedia();
         if(sourceIndex>=active.sources.size()){unavailable();return;}
-        showMessage(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
+        showLoading(true);showMessage(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
         NativeApi.Source source=active.sources.get(sourceIndex++);
         OkHttpClient mediaClient=mediaClient(api.downloader.client);
         OkHttpDataSource.Factory dataSource=new OkHttpDataSource.Factory(mediaClient);
@@ -311,7 +316,7 @@ public final class MainActivity extends Activity {
             @Override public void onPlaybackStateChanged(int state){
                 if(generation!=playerGeneration || player!=attempt || failed)return;
                 if(state==Player.STATE_READY){
-                    ready=true;cancelPlayerTimeout();showMessage("");
+                    ready=true;cancelPlayerTimeout();showLoading(false);showMessage("");
                 }else if(state==Player.STATE_ENDED){
                     cancelPlayerTimeout();showMessage("הסרטון הסתיים. אפשר לחזור ולבחור סרטון אחר.");
                     getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -337,12 +342,12 @@ public final class MainActivity extends Activity {
         if(player!=null){playerView.setPlayer(null);player.stop();player.release();player=null;}
     }
     private void unavailable(){
-        stopMedia();showMessage("לא הצלחנו להפעיל את הסרטון כרגע. נסה שוב בעוד רגע.");
+        stopMedia();showLoading(false);showMessage("לא הצלחנו להפעיל את הסרטון כרגע. נסו שוב בעוד רגע.");
         retry.setVisibility(View.VISIBLE);getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     private void closePlayer(){
         ++playerGeneration;if(playTask!=null){playTask.abort();playTask=null;}
-        stopMedia();active=null;overlay.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);
+        stopMedia();showLoading(false);active=null;overlay.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     @Override public void onBackPressed(){if(active!=null)closePlayer();else super.onBackPressed();}
