@@ -30,7 +30,11 @@ const INSTANCE_KEY = 'kidsYoutubeLastInstance';
 const VIEW_KEY = 'kidsYoutubeViewMode';
 const SORT_KEY = 'kidsYoutubeSortMode';
 const CHANNEL_FILTER_KEY = 'kidsYoutubeChannelFilter';
-const PARENT_CATALOG = new URL(location.href).searchParams.get('parentCatalog') === '1' && window.parent !== window;
+function sameOriginParent(){
+  if(window.parent===window)return false;
+  try{return window.parent.location.origin===location.origin;}catch(_){return false;}
+}
+const PARENT_CATALOG = new URL(location.href).searchParams.get('parentCatalog') === '1' && sameOriginParent();
 const PARENT_API = 'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 const SCOPE = new URL('./', location.href).href;
 // A provider iframe may need its own storage for playback/preferences.
