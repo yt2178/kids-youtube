@@ -32,10 +32,27 @@ async function parentApp(handler,{local=new Map(),session=new Map()}={}){
     KidsParentLinks:links,URL,Map,Object,String,JSON,Error,encodeURIComponent,setTimeout,clearTimeout,confirm:()=>true,location:{origin:'https://example.test',reload(){reloads++;}},addEventListener:(k,fn)=>(windowListeners[k]??=[]).push(fn),
     fetch:async(url,options={})=>{const action=new URL(String(url)).searchParams.get('action');calls.push({action,options});const result=await handler(action,options);return {ok:result.status===undefined||result.status<400,status:result.status??200,json:async()=>result.body??result};}
   });
-  context.window=context;vm.runInContext(fs.readFileSync('parents.js','utf8'),context,{filename:'parents.js'});await new Promise(r=>setImmediate(r));
+  context.window=context;context.top=context;vm.runInContext(fs.readFileSync('parents.js','utf8'),context,{filename:'parents.js'});await new Promise(r=>setImmediate(r));
   async function fire(id,type='click'){for(const fn of elements[id].listeners[type]||[])await fn();await new Promise(r=>setImmediate(r));}
   return {elements,calls,local,session,windowListeners,fire,reloads:()=>reloads};
 }
+
+test('parent management refuses to boot when framed by another origin',async()=>{
+  const local=new Map([['kidsParentToken','secret']]);let requests=0;
+  const elements={};
+  const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  for(const id of ids)elements[id]=new ParentElement();
+  const context=vm.createContext({
+    document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},
+    localStorage:memoryStorage(local),sessionStorage:memoryStorage(new Map()),KidsParentLinks:links,URL,Map,Object,String,JSON,Error,encodeURIComponent,setTimeout,clearTimeout,
+    confirm:()=>true,location:{origin:'https://example.test',reload(){}},fetch:async()=>{requests++;return {ok:true,status:200,json:async()=>({})};},addEventListener(){},
+  });
+  context.window=context;context.top={location:{get origin(){throw new Error('cross-origin');}}};
+  vm.runInContext(fs.readFileSync('parents.js','utf8'),context,{filename:'parents.js'});
+  await new Promise(r=>setImmediate(r));
+  assert.equal(requests,0);assert.equal(elements.login.disabled,true);assert.match(elements['auth-status'].textContent,/לפתוח את אתר ההורים ישירות/);
+  assert.equal(local.get('kidsParentToken'),'secret');
+});
 
 test('remembered parent session renders approved cards',async()=>{
   const local=new Map([['kidsParentToken','remembered-token']]);
@@ -68,7 +85,8 @@ test('channel preview shows the real safe channel image and falls back only on i
     throw Error(action);
   },{local});
   app.elements.link.value='https://www.youtube.com/@meirshows';await app.fire('inspect');
-  assert.equal(app.elements['channel-image-loading'].hidden,false);assert.equal(app.elements['channel-image'].hidden,true);assert.equal(app.elements['channel-image'].src,'https://yt3.googleusercontent.com/example');
+  assert.equal(app.elements['channel-image-loading'].hidden,true);assert.equal(app.elements['channel-image'].hidden,true);assert.equal(app.elements['channel-image'].src,'https://yt3.googleusercontent.com/example');
+  await new Promise(r=>setTimeout(r,190));assert.equal(app.elements['channel-image-loading'].hidden,false);
   assert.equal(app.elements['channel-symbol'].hidden,true);
   await app.fire('channel-image','load');assert.equal(app.elements['channel-image-loading'].hidden,true);assert.equal(app.elements['channel-image'].hidden,false);
   app.elements['channel-image-loading'].hidden=false;await app.fire('channel-image','error');
