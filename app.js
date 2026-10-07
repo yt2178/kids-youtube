@@ -448,7 +448,7 @@ function getChannelMetadata(id) {
 async function resolveLink(entry) {
   let id = entry.id;
   if (!id) {
-    const data = await providers.request('/api/v1/resolveurl?url=' + encodeURIComponent(entry.url),{ttl:SETTINGS.metadataTTL,validate:data => !!data && CHANNEL_ID.test(data.ucid || data.browseId)});
+    const data = await providers.request('/api/v1/resolveurl?url=' + encodeURIComponent(entry.url),{force:true,ttl:SETTINGS.metadataTTL,validate:data => !!data && CHANNEL_ID.test(data.ucid || data.browseId)});
     id = data.ucid || data.browseId;
   }
   if (entry.kind === 'video') {
