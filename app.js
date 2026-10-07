@@ -361,7 +361,7 @@ function render(config, lists) {
       ui['empty-title'].textContent = 'לא הצלחנו לטעון את הסרטונים.';
       ui['empty-text'].textContent = 'בדקו את החיבור ונסו שוב.';
       ui['empty-clear'].hidden = false;ui['empty-clear'].dataset.action='retry';
-      ui['empty-clear'].textContent = 'נסה שוב';
+      ui['empty-clear'].textContent = 'נסו שוב';
     } else {
       ui['empty-title'].textContent = isChannels ? 'עדיין אין כאן ערוצים.' : 'עדיין אין כאן סרטונים.';
       ui['empty-text'].textContent = isChannels ? 'כשההורה יוסיף ערוצים, הם יופיעו כאן.' : 'כשההורה יוסיף סרטונים או ערוצים, הם יופיעו כאן.';
