@@ -74,13 +74,8 @@ final class NativeApi {
         } finally {if(scope!=null)scope.remove(call);}
     }
     String displayWhitelist() throws Exception {
-        try{return whitelist(true);}
-        catch(Exception e){
-            long saved=context.getSharedPreferences("native-list",0).getLong("savedAt",0);
-            String text=context.getSharedPreferences("native-list",0).getString("display",null);
-            if(text!=null && saved>0 && System.currentTimeMillis()-saved<7*24*60*60*1000)return text;
-            throw e;
-        }
+        // Fail closed: stale approvals are never displayed as current approvals.
+        return whitelist(true);
     }
     private void checkNetwork() throws IOException {
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
@@ -235,7 +230,8 @@ final class NativeApi {
         Playback(String id,String title,List<Source> sources){this.id=id;this.title=title;this.sources=sources;}
     }
     Playback playback(String id) throws Exception {
-        whitelist(false);
+        // Every playback starts from a fresh authoritative parent list.
+        whitelist(true);
         try {
             StreamExtractor extractor=extractVideo(id);
             String author=authorId(extractor.getUploaderUrl());
@@ -272,7 +268,9 @@ final class NativeApi {
                 }
             if(sources.isEmpty())throw new IOException("NO_SUPPORTED_STREAM");
             RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
-            // A later whitelist refresh may revoke a grant while extraction is pending.
+            // Re-read the authoritative list after extraction too. A parent may
+            // revoke access while network extraction is still in progress.
+            whitelist(true);
             if(!policy.allows(id,author,approvedChannels()))throw new IOException("NOT_APPROVED");
             return new Playback(id,clean(extractor.getName()),sources);
         }catch(Exception e){recordFailure(e);throw e;}

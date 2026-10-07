@@ -10,30 +10,30 @@ test('legacy GitHub mutation helpers stay removed',()=>assert.deepEqual(Object.k
 test('parent HTML has direct editor, row mode, removal confirmation and embedded YouTube support',()=>{
   const html=fs.readFileSync('parents.html','utf8'),script=fs.readFileSync('parents.js','utf8');
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
-  assert.match(html,/האם אתה בטוח שברצונך להסיר/);assert.match(html,/youtube-player/);assert.match(html,/frame-src https:\/\/www\.youtube\.com/);
-  assert.match(html,/שם הסרטון או הערוץ, או הערה אחרת/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
+  assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
+  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
 });
 
 class ParentElement{
-  constructor(){this.hidden=false;this.value='';this.checked=false;this.disabled=false;this.textContent='';this.href='';this.src='';this.open=false;this.children=[];this.listeners={};this.className='';this.type='';this.classList={toggle(){},add(){},remove(){}};}
-  addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);} removeAttribute(name){if(name==='src')this.src='';}
+  constructor(){this.hidden=false;this.value='';this.checked=false;this.disabled=false;this.textContent='';this.href='';this.src='';this.open=false;this.children=[];this.listeners={};this.attributes={};this.className='';this.type='';this.contentWindow={};this.classList={toggle(){},add(){},remove(){}};}
+  addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);} setAttribute(name,value){this.attributes[name]=String(value);} removeAttribute(name){if(name==='src')this.src='';else delete this.attributes[name];}
   append(...x){this.children.push(...x);} replaceChildren(...x){this.children=[...x];} showModal(){this.open=true;} close(){this.open=false;}
 }
 function memoryStorage(map){return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,String(v)),removeItem:k=>map.delete(k)};}
 async function parentApp(handler,{local=new Map(),session=new Map()}={}){
-  const ids=['auth','auth-title','auth-help','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  const ids=['auth','auth-title','auth-help','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','catalog-player-dialog','catalog-player-title','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
   const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements.preview.hidden=true;elements.remember.checked=true;
-  let reloads=0;const calls=[];const context=vm.createContext({
+  let reloads=0;const calls=[],windowListeners={};const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(local),sessionStorage:memoryStorage(session),
-    KidsParentLinks:links,URL,Map,Object,String,JSON,Error,encodeURIComponent,confirm:()=>true,location:{reload(){reloads++;}},
+    KidsParentLinks:links,URL,Map,Object,String,JSON,Error,encodeURIComponent,confirm:()=>true,location:{origin:'https://example.test',reload(){reloads++;}},addEventListener:(k,fn)=>(windowListeners[k]??=[]).push(fn),
     fetch:async(url,options={})=>{const action=new URL(String(url)).searchParams.get('action');calls.push({action,options});const result=await handler(action,options);return {ok:result.status===undefined||result.status<400,status:result.status??200,json:async()=>result.body??result};}
   });
-  vm.runInContext(fs.readFileSync('parents.js','utf8'),context,{filename:'parents.js'});await new Promise(r=>setImmediate(r));
+  context.window=context;vm.runInContext(fs.readFileSync('parents.js','utf8'),context,{filename:'parents.js'});await new Promise(r=>setImmediate(r));
   async function fire(id,type='click'){for(const fn of elements[id].listeners[type]||[])await fn();await new Promise(r=>setImmediate(r));}
-  return {elements,calls,local,session,fire,reloads:()=>reloads};
+  return {elements,calls,local,session,windowListeners,fire,reloads:()=>reloads};
 }
 
 test('remembered parent session renders approved cards',async()=>{
@@ -52,7 +52,7 @@ test('inspect gets metadata, embeds video, prefills name and add saves it',async
   });
   app.elements.password.value='1234';await app.fire('login');app.elements.link.value=video;await app.fire('inspect');
   assert.equal(app.elements['media-title'].textContent,'ילד טרמפולינה');assert.equal(app.elements.note.value,'ילד טרמפולינה');assert.match(app.elements['youtube-player'].src,/youtube\.com\/embed\/mVTlbvQ_010/);
-  await app.fire('save');assert.match(app.elements.status.textContent,/נוסף לילדים/);
+  await app.fire('save');assert.match(app.elements.status.textContent,/נוסף לרשימה/);
 });
 
 
@@ -85,6 +85,20 @@ test('remove button opens confirmation with name above link and removes only aft
   const remove=app.elements['approved-cards'].children[0].children[2];for(const fn of remove.listeners.click||[])await fn();
   assert.equal(app.elements['remove-dialog'].open,true);assert.equal(app.elements['remove-name'].textContent,'ניסים בלאק');assert.equal(app.elements['remove-link'].textContent,video);
   await app.fire('confirm-remove');assert.equal(app.elements['remove-dialog'].open,false);assert.match(app.elements['list-status'].textContent,/הוסר/);
+});
+
+
+test('parent catalog reuses the child interface and opens only trusted iframe messages in embedded YouTube',async()=>{
+  const local=new Map([['kidsParentToken','token']]);
+  const app=await parentApp(async action=>{if(action==='list')return {list:video+' // ילד טרמפולינה\n',setupRequired:false};if(action==='status')return {authenticated:true};throw Error(action);},{local});
+  await app.fire('catalog-tab');
+  assert.equal(app.elements['catalog-view'].hidden,false);assert.match(app.elements['parent-catalog'].src,/index\.html\?parentCatalog=1/);
+  const handler=app.windowListeners.message[0],trusted=app.elements['parent-catalog'].contentWindow;
+  handler({origin:'https://evil.test',source:trusted,data:{type:'kids-parent-open-video',id:'mVTlbvQ_010',title:'לא'}});assert.equal(app.elements['catalog-player-dialog'].open,false);
+  handler({origin:'https://example.test',source:{},data:{type:'kids-parent-open-video',id:'mVTlbvQ_010',title:'לא'}});assert.equal(app.elements['catalog-player-dialog'].open,false);
+  handler({origin:'https://example.test',source:trusted,data:{type:'kids-parent-open-video',id:'mVTlbvQ_010',title:'ילד טרמפולינה'}});
+  assert.equal(app.elements['catalog-player-dialog'].open,true);assert.match(app.elements['catalog-player'].src,/youtube\.com\/embed\/mVTlbvQ_010/);
+  assert.equal(app.elements['catalog-player-title'].textContent,'ילד טרמפולינה');
 });
 
 test('invalid remembered session is cleared and logout clears both stores',async()=>{

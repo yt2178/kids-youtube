@@ -1,8 +1,8 @@
 'use strict';
 const CACHE_PREFIX = 'kids-youtube-shell:' + self.registration.scope + ':';
-const SHELL_CACHE = CACHE_PREFIX + 'v16';
+const SHELL_CACHE = CACHE_PREFIX + 'v17';
 const IMAGE_CACHE = 'kids-youtube-images:' + self.registration.scope + ':v1';
-const SHELL_FILES = ['./index.html','./app.js?v=20261006k','./providers.js?v=20261006h','./manifest.json','./icons/icon-192.png','./icons/icon-512.png'];
+const SHELL_FILES = ['./index.html','./app.js?v=20261007a','./providers.js?v=20261006h','./manifest.json','./icons/icon-192.png','./icons/icon-512.png'];
 const SCOPE_URL = new URL(self.registration.scope);
 const SHELL_URLS = new Set(SHELL_FILES.map(path => new URL(path,SCOPE_URL).href));
 const IMAGE_TTL = 7*24*60*60*1000;
@@ -57,7 +57,6 @@ self.addEventListener('fetch',event=>{
   if(request.method!=='GET')return;
   if(request.destination==='image'&&url.origin==='https://img.youtube.com'&&/^\/vi\/[A-Za-z0-9_-]{11}\/hqdefault\.jpg$/.test(url.pathname)&&!url.search){event.respondWith(thumbnail(request));return;}
   if(url.origin!==SCOPE_URL.origin)return;
-  if(url.pathname===new URL('./videos.txt',SCOPE_URL).pathname)return;
   if(request.mode==='navigate'&&(url.pathname===SCOPE_URL.pathname||url.pathname===new URL('./index.html',SCOPE_URL).pathname))event.respondWith(networkFirst(request,new URL('./index.html',SCOPE_URL).href));
   else if(SHELL_URLS.has(url.href))event.respondWith(networkFirst(request,url.href));
 });

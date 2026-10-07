@@ -39,7 +39,8 @@ class Element {
 }
 async function app(config=empty,api=()=>json({videos:[],continuation:null}),store=new Map(),options={}) {
   const elements={};const calls=[];
-  const document={head:new Element('head'),body:new Element('body'),activeElement:null,hidden:false,addEventListener(){},
+  const docListeners={};
+  const document={head:new Element('head'),body:new Element('body'),activeElement:null,hidden:false,addEventListener:(k,fn)=>(docListeners[k]??=[]).push(fn),
     getElementById:id=>elements[id],createElement:tag=>{const el=new Element(tag);el.doc=document;return el;},
     createDocumentFragment:()=>new Element('fragment',true)};
   for(const m of html.matchAll(/<([a-z][a-z0-9-]*)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
@@ -50,17 +51,17 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   const listeners={};
   const history={state:null,pushState(state){this.state=state;},replaceState(state){this.state=state;},back(){this.state=null;}};
   const context=vm.createContext({URL,AbortController,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
-    navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/'},document,
+    navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/',origin:new URL(options.href||'https://example.test/kids-youtube/').origin},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.offline?fail():json({list:raw});if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
-  context.window=context;
+  context.window=context;context.parent=options.parentWindow||context;
   if(options.storageAccessDenied)Object.defineProperty(context,'localStorage',{get(){throw new Error('SecurityError: storage access denied');}});
   vm.runInContext(scripts[0],context,{filename:'service-worker-registration.js'});
   vm.runInContext(providerScript,context,{filename:'providers.js'});
   vm.runInContext(scripts[1],context,{filename:'index-inline.js'});
   await until(()=>!vm.runInContext('loading',context));
-  return {context,elements,calls,store,document,listeners,run:code=>vm.runInContext(code,context)};
+  return {context,elements,calls,store,document,listeners,docListeners,run:code=>vm.runInContext(code,context)};
 }
 const plain = obj => JSON.parse(JSON.stringify(obj));
 
@@ -125,10 +126,11 @@ test('all instances failing preserve the previous approved channel list',async()
   const a=await app(config,fail,store);
   assert.equal(a.run('displayed.size'),2);assert.match(a.elements['status-text'].textContent,/השמורים/);
 });
-test('offline whitelist falls back to last-known approved snapshot',async()=>{
+test('offline whitelist fails closed instead of showing stale approvals',async()=>{
   const store=new Map();await app({videos:[{id:id(1)}],channels:[]},undefined,store);
   const a=await app(empty,fail,store,{offline:true});
-  assert.equal(a.run('displayed.size'),1);assert.match(a.elements['status-text'].textContent,/הרשימה השמורה/);
+  assert.equal(a.run('displayed.size'),0);assert.equal(a.elements.empty.hidden,false);
+  assert.match(a.elements['empty-title'].textContent,/לא הצלחנו לטעון/);
 });
 test('empty offline fallback shows a friendly retry state',async()=>{
   const a=await app(empty,fail,new Map(),{offline:true});
@@ -237,9 +239,11 @@ test('service worker installs shell, activates, excludes whitelist and cross-ori
   }
   let response;handlers.fetch({request:{url:scope,method:'GET',mode:'navigate'},respondWith:p=>response=p});assert.ok(await response);
 });
-test('responsive grid, list view, tap targets and reduced-motion styles are provided',()=>{
+test('responsive child UI has compact search/sort controls and no refresh button',()=>{
   assert.match(html,/minmax\(min\(100%,230px\),1fr\)/);assert.match(html,/data-view="list"/);
-  assert.match(html,/min-height:48px/);assert.match(html,/prefers-reduced-motion:reduce/);
+  assert.match(html,/id="search-toggle"/);assert.match(html,/id="search-row" hidden/);
+  assert.match(html,/summary aria-label="סינון וסידור"/);assert.doesNotMatch(html,/id="refresh"/);
+  assert.match(html,/id="pull-refresh"/);assert.match(html,/prefers-reduced-motion:reduce/);
   assert.match(html,/@media \(max-width:360px\)/);assert.match(html,/@media \(max-height:520px\)/);
 });
 
@@ -277,7 +281,7 @@ test('plain list ignores // comments, blank lines and BOM/CRLF without breaking 
   assert.equal(a.run('activeConfig.videos.length'),1);assert.equal(a.run('activeConfig.channels.length'),1);
   assert.equal(a.run('displayed.size'),2);assert.match(a.calls[0].url,/\/functions\/v1\/kids-youtube\?action=list$/);assert.equal(a.calls[0].opts.cache,'no-store');
   assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם הסרטון האוטומטי');
-  assert.equal(a.elements.grid.children[0].children[2].textContent,'יוצר הסרטון');
+  const videoCard=[...a.elements.grid.children].find(card=>card.dataset.videoId===id(1));assert.equal(videoCard.children[2].textContent,'יוצר הסרטון');
   assert.equal(a.run('activeConfig.channels[0].name'),'שם הערוץ האוטומטי');
 });
 test('video share, watch, Shorts, live, embed and music URLs canonicalize and deduplicate',async()=>{
@@ -323,11 +327,11 @@ test('resolveurl may use browseId and must return a real channel ID',async()=>{
   const b=await app('https://youtube.com/@Example',()=>json({videoId:id(1),browseId:id(1)}));
   assert.equal(b.run('displayed.size'),0);assert.equal(b.calls.length,4);
 });
-test('cached alias, video title and channel videos survive all instance failures',async()=>{
+test('cached direct video metadata may survive, but channel aliases must resolve freshly before display',async()=>{
   const store=new Map(),list=link(1)+'\nhttps://youtube.com/@Example';
   await app(list,metadataApi,store);
   const a=await app(list,fail,store);
-  assert.equal(a.run('displayed.size'),2);assert.equal(a.run('activeConfig.channels[0].name'),'שם הערוץ האוטומטי');
+  assert.equal(a.run('displayed.size'),1);assert.equal(a.run('activeConfig.channels.length'),0);
   assert.equal(a.run('activeConfig.videos[0].title'),'שם הסרטון האוטומטי');
 });
 test('removed alias and manual link never reappear from cache during outages',async()=>{
@@ -336,7 +340,7 @@ test('removed alias and manual link never reappear from cache during outages',as
   assert.equal(a.run('displayed.size'),1);assert.equal(a.run('activeConfig.channels.length'),0);
   const saved=JSON.parse(store.get('kidsYoutubeVideos'));
   assert.deepEqual(Object.keys(saved.channelLists),[]);assert.deepEqual(Object.keys(saved.linkRecords),['https://www.youtube.com/watch?v='+id(3)]);
-  const b=await app('',fail,store,{offline:true});assert.equal(b.run('displayed.size'),1);
+  const b=await app('',fail,store,{offline:true});assert.equal(b.run('displayed.size'),0);
 });
 test('comments-only list intentionally clears every approval and cached source',async()=>{
   const store=new Map();await app(link(1)+'\nhttps://youtube.com/@Example',metadataApi,store);
@@ -498,7 +502,7 @@ test('navigation stays compact and search controls keep child-sized touch target
 
 test('three tabs separate manual approvals, whole channels, and deduplicated union',async()=>{
   const a=await app({videos:[{id:id(1),title:'ידני מתוך ערוץ'},{id:id(3),title:'ידני בלבד'},{id:id(4),authorId:A}],channels:[{id:A,name:'ערוץ מאושר'}]},()=>json({videos:[row(1),row(2)],continuation:null}));
-  assert.deepEqual(visibleVideoIds(a),[id(1),id(3),id(4),id(2)]);
+  assert.deepEqual(new Set(visibleVideoIds(a)),new Set([id(1),id(2),id(3),id(4)]));
   a.run("switchBrowse('videos')");assert.deepEqual(visibleVideoIds(a),[id(3)]);
   a.run("switchBrowse('channels')");assert.equal(a.elements.grid.children.length,1);assert.equal(a.elements.grid.children[0].dataset.channelId,A);
   assert.match(a.elements.grid.children[0].children[2].textContent,/2 סרטונים נטענו/);
@@ -517,6 +521,48 @@ test('newest sort and approved channel filter change presentation without API re
   const count=a.calls.length;a.elements.sort.value='newest';a.elements.sort.listeners.change[0]();assert.deepEqual(visibleVideoIds(a),[id(3),id(2),id(1)]);
   a.elements['channel-filter'].value=A;a.elements['channel-filter'].listeners.change[0]();assert.deepEqual(visibleVideoIds(a),[id(2),id(1)]);assert.equal(a.calls.length,count);
 });
+test('newest is the default and sort plus channel filter persist',async()=>{
+  const store=new Map(),config={videos:[{id:id(1),title:'ישן',published:10},{id:id(2),title:'חדש',published:20}],channels:[{id:A,name:'ערוץ'}]};
+  const a=await app(config,()=>json({videos:[],continuation:null}),store);
+  assert.deepEqual(visibleVideoIds(a),[id(2),id(1)]);
+  a.elements.sort.value='name';a.elements.sort.listeners.change[0]();
+  a.elements['channel-filter'].value=A;a.elements['channel-filter'].listeners.change[0]();
+  assert.equal(JSON.parse(store.get('kidsYoutubeSortMode')),'name');
+  assert.equal(JSON.parse(store.get('kidsYoutubeChannelFilter')),A);
+  const b=await app(config,()=>json({videos:[],continuation:null}),store);
+  assert.equal(b.elements.sort.value,'name');assert.equal(b.elements['channel-filter'].value,A);
+});
+test('search is collapsed until the search button is pressed',async()=>{
+  const a=await app({videos:[{id:id(1),title:'שיר'}],channels:[]});
+  assert.equal(a.elements['search-row'].hidden,true);
+  a.elements['search-toggle'].listeners.click[0]();
+  assert.equal(a.elements['search-row'].hidden,false);assert.equal(a.elements['search-toggle'].getAttribute('aria-expanded'),'true');
+});
+test('saved active search is never hidden when returning to a browse state',async()=>{
+  const a=await app({videos:[{id:id(1),title:'שיר אחד'},{id:id(2),title:'שיר אחר'}],channels:[]});
+  a.elements['search-toggle'].listeners.click[0]();a.elements.search.value='אחד';a.elements.search.listeners.input[0]();
+  await until(()=>a.run('searchTimer')===null);assert.equal(a.elements['search-row'].hidden,false);
+  a.run("switchBrowse('videos'); switchBrowse('all')");
+  assert.equal(a.run('searchQuery'),'אחד');assert.equal(a.elements['search-row'].hidden,false);
+  assert.equal(a.elements['search-toggle'].getAttribute('aria-expanded'),'true');
+});
+test('pulling down at the top refreshes the authoritative list',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});const before=a.calls.filter(c=>c.url.includes('/functions/v1/kids-youtube?action=list')).length;
+  const target=a.elements.grid;
+  a.docListeners.touchstart[0]({touches:[{clientY:10}],target});
+  a.docListeners.touchmove[0]({touches:[{clientY:90}],target});
+  a.docListeners.touchend[0]({});
+  await until(()=>!a.run('loading'));
+  assert.equal(a.calls.filter(c=>c.url.includes('/functions/v1/kids-youtube?action=list')).length,before+1);
+});
+test('parent catalog sends an approved video to its authenticated host instead of the app deep link',async()=>{
+  const sent=[],parentWindow={postMessage:(message,origin)=>sent.push({message,origin})};
+  const a=await app({videos:[{id:id(1),title:'מאושר'}],channels:[]},undefined,new Map(),{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow});
+  a.run(`openPlayer('${id(1)}')`);
+  assert.equal(sent.length,1);assert.equal(sent[0].message.id,id(1));assert.equal(sent[0].origin,'https://example.test');
+  assert.equal(a.elements.player.hidden,true);
+});
+
 test('re-rendering keeps existing thumbnail nodes rather than issuing duplicate loads',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});const image=a.elements.grid.children[0].children[0].children[0];a.run('render(activeConfig,activeLists)');assert.equal(a.elements.grid.children[0].children[0].children[0],image);assert.equal(image.loading,'lazy');
 });

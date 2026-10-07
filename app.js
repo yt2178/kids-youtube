@@ -20,13 +20,17 @@ const SETTINGS = Object.freeze({
   metadataTTL: 6 * 60 * 60 * 1000,
   channelTTL: 5 * 60 * 1000,
   searchDebounceMs: 150,
-  refreshOnReturnMs: 5 * 60 * 1000
+  refreshOnReturnMs: 5 * 60 * 1000,
+  authorizationRefreshMs: 15 * 1000
 });
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
 const CACHE_KEY = 'kidsYoutubeVideos';
 const INSTANCE_KEY = 'kidsYoutubeLastInstance';
 const VIEW_KEY = 'kidsYoutubeViewMode';
+const SORT_KEY = 'kidsYoutubeSortMode';
+const CHANNEL_FILTER_KEY = 'kidsYoutubeChannelFilter';
+const PARENT_CATALOG = new URL(location.href).searchParams.get('parentCatalog') === '1' && window.parent !== window;
 const SCOPE = new URL('./', location.href).href;
 // A provider iframe may need its own storage for playback/preferences.
 // Its origin must stay external; CSP also blocks a redirect into our origin.
@@ -36,7 +40,7 @@ function installFramePolicy() {
 }
 installFramePolicy();
 const $ = id => document.getElementById(id);
-const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear','view-grid','view-list','sort-options'].map(id => [id, $(id)]));
+const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','search-toggle','search-row','clear-search','pull-refresh','channel-heading','channel-name','back-channels','browse-title','empty-clear','view-grid','view-list','sort-options'].map(id => [id, $(id)]));
 let displayed = new Map();
 let activeConfig = {videos:[], channels:[]};
 let activeLists = Object.create(null);
@@ -57,8 +61,10 @@ let searchQuery = '';
 const browseStates = new Map();
 let playerSequence = 0;
 let searchTimer = null;
-let sortMode = 'list';
-let channelFilter = '';
+const savedSort = storageGet(SORT_KEY);
+let sortMode = ['newest','list','name'].includes(savedSort) ? savedSort : 'newest';
+const savedChannelFilter = storageGet(CHANNEL_FILTER_KEY);
+let channelFilter = typeof savedChannelFilter === 'string' ? savedChannelFilter : '';
 let paginationBusy = false;
 const channelProgress = new Map();
 const verifiedChannelVideos = new Map();
@@ -66,6 +72,7 @@ const cardCache = new Map();
 let channelDates = Object.create(null);
 let loadError = false;
 let statusTimer = null;
+let approvalMarker = '';
 const savedView = storageGet(VIEW_KEY);
 let viewStyle = savedView === 'list' ? 'list' : 'grid';
 function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
@@ -245,10 +252,11 @@ function render(config, lists) {
   if (!isChannels && sortMode === 'newest') items.sort((a,b) => b.published-a.published || a.title.localeCompare(b.title,'he'));
   if (!isChannels && sortMode === 'name') items.sort((a,b) => a.title.localeCompare(b.title,'he'));
   ui.filters.hidden = isChannels;ui['sort-options'].hidden=isChannels;
+  ui.sort.value=sortMode;
   const options = document.createDocumentFragment();
   const allOption = document.createElement('option'); allOption.value = ''; allOption.textContent = 'כל הערוצים'; options.append(allOption);
   for (const c of config.channels) { const option = document.createElement('option'); option.value = c.id; option.textContent = c.name; options.append(option); }
-  if (!config.channels.some(c => c.id === channelFilter)) channelFilter = '';
+  if (!config.channels.some(c => c.id === channelFilter)) {channelFilter = '';storageSet(CHANNEL_FILTER_KEY,'');}
   ui['channel-filter'].replaceChildren(options); ui['channel-filter'].value = viewMode==='videos' ? '' : selected ? selected.id : channelFilter; ui['channel-filter'].disabled = !!selected || viewMode==='videos';
   ui['all-tab'].setAttribute('aria-pressed', String(viewMode === 'all'));
   ui['videos-tab'].setAttribute('aria-pressed', String(viewMode === 'videos'));
@@ -259,6 +267,7 @@ function render(config, lists) {
   ui['search-label'].textContent = isChannels ? 'חיפוש בערוצים' : (selected ? 'חיפוש בערוץ' : 'חיפוש בסרטונים');
   ui.search.placeholder = isChannels ? 'חיפוש בערוצים' : (selected ? 'חיפוש בערוץ' : 'חיפוש בסרטונים');
   if (!searchTimer && ui.search.value !== searchQuery) ui.search.value = searchQuery;
+  if(searchQuery){ui['search-row'].hidden=false;ui['search-toggle'].setAttribute('aria-expanded','true');}
   ui['clear-search'].hidden = !searchQuery;
   ui.grid.setAttribute('aria-label', isChannels ? 'הערוצים המאושרים' : 'הסרטונים המאושרים');
   const fragment = document.createDocumentFragment();
@@ -267,7 +276,7 @@ function render(config, lists) {
     const cachedCard = cardCache.get(key);
     if (cachedCard) {
       if (!isChannels) {
-        cachedCard.setAttribute('aria-label','פתיחה באפליקציה: '+item.title);
+        cachedCard.setAttribute('aria-label',(PARENT_CATALOG?'צפייה בסרטון: ':'פתיחה באפליקציה: ')+item.title);
         const thumb=cachedCard.children[0], title=cachedCard.children[1]; title.textContent=item.title;
         const author=cachedCard.children[2] || document.createElement('span');author.className='card-author';author.dir='auto';author.textContent=item.author;
         cachedCard.replaceChildren(...(item.author ? [thumb,title,author] : [thumb,title]));
@@ -296,7 +305,7 @@ function render(config, lists) {
       card.append(thumb, title, count);
     } else {
       card.dataset.videoId = item.id;
-      card.setAttribute('aria-label', 'פתיחה באפליקציה: ' + item.title);
+      card.setAttribute('aria-label', (PARENT_CATALOG ? 'צפייה בסרטון: ' : 'פתיחה באפליקציה: ') + item.title);
       const thumb = document.createElement('span'); thumb.className = 'thumb';
       const image = document.createElement('img');
       image.src = 'https://img.youtube.com/vi/' + item.id + '/hqdefault.jpg';
@@ -355,7 +364,6 @@ function fetchData(url, timeout = SETTINGS.requestTimeoutMs, signal, format = 'j
   return KidsProviders.fetchJSON(fetch,url,{timeout,signal,format});
 }
 function fetchJson(url, timeout = SETTINGS.requestTimeoutMs, signal) { return fetchData(url, timeout, signal, 'json'); }
-function fetchText(url) { return fetchData(url, SETTINGS.requestTimeoutMs, undefined, 'text'); }
 
 // This parser runs only on the parent's published list, never on child input.
 function classifyYouTubeLink(input) {
@@ -440,7 +448,7 @@ function getChannelMetadata(id) {
 async function resolveLink(entry) {
   let id = entry.id;
   if (!id) {
-    const data = await providers.request('/api/v1/resolveurl?url=' + encodeURIComponent(entry.url),{ttl:SETTINGS.metadataTTL,validate:data => !!data && CHANNEL_ID.test(data.ucid || data.browseId)});
+    const data = await providers.request('/api/v1/resolveurl?url=' + encodeURIComponent(entry.url),{force:true,ttl:SETTINGS.metadataTTL,validate:data => !!data && CHANNEL_ID.test(data.ucid || data.browseId)});
     id = data.ucid || data.browseId;
   }
   if (entry.kind === 'video') {
@@ -524,55 +532,48 @@ async function loadApp() {
   loadError=false;
   channelProgress.clear(); verifiedChannelVideos.clear();
   loading = true; lastLoad = Date.now();
-  ui.refresh.disabled = true; ui.grid.setAttribute('aria-busy','true');
-  ui.empty.hidden = true; status('רגע קטן, הסרטונים בדרך…', true);
+  ui.grid.setAttribute('aria-busy','true');
+  // Never keep previously approved cards visible while authority is being revalidated.
+  activeConfig={videos:[],channels:[]};activeLists=Object.create(null);displayed=new Map();
+  ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;ui.empty.hidden=true;
+  status('רגע קטן, הסרטונים בדרך…', true);
   const previous = readSnapshot();
   channelDates = {...(previous ? previous.channelDates : {})};
   let config = null;
   let lists = Object.create(null);
-  let freshConfig = false;
   let invalidConfig = false;
   let entries = null, linkFailures = 0, invalidLines = [];
   let cacheSaved = true;
   activeLinkRecords = Object.create(null);
   try {
     let raw;
-    try {
-      try {
-        const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
-        if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
-        raw = remote.list;
-      } catch (_) { raw = await fetchText('./videos.txt'); }
-    }
-    catch (error) {
-      if (!previous) throw error;
-      config = previous.config; lists = previous.channelLists;
-      activeLinkRecords = previous.linkRecords;
-    }
-    if (!config) {
+    const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+    if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
+    raw = remote.list;
+    approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
+    {
       try {
         // Compatibility for an old JSON list pasted into the new file.
         if (raw.trimStart().startsWith('{')) config = normalizeConfig(JSON.parse(raw));
         else {
           ({entries, invalidLines} = parseLinkList(raw));
           for (const entry of entries) {
+            // A direct ID is the parent's exact grant and cached metadata may only
+            // decorate that same ID. A handle/legacy alias must be resolved again
+            // before it grants anything to the visible catalog.
+            if (!entry.id) continue;
             const record = cachedLinkRecord(entry, previous ? previous.linkRecords : {});
             if (record) activeLinkRecords[entry.url] = record;
           }
           config = configFromLinkRecords(entries, activeLinkRecords);
         }
       } catch (error) { invalidConfig = true; throw error; }
-      freshConfig = true;
       lists = pruneLists(config, previous ? previous.channelLists : {});
       // Persist removals before metadata or channel requests can fail.
       if (!saveSnapshot(config, lists)) cacheSaved = false;
     }
     // Manual approvals appear immediately; cached channels only after fresh config validation.
     render(config, lists);
-    if (!freshConfig) {
-      status('מוצגת הרשימה השמורה. כדי לקבל סרטונים ועדכונים חדשים, התחברו לאינטרנט ורעננו.');
-      return;
-    }
     if (entries && entries.length) {
       status('מזהים את הסרטונים והערוצים…', true);
       await parallelMap(entries.filter((entry,index) => entry.kind === 'channel' || index < SETTINGS.cardsPerPage), async entry => {
@@ -609,16 +610,29 @@ async function loadApp() {
     loadError=true;
     activeConfig = {videos:[], channels:[]}; activeLists = Object.create(null);
     displayed = new Map(); ui.grid.replaceChildren(); ui.count.textContent = ''; ui.more.hidden = true;
-    if (invalidConfig) {
-      activeLinkRecords = Object.create(null);
-      // Replace the local snapshot with an empty whitelist on a malformed current file.
-      saveSnapshot({videos:[], channels:[]}, {});
-      status('');
-    } else status('');
+    activeLinkRecords = Object.create(null);approvalMarker='';
+    // Any authority failure clears the local grant snapshot too.
+    saveSnapshot({videos:[], channels:[]}, {});
+    status('');
   } finally {
-    loading = false; ui.refresh.disabled = false; ui.grid.removeAttribute('aria-busy');
+    loading = false; ui.grid.removeAttribute('aria-busy');
     render(activeConfig, activeLists);
   }
+}
+
+function failClosedAuthorization(message='לא הצלחנו לאמת כרגע את רשימת ההורה.') {
+  loadError=true;approvalMarker='';activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
+  displayed=new Map();ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;saveSnapshot(activeConfig,{});
+  status(message);render(activeConfig,activeLists);
+}
+async function checkAuthorizationFreshness() {
+  if(loading||playback||document.hidden||navigator.onLine===false)return;
+  try{
+    const remote=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+    if(!remote||typeof remote.list!=='string')throw new Error('INVALID_REMOTE_LIST');
+    const marker=String(remote.updatedAt||'')+'\0'+remote.list;
+    if(!approvalMarker||marker!==approvalMarker)await loadApp();
+  }catch(_){failClosedAuthorization();}
 }
 
 function playerMessage(text, busy = false) {
@@ -777,6 +791,10 @@ function launchNativeApp() {
 function openPlayer(id) {
   const video = displayed.get(id);
   if (!video || (!getApprovedVideos().has(id) && !getApprovedChannels().has(video.channelId))) return;
+  if (PARENT_CATALOG) {
+    window.parent.postMessage({type:'kids-parent-open-video',id:video.id,title:video.title,author:video.author||''},location.origin);
+    return;
+  }
   flushSearch();
   const alreadyOpen = !!playback;
   if (playback && playback.controller) playback.controller.abort();
@@ -812,19 +830,39 @@ ui['videos-tab'].addEventListener('click', () => switchBrowse('videos'));
 ui['all-tab'].addEventListener('click', () => switchBrowse('all'));
 ui['channels-tab'].addEventListener('click', () => switchBrowse('channels'));
 ui['back-channels'].addEventListener('click', () => switchBrowse('channels'));
+ui['search-toggle'].addEventListener('click',()=>{
+  const opening=ui['search-row'].hidden;
+  ui['search-row'].hidden=!opening;ui['search-toggle'].setAttribute('aria-expanded',String(opening));
+  if(opening)ui.search.focus({preventScroll:true});
+  else if(!searchQuery){ui.search.value='';}
+});
 ui.search.addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer=setTimeout(() => {searchTimer=null;searchQuery=ui.search.value.slice(0,100);visibleCount=SETTINGS.cardsPerPage;render(activeConfig,activeLists);},SETTINGS.searchDebounceMs);
 });
-ui.sort.addEventListener('change', () => {sortMode=ui.sort.value;render(activeConfig,activeLists);});
-ui['channel-filter'].addEventListener('change', () => {channelFilter=ui['channel-filter'].value;visibleCount=SETTINGS.cardsPerPage;render(activeConfig,activeLists);});
+ui.sort.addEventListener('change', () => {sortMode=ui.sort.value;storageSet(SORT_KEY,sortMode);render(activeConfig,activeLists);});
+ui['channel-filter'].addEventListener('change', () => {channelFilter=ui['channel-filter'].value;storageSet(CHANNEL_FILTER_KEY,channelFilter);visibleCount=SETTINGS.cardsPerPage;render(activeConfig,activeLists);});
 ui['clear-cache'].addEventListener('click', () => {providers.clearCache();providers.resetHealth();loadApp();});
 ui.search.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); flushSearch(); ui.search.blur(); } });
 ui['clear-search'].addEventListener('click', clearSearch);
 ui['empty-clear'].addEventListener('click', () => {if(ui['empty-clear'].dataset.action==='retry')loadApp();else clearSearch();});
 ui['view-grid'].addEventListener('click',()=>setViewStyle('grid'));
 ui['view-list'].addEventListener('click',()=>setViewStyle('list'));
-ui.refresh.addEventListener('click', loadApp);
+let pullStartY=null,pullDistance=0;
+function resetPull(){pullStartY=null;pullDistance=0;ui['pull-refresh'].dataset.active='false';ui['pull-refresh'].textContent='משכו למטה לרענון';}
+document.addEventListener('touchstart',event=>{
+  if(loading||playback||window.scrollY>0||event.touches.length!==1||event.target.closest('input,select,button,textarea'))return;
+  pullStartY=event.touches[0].clientY;pullDistance=0;
+},{passive:true});
+document.addEventListener('touchmove',event=>{
+  if(pullStartY===null||event.touches.length!==1)return;
+  pullDistance=Math.max(0,Math.min(110,event.touches[0].clientY-pullStartY));
+  if(pullDistance>12){ui['pull-refresh'].dataset.active='true';ui['pull-refresh'].textContent=pullDistance>=70?'שחררו כדי לרענן':'משכו למטה לרענון';}
+},{passive:true});
+document.addEventListener('touchend',()=>{
+  const refresh=pullStartY!==null&&pullDistance>=70&&!loading&&!playback&&window.scrollY<=0;
+  resetPull();if(refresh)loadApp();
+},{passive:true});
 ui.more.addEventListener('click', loadMoreVideos);
 ui.back.addEventListener('click', () => closePlayer());
 window.addEventListener('popstate', () => closePlayer(true));
@@ -865,13 +903,16 @@ ui.install.addEventListener('click', async () => {
   installPrompt = null; ui.install.hidden = true;
 });
 window.addEventListener('appinstalled', () => { installPrompt = null; ui.install.hidden = true; });
-window.addEventListener('offline', () => {status('אין חיבור כרגע. הסרטונים השמורים עדיין מופיעים.');audit();});
+window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
 window.addEventListener('online', () => {providers.resetHealth();loadApp();});
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && navigator.onLine !== false) providers.healthCheck().then(audit);
+  if (!document.hidden && navigator.onLine !== false) {providers.healthCheck().then(audit);checkAuthorizationFreshness();}
   if (!document.hidden && Date.now() - lastLoad > SETTINGS.refreshOnReturnMs) loadApp();
 });
 if (history.state && history.state.kidsYoutubePlayer) history.replaceState(null, '', location.href);
 loadApp();
 
-if (typeof setInterval === 'function') setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
+if (typeof setInterval === 'function') {
+  setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
+  setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
+}
