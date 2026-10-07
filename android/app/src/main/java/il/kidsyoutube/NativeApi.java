@@ -18,7 +18,6 @@ import org.schabi.newpipe.extractor.stream.*;
 final class NativeApi {
     static final String LIST_URL="https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list&format=text";
     static final long LIST_TTL=30000, META_TTL=6*60*60*1000, CHANNEL_TTL=5*60*1000;
-    private final Context context;
     final ExtractorDownloader downloader=new ExtractorDownloader();
     private volatile ApprovalPolicy policy=ApprovalPolicy.parse("");
     private volatile String raw="";
@@ -28,7 +27,6 @@ final class NativeApi {
     private final Map<String,Cursor> cursors=new ConcurrentHashMap<>();
     private volatile long cooldownUntil;
     NativeApi(Context context) {
-        this.context=context.getApplicationContext();
         NewPipe.init(downloader);
     }
     private static final class Alias {
@@ -66,10 +64,6 @@ final class NativeApi {
                 aliases.keySet().retainAll(next.channelUrls);
             }
             raw=text;policy=next;checkedAt=System.currentTimeMillis();
-            // Private native snapshot is for display only. Playback always requires
-            // a fresh successful whitelist check and does not trust this file.
-            context.getSharedPreferences("native-list",Context.MODE_PRIVATE).edit()
-                    .putString("display",text).putLong("savedAt",checkedAt).apply();
             return text;
         } finally {if(scope!=null)scope.remove(call);}
     }
