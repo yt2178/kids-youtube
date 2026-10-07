@@ -363,7 +363,7 @@ function render(config, lists) {
       ui['empty-clear'].hidden = false;ui['empty-clear'].dataset.action='clear';
       ui['empty-clear'].textContent = 'ניקוי החיפוש';
     } else if (loadError) {
-      ui['empty-title'].textContent = 'לא הצלחנו לטעון את הסרטונים.';
+      ui['empty-title'].textContent = 'לא הצלחנו לטעון את התוכן.';
       ui['empty-text'].textContent = 'בדקו את החיבור ונסו שוב.';
       ui['empty-clear'].hidden = false;ui['empty-clear'].dataset.action='retry';
       ui['empty-clear'].textContent = 'נסו שוב';
@@ -638,12 +638,12 @@ async function loadApp() {
     if (!saveSnapshot(config, lists)) cacheSaved = false;
     const messages = [];
     if (invalidLines.length) messages.push('חלק מהקישורים ברשימה זקוקים לבדיקה של ההורה.');
-    if (linkFailures && displayed.size) messages.push('חלק מהשמות לא התעדכנו כרגע. הסרטונים הזמינים והשמורים כאן בשבילכם.');
+    if (linkFailures && displayed.size) messages.push('חלק מהפרטים לא התעדכנו כרגע. התוכן שכבר נטען עדיין זמין.');
     else if (linkFailures) messages.push('הסרטונים אינם זמינים כרגע. נסו שוב מאוחר יותר.');
-    if (failures && displayed.size) messages.push('חלק מהערוצים אינם זמינים כרגע. הסרטונים הזמינים והשמורים כאן בשבילכם.');
+    if (failures && displayed.size) messages.push('חלק מהערוצים אינם זמינים כרגע. התוכן שכבר נטען עדיין מוצג.');
     else if (failures) messages.push('הסרטונים אינם זמינים כרגע. נסו שוב מאוחר יותר.');
     if (limited) messages.push('אפשר ללחוץ על ״עוד סרטונים״ להמשך הרשימה.');
-    if (!cacheSaved) messages.push('לא הצלחנו לשמור את הרשימה במכשיר. הצפייה עדיין זמינה עם חיבור לאינטרנט.');
+    if (!cacheSaved) messages.push('לא הצלחנו לשמור נתונים זמניים במכשיר. התוכן עדיין זמין כל עוד יש חיבור לאינטרנט.');
     status(messages.join(' '));
   } catch (_) {
     loadError=true;
