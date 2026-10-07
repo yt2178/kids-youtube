@@ -2,7 +2,8 @@
 'use strict';
 const API='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
-const ui=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));let parentLink=null,setupRequired=false,currentList='',pendingRemove=null;
+const ui=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));let parentLink=null,setupRequired=false,currentList='',pendingRemove=null,channelImageTimer=null;
+const TRUSTED_FRAME=(()=>{try{return window.top===window||window.top.location.origin===location.origin;}catch(_){return false;}})();
 function token(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
 function storeToken(value,remember){try{localStorage.removeItem('kidsParentToken');sessionStorage.removeItem('kidsParentToken');(remember?localStorage:sessionStorage).setItem('kidsParentToken',value);}catch(_){}}
 function clearToken(){try{localStorage.removeItem('kidsParentToken');sessionStorage.removeItem('kidsParentToken');}catch(_){}}
@@ -33,7 +34,7 @@ function setParentView(catalog){
 async function loadList(){const d=await api('list');setupRequired=!!d.setupRequired;renderList(d.list);return d;}
 async function boot(){const bootSpinner=setTimeout(()=>{ui['auth-spinner'].hidden=false;},180);try{const d=await loadList();if(token()){try{const s=await api('status',{method:'POST',auth:true});if(s.authenticated){showParent(d.list);return;}}catch(_){}clearToken();}ui['auth-title'].textContent=setupRequired?'הגדרת סיסמה':'כניסת הורה';ui['auth-help'].textContent=setupRequired?'בחרו עכשיו סיסמה. מהכניסה הבאה האתר יזכור את ההורה במכשיר אם תסמנו ״זכור אותי״.':'הזינו את הסיסמה המשפחתית.';}catch(_){ui['auth-status'].textContent='לא הצלחנו להתחבר כרגע. נסו שוב.';}finally{clearTimeout(bootSpinner);ui['auth-spinner'].hidden=true;}}
 ui.login.addEventListener('click',async()=>{setBusy(ui.login,true);ui['auth-status'].textContent='';try{const password=ui.password.value;if(password.length<4){ui['auth-status'].textContent='הסיסמה צריכה להכיל לפחות 4 תווים.';return;}const d=await api(setupRequired?'setup':'login',{method:'POST',body:{password,remember:ui.remember.checked}});storeToken(d.token,ui.remember.checked);const list=await loadList();ui.password.value='';showParent(list.list);}catch(e){ui['auth-status'].textContent=e.message==='WRONG_PASSWORD'?'סיסמה שגויה.':'הכניסה לא הצליחה. נסו שוב.';}finally{setBusy(ui.login,false);}});
-function resetPreview(){parentLink=null;ui.status.classList.remove('exists');ui.save.textContent='הוסף לרשימה';ui.save.disabled=false;ui.preview.hidden=true;ui['youtube-player-shell'].hidden=true;ui['youtube-player-loading'].hidden=true;ui['youtube-player'].removeAttribute('src');ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=true;ui['channel-image'].removeAttribute('src');ui['channel-symbol'].hidden=true;}
+function resetPreview(){clearTimeout(channelImageTimer);channelImageTimer=null;parentLink=null;ui.status.classList.remove('exists');ui.save.textContent='הוסף לרשימה';ui.save.disabled=false;ui.preview.hidden=true;ui['youtube-player-shell'].hidden=true;ui['youtube-player-loading'].hidden=true;ui['youtube-player'].removeAttribute('src');ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=true;ui['channel-image'].removeAttribute('src');ui['channel-symbol'].hidden=true;}
 ui.link.addEventListener('input',resetPreview);
 ui.inspect.addEventListener('click',async()=>{resetPreview();setBusy(ui.inspect,true);ui.status.textContent='טוען את פרטי התוכן…';try{parentLink=KidsParentLinks.share(ui.link.value);const meta=await api('metadata',{method:'POST',auth:true,body:{link:parentLink.url}});parentLink={...parentLink,...meta};const channel=parentLink.kind==='channel';ui.kind.textContent=channel?'ערוץ שלם':'סרטון אחד';ui['media-title'].textContent=parentLink.title||(channel?'ערוץ YouTube':'סרטון YouTube');ui['media-author'].textContent=parentLink.author||'';ui['media-author'].hidden=!parentLink.author;ui.canonical.textContent=parentLink.url;ui.note.value=parentLink.title||'';
 const existing=entries(currentList).find(item=>item.url===parentLink.url);
@@ -48,7 +49,9 @@ if(existing){
 if(channel){
   const image=safeChannelImage(parentLink.thumbnail||'');
   if(image){
-    ui['channel-image-loading'].hidden=false;ui['channel-image'].hidden=true;ui['channel-symbol'].hidden=true;ui['channel-image'].src=image;
+    ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=true;ui['channel-symbol'].hidden=true;
+    channelImageTimer=setTimeout(()=>{channelImageTimer=null;if(ui['channel-image'].hidden&&ui['channel-image'].src)ui['channel-image-loading'].hidden=false;},180);
+    ui['channel-image'].src=image;
   }else{
     ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=true;ui['channel-symbol'].hidden=false;
   }
@@ -82,7 +85,10 @@ ui['catalog-player-dialog'].addEventListener('close',()=>ui['catalog-player'].re
 ui['youtube-player'].addEventListener('load',()=>{ui['youtube-player-loading'].hidden=true;});
 ui['parent-catalog'].addEventListener('load',()=>{ui['parent-catalog-loading'].hidden=true;});
 ui['catalog-player'].addEventListener('load',()=>{ui['catalog-player-loading'].hidden=true;});
-ui['channel-image'].addEventListener('load',()=>{ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=false;ui['channel-symbol'].hidden=true;});
-ui['channel-image'].addEventListener('error',()=>{ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=true;ui['channel-image'].removeAttribute('src');ui['channel-symbol'].hidden=false;});
+ui['channel-image'].addEventListener('load',()=>{clearTimeout(channelImageTimer);channelImageTimer=null;ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=false;ui['channel-symbol'].hidden=true;});
+ui['channel-image'].addEventListener('error',()=>{clearTimeout(channelImageTimer);channelImageTimer=null;ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=true;ui['channel-image'].removeAttribute('src');ui['channel-symbol'].hidden=false;});
 ui.logout.addEventListener('click',()=>{clearToken();location.reload();});
-boot();
+if(TRUSTED_FRAME)boot();else{
+  ui['auth-spinner'].hidden=true;ui.login.disabled=true;
+  ui['auth-status'].textContent='מטעמי אבטחה, יש לפתוח את אתר ההורים ישירות ולא מתוך אתר אחר.';
+}
