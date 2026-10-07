@@ -71,12 +71,8 @@ test('native transport has a finite deadline',async()=>{
   await assert.rejects(c.KidsNative.call('api','path',undefined,5),e=>e.code==='TIMEOUT');
   assert.equal(messages[1].method,'cancel');
 });
-test('manual whitelist uses the native authoritative read instead of Invidious',async()=>{
-  const {c,messages,reply}=context();
-  const p=c.fetch('./videos.txt',{cache:'no-store'});
-  assert.equal(messages[0].method,'whitelist');
-  reply({id:messages[0].id,data:'https://youtu.be/mVTlbvQ_010 // parent'});
-  assert.match(await (await p).text(),/mVTlbvQ_010/);
+test('native adapter no longer intercepts a static videos.txt fallback',()=>{
+  assert.doesNotMatch(adapter,/videos\.txt|method:'whitelist'/);
 });
 test('native failures are rejected centrally without accepting invalid metadata',async()=>{
   const {c,messages,reply}=context(),manager=c.KidsNative.createManager();
@@ -86,6 +82,13 @@ test('native failures are rejected centrally without accepting invalid metadata'
   const q=manager.request('next',{validate:()=>false});
   const invalid=assert.rejects(q,e=>e.code==='PROVIDER_ERROR');
   reply({id:messages[1].id,data:{bad:true}});await invalid;
+});
+test('native authorization fails closed and playback rechecks the parent list',()=>{
+  const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  assert.match(source,/String displayWhitelist\(\) throws Exception \{[\s\S]*return whitelist\(true\);/);
+  const playback=source.slice(source.indexOf('Playback playback(String id)'));
+  assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+  assert.doesNotMatch(source,/displayWhitelist\(\)[\s\S]{0,500}getSharedPreferences/);
 });
 test('native activity restricts messages to the packaged main frame and stops media',()=>{
   const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
