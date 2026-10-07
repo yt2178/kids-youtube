@@ -28,8 +28,15 @@ function setParentView(catalog){
   ui['management-tab'].setAttribute('aria-selected',String(!catalog));ui['management-tab'].setAttribute('aria-pressed',String(!catalog));
   ui['catalog-tab'].setAttribute('aria-selected',String(catalog));ui['catalog-tab'].setAttribute('aria-pressed',String(catalog));
   ui['management-tab'].classList.toggle('secondary',catalog);ui['catalog-tab'].classList.toggle('secondary',!catalog);
-  if(catalog&&!ui['parent-catalog'].src){ui['parent-catalog-loading'].hidden=false;ui['parent-catalog'].src='./index.html?parentCatalog=1';}
-  if(!catalog&&ui['parent-catalog'].src){ui['parent-catalog'].removeAttribute('src');ui['parent-catalog-loading'].hidden=true;}
+  if(catalog){
+    if(ui['youtube-player'].src){ui['youtube-player'].removeAttribute('src');ui['youtube-player-loading'].hidden=true;}
+    if(!ui['parent-catalog'].src){ui['parent-catalog-loading'].hidden=false;ui['parent-catalog'].src='./index.html?parentCatalog=1';}
+  }else{
+    if(ui['parent-catalog'].src){ui['parent-catalog'].removeAttribute('src');ui['parent-catalog-loading'].hidden=true;}
+    if(ui['catalog-player-dialog'].open)closeCatalogPlayer();
+    if(parentLink&&parentLink.kind==='video'&&parentLink.id&&!ui.preview.hidden&&!ui['youtube-player'].src)
+      startFrame(ui['youtube-player-shell'],ui['youtube-player'],ui['youtube-player-loading'],'https://www.youtube.com/embed/'+encodeURIComponent(parentLink.id)+'?playsinline=1&rel=0');
+  }
 }
 async function loadList(){const d=await api('list');setupRequired=!!d.setupRequired;renderList(d.list);return d;}
 async function boot(){const bootSpinner=setTimeout(()=>{ui['auth-spinner'].hidden=false;},180);try{const d=await loadList();if(token()){try{const s=await api('status',{method:'POST',auth:true});if(s.authenticated){showParent(d.list);return;}}catch(_){}clearToken();}ui['auth-title'].textContent=setupRequired?'הגדרת סיסמה':'כניסת הורה';ui['auth-help'].textContent=setupRequired?'בחרו עכשיו סיסמה. מהכניסה הבאה האתר יזכור את ההורה במכשיר אם תסמנו ״זכור אותי״.':'הזינו את הסיסמה המשפחתית.';}catch(_){ui['auth-status'].textContent='לא הצלחנו להתחבר כרגע. נסו שוב.';}finally{clearTimeout(bootSpinner);ui['auth-spinner'].hidden=true;}}
