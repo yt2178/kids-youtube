@@ -35,6 +35,7 @@ function sameOriginParent(){
   try{return window.parent.location.origin===location.origin;}catch(_){return false;}
 }
 const PARENT_CATALOG = new URL(location.href).searchParams.get('parentCatalog') === '1' && sameOriginParent();
+const NATIVE_MODE = typeof window.KidsNative === 'object' && window.KidsNative !== null;
 const PARENT_API = 'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 const SCOPE = new URL('./', location.href).href;
 // A provider iframe may need its own storage for playback/preferences.
@@ -952,16 +953,15 @@ window.addEventListener('appinstalled', () => { installPrompt = null; ui.install
 window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
 window.addEventListener('online', () => {providers.resetHealth();loadApp();});
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && navigator.onLine !== false) {
-    if(!PARENT_CATALOG)providers.healthCheck().then(audit);
-    checkAuthorizationFreshness();
-  }
-  if (!document.hidden && Date.now() - lastLoad > SETTINGS.refreshOnReturnMs) loadApp();
+  if(document.hidden||navigator.onLine===false)return;
+  if(Date.now()-lastLoad>SETTINGS.refreshOnReturnMs){loadApp();return;}
+  if(!PARENT_CATALOG&&!NATIVE_MODE)providers.healthCheck().then(audit);
+  checkAuthorizationFreshness();
 });
 if (history.state && history.state.kidsYoutubePlayer) history.replaceState(null, '', location.href);
 loadApp();
 
 if (typeof setInterval === 'function' && !PARENT_CATALOG) {
-  setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
+  if(!NATIVE_MODE)setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
   setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
 }
