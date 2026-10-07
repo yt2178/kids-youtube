@@ -136,7 +136,7 @@ test('empty offline fallback shows a friendly retry state',async()=>{
   const a=await app(empty,fail,new Map(),{offline:true});
   assert.equal(a.run('displayed.size'),0);assert.equal(a.elements.empty.hidden,false);
   assert.match(a.elements['empty-title'].textContent,/לא הצלחנו לטעון/);
-  assert.equal(a.elements['empty-clear'].dataset.action,'retry');assert.equal(a.elements['empty-clear'].textContent,'נסה שוב');
+  assert.equal(a.elements['empty-clear'].dataset.action,'retry');assert.equal(a.elements['empty-clear'].textContent,'נסו שוב');
   assert.equal(a.elements.spinner.hidden,true);
 });
 test('fresh removal of manual video/channel also prunes persistent cache',async()=>{
