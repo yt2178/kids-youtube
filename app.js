@@ -20,7 +20,8 @@ const SETTINGS = Object.freeze({
   metadataTTL: 6 * 60 * 60 * 1000,
   channelTTL: 5 * 60 * 1000,
   searchDebounceMs: 150,
-  refreshOnReturnMs: 5 * 60 * 1000
+  refreshOnReturnMs: 5 * 60 * 1000,
+  authorizationRefreshMs: 15 * 1000
 });
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
@@ -71,6 +72,7 @@ const cardCache = new Map();
 let channelDates = Object.create(null);
 let loadError = false;
 let statusTimer = null;
+let approvalMarker = '';
 const savedView = storageGet(VIEW_KEY);
 let viewStyle = savedView === 'list' ? 'list' : 'grid';
 function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
@@ -361,7 +363,6 @@ function fetchData(url, timeout = SETTINGS.requestTimeoutMs, signal, format = 'j
   return KidsProviders.fetchJSON(fetch,url,{timeout,signal,format});
 }
 function fetchJson(url, timeout = SETTINGS.requestTimeoutMs, signal) { return fetchData(url, timeout, signal, 'json'); }
-function fetchText(url) { return fetchData(url, SETTINGS.requestTimeoutMs, undefined, 'text'); }
 
 // This parser runs only on the parent's published list, never on child input.
 function classifyYouTubeLink(input) {
@@ -531,12 +532,14 @@ async function loadApp() {
   channelProgress.clear(); verifiedChannelVideos.clear();
   loading = true; lastLoad = Date.now();
   ui.grid.setAttribute('aria-busy','true');
-  ui.empty.hidden = true; status('רגע קטן, הסרטונים בדרך…', true);
+  // Never keep previously approved cards visible while authority is being revalidated.
+  activeConfig={videos:[],channels:[]};activeLists=Object.create(null);displayed=new Map();
+  ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;ui.empty.hidden=true;
+  status('רגע קטן, הסרטונים בדרך…', true);
   const previous = readSnapshot();
   channelDates = {...(previous ? previous.channelDates : {})};
   let config = null;
   let lists = Object.create(null);
-  let freshConfig = false;
   let invalidConfig = false;
   let entries = null, linkFailures = 0, invalidLines = [];
   let cacheSaved = true;
@@ -546,6 +549,7 @@ async function loadApp() {
     const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
     if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
     raw = remote.list;
+    approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
     {
       try {
         // Compatibility for an old JSON list pasted into the new file.
@@ -559,7 +563,6 @@ async function loadApp() {
           config = configFromLinkRecords(entries, activeLinkRecords);
         }
       } catch (error) { invalidConfig = true; throw error; }
-      freshConfig = true;
       lists = pruneLists(config, previous ? previous.channelLists : {});
       // Persist removals before metadata or channel requests can fail.
       if (!saveSnapshot(config, lists)) cacheSaved = false;
@@ -602,16 +605,29 @@ async function loadApp() {
     loadError=true;
     activeConfig = {videos:[], channels:[]}; activeLists = Object.create(null);
     displayed = new Map(); ui.grid.replaceChildren(); ui.count.textContent = ''; ui.more.hidden = true;
-    if (invalidConfig) {
-      activeLinkRecords = Object.create(null);
-      // Replace the local snapshot with an empty whitelist on a malformed current file.
-      saveSnapshot({videos:[], channels:[]}, {});
-      status('');
-    } else status('');
+    activeLinkRecords = Object.create(null);approvalMarker='';
+    // Any authority failure clears the local grant snapshot too.
+    saveSnapshot({videos:[], channels:[]}, {});
+    status('');
   } finally {
     loading = false; ui.grid.removeAttribute('aria-busy');
     render(activeConfig, activeLists);
   }
+}
+
+function failClosedAuthorization(message='לא הצלחנו לאמת כרגע את רשימת ההורה.') {
+  loadError=true;approvalMarker='';activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
+  displayed=new Map();ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;saveSnapshot(activeConfig,{});
+  status(message);render(activeConfig,activeLists);
+}
+async function checkAuthorizationFreshness() {
+  if(loading||playback||document.hidden||navigator.onLine===false)return;
+  try{
+    const remote=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+    if(!remote||typeof remote.list!=='string')throw new Error('INVALID_REMOTE_LIST');
+    const marker=String(remote.updatedAt||'')+'\0'+remote.list;
+    if(!approvalMarker||marker!==approvalMarker)await loadApp();
+  }catch(_){failClosedAuthorization();}
 }
 
 function playerMessage(text, busy = false) {
@@ -882,13 +898,16 @@ ui.install.addEventListener('click', async () => {
   installPrompt = null; ui.install.hidden = true;
 });
 window.addEventListener('appinstalled', () => { installPrompt = null; ui.install.hidden = true; });
-window.addEventListener('offline', () => {status('אין חיבור כרגע. הסרטונים השמורים עדיין מופיעים.');audit();});
+window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
 window.addEventListener('online', () => {providers.resetHealth();loadApp();});
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && navigator.onLine !== false) providers.healthCheck().then(audit);
+  if (!document.hidden && navigator.onLine !== false) {providers.healthCheck().then(audit);checkAuthorizationFreshness();}
   if (!document.hidden && Date.now() - lastLoad > SETTINGS.refreshOnReturnMs) loadApp();
 });
 if (history.state && history.state.kidsYoutubePlayer) history.replaceState(null, '', location.href);
 loadApp();
 
-if (typeof setInterval === 'function') setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
+if (typeof setInterval === 'function') {
+  setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
+  setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
+}
