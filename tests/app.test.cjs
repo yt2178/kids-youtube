@@ -50,7 +50,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   }
   const listeners={};
   const history={state:null,pushState(state){this.state=state;},replaceState(state){this.state=state;},back(){this.state=null;}};
-  const context=vm.createContext({URL,AbortController,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
+  const context=vm.createContext({URL,AbortController,Response,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
     navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/',origin:new URL(options.href||'https://example.test/kids-youtube/').origin},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.offline?fail():json({list:raw});if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
@@ -617,6 +617,7 @@ test('parent catalog thumbnails load eagerly and child thumbnails remain lazy',a
 test('approval freshness polling is reduced to one minute and disabled inside parent catalog',()=>{
   assert.match(scripts[1],/authorizationRefreshMs:\s*60\s*\*\s*1000/);
   assert.match(scripts[1],/if \(typeof setInterval === 'function' && !PARENT_CATALOG\)/);
+  assert.match(scripts[1],/if\(!NATIVE_MODE\)setInterval/);
   assert.doesNotMatch(scripts[1],/if\(!PARENT_CATALOG\)setInterval\(checkAuthorizationFreshness/);
 });
 
@@ -639,6 +640,13 @@ test('native-app launch visibility listener is cleaned up even when the app is n
 });
 test('re-rendering keeps existing thumbnail nodes rather than issuing duplicate loads',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});const image=a.elements.grid.children[0].children[0].children[0];a.run('render(activeConfig,activeLists)');assert.equal(a.elements.grid.children[0].children[0].children[0],image);assert.equal(image.loading,'lazy');
+});
+test('foreground after a long absence performs one full authorization refresh, not duplicate list requests',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});
+  const before=a.calls.filter(x=>x.url.includes('action=list')).length;
+  a.run('lastLoad=0');a.document.hidden=false;a.docListeners.visibilitychange[0]();
+  await until(()=>!a.run('loading'));
+  assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,before+1);
 });
 test('online recovery resets cooldown and refreshes whitelist',async()=>{
   const a=await app();const initial=a.calls.length;a.listeners.offline[0]();assert.match(a.elements['status-text'].textContent,/אין חיבור/);a.listeners.online[0]();await until(()=>!a.run('loading'));assert.equal(a.calls.length,initial+1);
