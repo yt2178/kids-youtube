@@ -552,7 +552,9 @@ test('pulling down at the top refreshes the authoritative list',async()=>{
   a.docListeners.touchstart[0]({touches:[{clientY:10}],target});
   a.docListeners.touchmove[0]({touches:[{clientY:90}],target});
   a.docListeners.touchend[0]({});
-  await until(()=>!a.run('loading'));
+  assert.equal(a.elements['pull-refresh'].dataset.loading,'true');
+  await until(()=>!a.run('loading'));await new Promise(r=>setTimeout(r,0));
+  assert.equal(a.elements['pull-refresh'].dataset.loading,undefined);
   assert.equal(a.calls.filter(c=>c.url.includes('/functions/v1/kids-youtube?action=list')).length,before+1);
 });
 test('parent catalog sends an approved video to its authenticated host instead of the app deep link',async()=>{
@@ -562,6 +564,27 @@ test('parent catalog sends an approved video to its authenticated host instead o
   assert.equal(sent.length,1);assert.equal(sent[0].message.id,id(1));assert.equal(sent[0].origin,'https://example.test');
   assert.equal(a.elements.player.hidden,true);
 });
+test('parent catalog proxies provider calls through authenticated Supabase instead of direct Invidious CORS',async()=>{
+  const store=new Map([['kidsParentToken','parent-token']]),parentWindow={postMessage(){}};
+  const a=await app(empty,()=>json({software:{name:'test'}}),store,{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow});
+  const before=a.calls.length;await a.run("providerFetch('https://invidious.tiekoetter.com/api/v1/stats')");
+  const call=a.calls.slice(before).at(-1),u=new URL(call.url);
+  assert.equal(u.searchParams.get('action'),'provider');
+  assert.equal(u.searchParams.get('target'),'https://invidious.tiekoetter.com/api/v1/stats');
+  assert.equal(call.opts.headers.Authorization,'Bearer parent-token');
+  assert.equal(a.calls.slice(before).some(x=>x.url.startsWith('https://invidious.')),false);
+});
+test('parent catalog thumbnails load eagerly and child thumbnails remain lazy',async()=>{
+  const parent=await app({videos:[{id:id(1),title:'מאושר'}],channels:[]},undefined,new Map(),{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow:{postMessage(){}}});
+  assert.equal(parent.elements.grid.children[0].children[0].children[0].loading,'eager');
+  const child=await app({videos:[{id:id(1),title:'מאושר'}],channels:[]});
+  assert.equal(child.elements.grid.children[0].children[0].children[0].loading,'lazy');
+});
+test('approval freshness polling is reduced to one minute and disabled inside parent catalog',()=>{
+  assert.match(scripts[1],/authorizationRefreshMs:\s*60\s*\*\s*1000/);
+  assert.match(scripts[1],/if\(!PARENT_CATALOG\)setInterval\(checkAuthorizationFreshness,SETTINGS\.authorizationRefreshMs\)/);
+});
+
 
 test('re-rendering keeps existing thumbnail nodes rather than issuing duplicate loads',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});const image=a.elements.grid.children[0].children[0].children[0];a.run('render(activeConfig,activeLists)');assert.equal(a.elements.grid.children[0].children[0].children[0],image);assert.equal(image.loading,'lazy');
