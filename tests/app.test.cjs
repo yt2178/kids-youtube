@@ -538,6 +538,14 @@ test('search is collapsed until the search button is pressed',async()=>{
   a.elements['search-toggle'].listeners.click[0]();
   assert.equal(a.elements['search-row'].hidden,false);assert.equal(a.elements['search-toggle'].getAttribute('aria-expanded'),'true');
 });
+test('saved active search is never hidden when returning to a browse state',async()=>{
+  const a=await app({videos:[{id:id(1),title:'שיר אחד'},{id:id(2),title:'שיר אחר'}],channels:[]});
+  a.elements['search-toggle'].listeners.click[0]();a.elements.search.value='אחד';a.elements.search.listeners.input[0]();
+  await until(()=>a.run('searchTimer')===null);assert.equal(a.elements['search-row'].hidden,false);
+  a.run("switchBrowse('videos'); switchBrowse('all')");
+  assert.equal(a.run('searchQuery'),'אחד');assert.equal(a.elements['search-row'].hidden,false);
+  assert.equal(a.elements['search-toggle'].getAttribute('aria-expanded'),'true');
+});
 test('pulling down at the top refreshes the authoritative list',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});const before=a.calls.filter(c=>c.url.includes('/functions/v1/kids-youtube?action=list')).length;
   const target=a.elements.grid;
