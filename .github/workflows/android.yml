@@ -53,15 +53,6 @@ jobs:
           node android/check-bundle.cjs
           cd android
           ./gradlew --no-daemon -PincludeParentCompanion=true :parent:testDebugUnitTest --stacktrace
-      - name: Verify live GitHub permission endpoint without changing approvals
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const permission=await github.rest.repos.getCollaboratorPermissionLevel({...context.repo,username:context.repo.owner});
-            if(permission.data.permission!=='admin') throw new Error('Owner permission unavailable');
-            const list=await github.rest.repos.getContent({...context.repo,path:'videos.txt',ref:'main'});
-            if(list.data.encoding!=='base64') throw new Error('Whitelist unavailable');
-            console.log('Parent workflow permission API and current whitelist read verified; no approvals changed');
       - name: Verify native reports
         run: |
           python3 - <<'PY'
@@ -123,12 +114,13 @@ jobs:
             const body = [
               'אפליקציית הילדים ופרויקט מלא לפתיחה ב־Android Studio, בתוך אותו ריפו.',
               'הורידו Kids-YouTube-AndroidStudio.zip, חלצו ופתחו ב־Android Studio את kids-youtube/android. אין צורך ב־Node או Gradle מותקן בנפרד.',
-              'להורה יש עמוד בדפדפן: העתקת קישור → בדיקה → אישור בחשבון GitHub. ללא אפליקציית הורה או מפתח אישי. הורה נוסף צריך הרשאת כתיבה לריפו.',
+              'להורה יש עמוד בדפדפן: סיסמה → העתקת קישור → בדיקה → הוספה או הסרה ישירה. אין צורך בחשבון GitHub או באישור ידני.',
               'התאמות למסך קטן/גדול/לרוחב, טקסט מוגדל, אזורי מערכת ומקלדת. מנגנון הניגון המקורי נשמר; השינויים החדשים דורשים גם בדיקה פיזית.',
-              counts.app+' בדיקות Java לילדים ו־'+counts.parent+' בדיקות נסיגה של ההורה הקודם עברו, בנוסף לבדיקות האתר/הגשר/הורה בדפדפן.',
+              counts.app+' בדיקות Java לילדים ו־'+counts.parent+' בדיקות נסיגה של companion ההורה עברו, בנוסף לבדיקות האתר, הגשר ואזור ההורים בדפדפן.',
               'Android 6 ומעלה ו־WebView מעודכן. אלו APK לבדיקת בטא בחתימת debug; עדכון עתידי עשוי לדרוש הסרה והתקנה מחדש.',
               'אם גרסת בטא קודמת עם אותו מזהה מותקנת, חתימת debug חדשה עשויה לדרוש הסרה לפני התקנה.',
-              'להורה: https://github.com/'+context.repo.owner+'/'+context.repo.repo+'/blob/'+context.sha+'/PARENTS.md',
+              'עמוד ההורים: https://yt2178.github.io/kids-youtube/parents.html',
+              'תיעוד: https://github.com/'+context.repo.owner+'/'+context.repo.repo+'/blob/'+context.sha+'/PARENTS.md',
               'מקור: '+context.sha
             ].join('\n\n');
             let release;
@@ -145,4 +137,4 @@ jobs:
               console.log(name+'='+asset.data.browser_download_url);
             }
             await core.summary.addHeading('Family beta built and published').addLink('Downloads',release.html_url)
-              .addRaw('\nNative tests: '+JSON.stringify(counts)+'\nNew parent flow requires physical phone verification.').write();
+              .addRaw('\nNative tests: '+JSON.stringify(counts)+'\nParent flow uses direct password-based backend saves.').write();

@@ -39,38 +39,5 @@
     if(found.size!==1)throw Error('ONE_LINK_ONLY');
     return [...found.values()][0];
   }
-  function entries(raw){
-    if(typeof raw!=='string'||raw.length>1000000||raw.replace(/^\uFEFF/,'').trimStart().startsWith('{'))throw Error('INVALID_LIST');
-    const out=new Map();
-    for(const line of raw.replace(/^\uFEFF/,'').split(/\r?\n/)){
-      const value=line.trim();if(!value||value.startsWith('//'))continue;
-      try{const parts=value.split(/\s+\/\//,2),link=classify(parts[0]);if(!out.has(link.url))out.set(link.url,{...link,note:parts[1]||''});}catch(_){}
-    }
-    return [...out.values()];
-  }
-  function comment(text){return String(text||'').replace(/[\r\n\uFEFF]/g,' ').replace(/\s+/g,' ').trim().slice(0,500);}
-  function edit(raw,request){
-    const link=classify(request.link);entries(raw);
-    if(request.operation==='add'){
-      if(entries(raw).some(x=>x.url===link.url))return raw;
-      const note=comment(request.note);
-      const result=raw+(raw&&!raw.endsWith('\n')?'\n':'')+link.url+(note?' // '+note:'')+'\n';
-      if(result.length>1000000)throw Error('INVALID_LIST');return result;
-    }
-    if(request.operation!=='remove')throw Error('INVALID_OPERATION');
-    return raw.split('\n').filter(line=>{
-      const value=line.replace(/^\uFEFF/,'').trim();if(!value||value.startsWith('//'))return true;
-      try{return classify(value.split(/\s+\/\//,1)[0]).url!==link.url;}catch(_){return true;}
-    }).join('\n');
-  }
-  function issueURL(link,operation,note){
-    const valid=classify(link),u=new URL('https://github.com/yt2178/kids-youtube/issues/new');
-    u.searchParams.set('template','parent-approval.yml');u.searchParams.set('title','[אישור הורה] '+(operation==='remove'?'ביטול':'הוספה')+' '+valid.label);
-    u.searchParams.set('link',valid.url);u.searchParams.set('note',comment(note)||'ללא הערה');
-    if(!['add','remove'].includes(operation))throw Error('INVALID_OPERATION');
-    u.searchParams.set('operation',operation==='remove'?'ביטול אישור':'הוספה לרשימה');
-    // GitHub pre-fills text inputs; the parent chooses the operation and checks confirmation there.
-    return u.href;
-  }
-  return {classify,share,entries,comment,edit,issueURL};
+  return {classify,share};
 });
