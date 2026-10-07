@@ -327,11 +327,11 @@ test('resolveurl may use browseId and must return a real channel ID',async()=>{
   const b=await app('https://youtube.com/@Example',()=>json({videoId:id(1),browseId:id(1)}));
   assert.equal(b.run('displayed.size'),0);assert.equal(b.calls.length,4);
 });
-test('cached alias, video title and channel videos survive all instance failures',async()=>{
+test('cached direct video metadata may survive, but channel aliases must resolve freshly before display',async()=>{
   const store=new Map(),list=link(1)+'\nhttps://youtube.com/@Example';
   await app(list,metadataApi,store);
   const a=await app(list,fail,store);
-  assert.equal(a.run('displayed.size'),2);assert.equal(a.run('activeConfig.channels[0].name'),'שם הערוץ האוטומטי');
+  assert.equal(a.run('displayed.size'),1);assert.equal(a.run('activeConfig.channels.length'),0);
   assert.equal(a.run('activeConfig.videos[0].title'),'שם הסרטון האוטומטי');
 });
 test('removed alias and manual link never reappear from cache during outages',async()=>{
