@@ -267,6 +267,7 @@ function render(config, lists) {
   ui['search-label'].textContent = isChannels ? 'חיפוש בערוצים' : (selected ? 'חיפוש בערוץ' : 'חיפוש בסרטונים');
   ui.search.placeholder = isChannels ? 'חיפוש בערוצים' : (selected ? 'חיפוש בערוץ' : 'חיפוש בסרטונים');
   if (!searchTimer && ui.search.value !== searchQuery) ui.search.value = searchQuery;
+  if(searchQuery){ui['search-row'].hidden=false;ui['search-toggle'].setAttribute('aria-expanded','true');}
   ui['clear-search'].hidden = !searchQuery;
   ui.grid.setAttribute('aria-label', isChannels ? 'הערוצים המאושרים' : 'הסרטונים המאושרים');
   const fragment = document.createDocumentFragment();
@@ -275,7 +276,7 @@ function render(config, lists) {
     const cachedCard = cardCache.get(key);
     if (cachedCard) {
       if (!isChannels) {
-        cachedCard.setAttribute('aria-label','פתיחה באפליקציה: '+item.title);
+        cachedCard.setAttribute('aria-label',(PARENT_CATALOG?'צפייה בסרטון: ':'פתיחה באפליקציה: ')+item.title);
         const thumb=cachedCard.children[0], title=cachedCard.children[1]; title.textContent=item.title;
         const author=cachedCard.children[2] || document.createElement('span');author.className='card-author';author.dir='auto';author.textContent=item.author;
         cachedCard.replaceChildren(...(item.author ? [thumb,title,author] : [thumb,title]));
@@ -304,7 +305,7 @@ function render(config, lists) {
       card.append(thumb, title, count);
     } else {
       card.dataset.videoId = item.id;
-      card.setAttribute('aria-label', 'פתיחה באפליקציה: ' + item.title);
+      card.setAttribute('aria-label', (PARENT_CATALOG ? 'צפייה בסרטון: ' : 'פתיחה באפליקציה: ') + item.title);
       const thumb = document.createElement('span'); thumb.className = 'thumb';
       const image = document.createElement('img');
       image.src = 'https://img.youtube.com/vi/' + item.id + '/hqdefault.jpg';
