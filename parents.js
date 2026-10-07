@@ -6,7 +6,11 @@ const ui=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));let p
 function token(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
 function storeToken(value,remember){try{localStorage.removeItem('kidsParentToken');sessionStorage.removeItem('kidsParentToken');(remember?localStorage:sessionStorage).setItem('kidsParentToken',value);}catch(_){}}
 function clearToken(){try{localStorage.removeItem('kidsParentToken');sessionStorage.removeItem('kidsParentToken');}catch(_){}}
-function setBusy(button,on){if(!button)return;button.classList.toggle('busy',!!on);button.setAttribute('aria-busy',String(!!on));button.disabled=!!on;}
+function setBusy(button,on){
+  if(!button)return;clearTimeout(button._busyTimer);button._busyTimer=null;button.classList.remove('busy');
+  button.setAttribute('aria-busy',String(!!on));button.disabled=!!on;
+  if(on)button._busyTimer=setTimeout(()=>{button._busyTimer=null;if(button.disabled)button.classList.add('busy');},180);
+}
 function safeChannelImage(value){try{const u=new URL(value);const ok=['img.youtube.com','i.ytimg.com','yt3.ggpht.com','yt3.googleusercontent.com'].includes(u.hostname.toLowerCase());return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&ok?u.href:'';}catch(_){return '';}}
 function startFrame(shell,frame,loader,src){shell.hidden=false;loader.hidden=false;frame.src=src;}
 async function api(action,options={}){
@@ -27,7 +31,7 @@ function setParentView(catalog){
   if(!catalog&&ui['parent-catalog'].src){ui['parent-catalog'].removeAttribute('src');ui['parent-catalog-loading'].hidden=true;}
 }
 async function loadList(){const d=await api('list');setupRequired=!!d.setupRequired;renderList(d.list);return d;}
-async function boot(){try{const d=await loadList();if(token()){try{const s=await api('status',{method:'POST',auth:true});if(s.authenticated){showParent(d.list);return;}}catch(_){}clearToken();}ui['auth-title'].textContent=setupRequired?'הגדרת סיסמה':'כניסת הורה';ui['auth-help'].textContent=setupRequired?'בחרו עכשיו סיסמה. מהכניסה הבאה האתר יזכור את ההורה במכשיר אם תסמנו ״זכור אותי״.':'הזינו את הסיסמה המשפחתית.';}catch(_){ui['auth-status'].textContent='לא הצלחנו להתחבר כרגע. נסו שוב.';}finally{ui['auth-spinner'].hidden=true;}}
+async function boot(){const bootSpinner=setTimeout(()=>{ui['auth-spinner'].hidden=false;},180);try{const d=await loadList();if(token()){try{const s=await api('status',{method:'POST',auth:true});if(s.authenticated){showParent(d.list);return;}}catch(_){}clearToken();}ui['auth-title'].textContent=setupRequired?'הגדרת סיסמה':'כניסת הורה';ui['auth-help'].textContent=setupRequired?'בחרו עכשיו סיסמה. מהכניסה הבאה האתר יזכור את ההורה במכשיר אם תסמנו ״זכור אותי״.':'הזינו את הסיסמה המשפחתית.';}catch(_){ui['auth-status'].textContent='לא הצלחנו להתחבר כרגע. נסו שוב.';}finally{clearTimeout(bootSpinner);ui['auth-spinner'].hidden=true;}}
 ui.login.addEventListener('click',async()=>{setBusy(ui.login,true);ui['auth-status'].textContent='';try{const password=ui.password.value;if(password.length<4){ui['auth-status'].textContent='הסיסמה צריכה להכיל לפחות 4 תווים.';return;}const d=await api(setupRequired?'setup':'login',{method:'POST',body:{password,remember:ui.remember.checked}});storeToken(d.token,ui.remember.checked);const list=await loadList();ui.password.value='';showParent(list.list);}catch(e){ui['auth-status'].textContent=e.message==='WRONG_PASSWORD'?'סיסמה שגויה.':'הכניסה לא הצליחה. נסו שוב.';}finally{setBusy(ui.login,false);}});
 function resetPreview(){parentLink=null;ui.status.classList.remove('exists');ui.save.textContent='הוסף לרשימה';ui.save.disabled=false;ui.preview.hidden=true;ui['youtube-player-shell'].hidden=true;ui['youtube-player-loading'].hidden=true;ui['youtube-player'].removeAttribute('src');ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=true;ui['channel-image'].removeAttribute('src');ui['channel-symbol'].hidden=true;}
 ui.link.addEventListener('input',resetPreview);
