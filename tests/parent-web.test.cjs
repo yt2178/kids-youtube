@@ -93,6 +93,19 @@ test('channel preview shows the real safe channel image and falls back only on i
   assert.equal(app.elements['channel-image-loading'].hidden,true);assert.equal(app.elements['channel-image'].hidden,true);assert.equal(app.elements['channel-symbol'].hidden,false);
 });
 
+test('hidden parent views unload YouTube iframes and restore preview only when needed',async()=>{
+  const local=new Map([['kidsParentToken','token']]);
+  const app=await parentApp(async action=>{
+    if(action==='list')return {list:'',setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    if(action==='metadata')return {url:video,kind:'video',id:'mVTlbvQ_010',title:'ילד טרמפולינה',author:'שמחה פרידמן'};
+    throw Error(action);
+  },{local});
+  app.elements.link.value=video;await app.fire('inspect');assert.match(app.elements['youtube-player'].src,/youtube\.com\/embed/);
+  await app.fire('catalog-tab');assert.equal(app.elements['youtube-player'].src,'');assert.match(app.elements['parent-catalog'].src,/parentCatalog=1/);
+  await app.fire('management-tab');assert.equal(app.elements['parent-catalog'].src,'');assert.match(app.elements['youtube-player'].src,/youtube\.com\/embed/);
+});
+
 test('existing approved video is identified before save and duplicate add is disabled',async()=>{
   const local=new Map([['kidsParentToken','token']]);let mutateCalls=0;
   const app=await parentApp(async(action)=>{
