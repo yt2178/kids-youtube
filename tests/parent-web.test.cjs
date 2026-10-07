@@ -18,7 +18,7 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
 });
 
 class ParentElement{
-  constructor(){this.hidden=false;this.value='';this.checked=false;this.disabled=false;this.textContent='';this.href='';this.src='';this.open=false;this.children=[];this.listeners={};this.className='';this.type='';this.classList={toggle(){}};}
+  constructor(){this.hidden=false;this.value='';this.checked=false;this.disabled=false;this.textContent='';this.href='';this.src='';this.open=false;this.children=[];this.listeners={};this.className='';this.type='';this.classList={toggle(){},add(){},remove(){}};}
   addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);} removeAttribute(name){if(name==='src')this.src='';}
   append(...x){this.children.push(...x);} replaceChildren(...x){this.children=[...x];} showModal(){this.open=true;} close(){this.open=false;}
 }
