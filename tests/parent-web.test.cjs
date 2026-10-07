@@ -11,20 +11,20 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   const html=fs.readFileSync('parents.html','utf8'),script=fs.readFileSync('parents.js','utf8');
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/האם אתה בטוח שברצונך להסיר/);assert.match(html,/youtube-player/);assert.match(html,/frame-src https:\/\/www\.youtube\.com/);
-  assert.match(html,/שם הסרטון או הערוץ, או הערה אחרת/);assert.match(html,/פתח ב־YouTube/);
+  assert.match(html,/שם הסרטון או הערוץ, או הערה אחרת/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
 });
 
 class ParentElement{
-  constructor(){this.hidden=false;this.value='';this.checked=false;this.disabled=false;this.textContent='';this.href='';this.src='';this.open=false;this.children=[];this.listeners={};this.className='';this.type='';this.classList={toggle(){}};}
+  constructor(){this.hidden=false;this.value='';this.checked=false;this.disabled=false;this.textContent='';this.href='';this.src='';this.open=false;this.children=[];this.listeners={};this.className='';this.type='';this.classList={toggle(){},add(){},remove(){}};}
   addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);} removeAttribute(name){if(name==='src')this.src='';}
   append(...x){this.children.push(...x);} replaceChildren(...x){this.children=[...x];} showModal(){this.open=true;} close(){this.open=false;}
 }
 function memoryStorage(map){return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,String(v)),removeItem:k=>map.delete(k)};}
 async function parentApp(handler,{local=new Map(),session=new Map()}={}){
-  const ids=['auth','auth-title','auth-help','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player','channel-symbol','canonical','verify','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  const ids=['auth','auth-title','auth-help','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
   const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements.preview.hidden=true;elements.remember.checked=true;
   let reloads=0;const calls=[];const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(local),sessionStorage:memoryStorage(session),
@@ -53,6 +53,23 @@ test('inspect gets metadata, embeds video, prefills name and add saves it',async
   app.elements.password.value='1234';await app.fire('login');app.elements.link.value=video;await app.fire('inspect');
   assert.equal(app.elements['media-title'].textContent,'ילד טרמפולינה');assert.equal(app.elements.note.value,'ילד טרמפולינה');assert.match(app.elements['youtube-player'].src,/youtube\.com\/embed\/mVTlbvQ_010/);
   await app.fire('save');assert.match(app.elements.status.textContent,/נוסף לילדים/);
+});
+
+
+test('existing approved video is identified before save and duplicate add is disabled',async()=>{
+  const local=new Map([['kidsParentToken','token']]);let mutateCalls=0;
+  const app=await parentApp(async(action)=>{
+    if(action==='list')return {list:video+' // ילד טרמפולינה\n',setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    if(action==='metadata')return {url:video,kind:'video',id:'mVTlbvQ_010',title:'ילד טרמפולינה',author:'שמחה פרידמן'};
+    if(action==='mutate'){mutateCalls++;return {changed:false,list:video+' // ילד טרמפולינה\n'};}
+    throw Error(action);
+  },{local});
+  app.elements.link.value=video;await app.fire('inspect');
+  assert.match(app.elements.status.textContent,/כבר קיים ברשימה/);
+  assert.match(app.elements.status.textContent,/ילד טרמפולינה/);
+  assert.equal(app.elements.save.textContent,'כבר קיים ברשימה');assert.equal(app.elements.save.disabled,true);
+  assert.equal(mutateCalls,0);
 });
 
 test('manual editor replaces the whole approved list through authenticated backend',async()=>{
