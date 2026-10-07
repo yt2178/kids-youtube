@@ -8,6 +8,13 @@ const PROVIDER_ORIGINS = new Set([
 ]);
 const BASE = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const STATE_TIMEOUT_MS = 6000;
+const METADATA_TIMEOUT_MS = 5000;
+const PROVIDER_TIMEOUT_MS = 3500;
+const MAX_PROVIDER_BYTES = 2000000;
+const MAX_YOUTUBE_HTML_BYTES = 4000000;
+const MAX_BODY_BYTES = 1100000;
+const SAFE_IMAGE_HOSTS = new Set(["img.youtube.com","i.ytimg.com","yt3.ggpht.com","yt3.googleusercontent.com"]);
 const ROW = BASE + "/rest/v1/kids_youtube_state?singleton=eq.true&select=list_text,password_hash,session_secret,version,updated_at";
 
 function cors(origin:string|null){
@@ -16,12 +23,26 @@ function cors(origin:string|null){
     "Access-Control-Allow-Origin": allowed ? origin! : WEB_ORIGIN,
     "Access-Control-Allow-Headers":"authorization, content-type",
     "Access-Control-Allow-Methods":"GET,POST,OPTIONS",
+    "Access-Control-Max-Age":"600",
+    "Access-Control-Expose-Headers":"X-Kids-Provider-Status",
     "Vary":"Origin",
     "Content-Type":"application/json; charset=utf-8",
-    "Cache-Control":"no-store"
+    "Cache-Control":"no-store",
+    "X-Content-Type-Options":"nosniff"
   };
 }
 function json(body:unknown,status=200,origin:string|null=null){return new Response(JSON.stringify(body),{status,headers:cors(origin)});}
+async function timed<T>(ms:number,task:(signal:AbortSignal)=>Promise<T>):Promise<T>{
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),ms);
+  try{return await task(controller.signal);}finally{clearTimeout(timer);}
+}
+function oversized(response:Response,max:number){
+  const raw=response.headers.get("content-length");if(!raw)return false;
+  const size=Number(raw);return Number.isFinite(size)&&size>max;
+}
+function providerFailure(error:string,status:number,origin:string|null){
+  return new Response(JSON.stringify({error}),{status:200,headers:{...cors(origin),"X-Kids-Provider-Status":String(status)}});
+}
 function b64url(bytes:Uint8Array){let s="";for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
 function unb64url(s:string){s=s.replace(/-/g,"+").replace(/_/g,"/");while(s.length%4)s+="=";const raw=atob(s);return Uint8Array.from(raw,c=>c.charCodeAt(0));}
 async function sha256(text:string){return b64url(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text))));}
@@ -31,15 +52,19 @@ async function hmac(secret:string,text:string){
 }
 function constantTime(a:string,b:string){if(a.length!==b.length)return false;let x=0;for(let i=0;i<a.length;i++)x|=a.charCodeAt(i)^b.charCodeAt(i);return x===0;}
 async function state(){
-  const r=await fetch(ROW,{headers:{apikey:SERVICE,Authorization:"Bearer "+SERVICE}});
-  if(!r.ok)throw Error("STATE_READ");
-  const a=await r.json(); if(!Array.isArray(a)||a.length!==1)throw Error("STATE_MISSING"); return a[0];
+  return timed(STATE_TIMEOUT_MS,async signal=>{
+    const r=await fetch(ROW,{headers:{apikey:SERVICE,Authorization:"Bearer "+SERVICE},signal});
+    if(!r.ok)throw Error("STATE_READ");
+    const a=await r.json(); if(!Array.isArray(a)||a.length!==1)throw Error("STATE_MISSING"); return a[0];
+  });
 }
 async function patch(expectedVersion:number, data:Record<string,unknown>){
   const url=BASE+"/rest/v1/kids_youtube_state?singleton=eq.true&version=eq."+expectedVersion;
-  const r=await fetch(url,{method:"PATCH",headers:{apikey:SERVICE,Authorization:"Bearer "+SERVICE,"Content-Type":"application/json","Prefer":"return=representation"},body:JSON.stringify({...data,version:expectedVersion+1,updated_at:new Date().toISOString()})});
-  if(!r.ok)throw Error("STATE_WRITE");
-  const a=await r.json(); return Array.isArray(a)&&a.length===1;
+  return timed(STATE_TIMEOUT_MS,async signal=>{
+    const r=await fetch(url,{method:"PATCH",headers:{apikey:SERVICE,Authorization:"Bearer "+SERVICE,"Content-Type":"application/json","Prefer":"return=representation"},body:JSON.stringify({...data,version:expectedVersion+1,updated_at:new Date().toISOString()}),signal});
+    if(!r.ok)throw Error("STATE_WRITE");
+    const a=await r.json(); return Array.isArray(a)&&a.length===1;
+  });
 }
 async function passwordHash(password:string,secret:string){return sha256(secret+"\0"+password);}
 async function makeToken(secret:string,days:number){
@@ -49,10 +74,15 @@ async function makeToken(secret:string,days:number){
 }
 async function auth(req:Request,s:any){
   const raw=(req.headers.get("authorization")||"").replace(/^Bearer\s+/i,"");
-  const [body,sig]=raw.split(".");
-  if(!body||!sig)return false;
+  if(raw.length>4096)return false;
+  const parts=raw.split(".");if(parts.length!==2)return false;
+  const [body,sig]=parts;if(!body||!sig)return false;
   if(!constantTime(await hmac(s.session_secret,body),sig))return false;
-  try{const p=JSON.parse(new TextDecoder().decode(unb64url(body)));return p&&p.v===1&&Number.isFinite(p.exp)&&p.exp>Date.now();}catch{return false;}
+  try{
+    const p=JSON.parse(new TextDecoder().decode(unb64url(body))),now=Date.now();
+    return p&&p.v===1&&Number.isFinite(p.iat)&&Number.isFinite(p.exp)
+      && p.iat<=now+300000&&p.exp>now&&p.exp-p.iat<=91*86400000;
+  }catch{return false;}
 }
 function canonicalize(input:string){
   if(typeof input!=="string"||input.length>4096||!input.trim()||/\s/.test(input.trim()))throw Error("INVALID_LINK");
@@ -103,8 +133,7 @@ function metaContent(html:string,key:string){
 function safeThumbnail(raw:string){
   try{
     const u=new URL(htmlText(raw));const h=u.hostname.toLowerCase();
-    const ok=["ggpht.com","googleusercontent.com","ytimg.com"].some(base=>h===base||h.endsWith("."+base));
-    return u.protocol==="https:"&&!u.username&&!u.password&&!u.port&&ok?u.href:"";
+    return u.protocol==="https:"&&!u.username&&!u.password&&!u.port&&SAFE_IMAGE_HOSTS.has(h)?u.href:"";
   }catch{return "";}
 }
 function providerTarget(raw:string){
@@ -112,7 +141,6 @@ function providerTarget(raw:string){
   const u=new URL(raw);
   if(u.protocol!=="https:"||u.username||u.password||u.port||!PROVIDER_ORIGINS.has(u.origin))throw Error("INVALID_PROVIDER");
   const q=[...u.searchParams.keys()];
-  if(u.pathname==="/api/v1/stats"&&q.length===0)return u;
   if(/^\/api\/v1\/videos\/[A-Za-z0-9_-]{11}$/.test(u.pathname)&&q.length===0)return u;
   if(/^\/api\/v1\/channels\/UC[A-Za-z0-9_-]{22}$/.test(u.pathname)&&q.length===0)return u;
   if(/^\/api\/v1\/channels\/UC[A-Za-z0-9_-]{22}\/videos$/.test(u.pathname)){
@@ -129,13 +157,22 @@ function providerTarget(raw:string){
 async function proxyProvider(raw:string,origin:string|null){
   let target:URL;try{target=providerTarget(raw);}catch{return json({error:"INVALID_PROVIDER"},400,origin);}
   try{
-    const r=await fetch(target,{redirect:"manual",headers:{"Accept":"application/json","User-Agent":"KidsYouTubeParent/1.0"}});
-    if(!r.ok)return json({error:"UPSTREAM_UNAVAILABLE"},200,origin);
-    const text=await r.text();
-    if(text.length>2000000)return json({error:"UPSTREAM_TOO_LARGE"},200,origin);
-    try{JSON.parse(text);}catch{return json({error:"UPSTREAM_INVALID"},200,origin);}
-    return new Response(text,{status:200,headers:{...cors(origin),"Content-Type":"application/json; charset=utf-8"}});
-  }catch{return json({error:"UPSTREAM_UNAVAILABLE"},200,origin);}
+    return await timed(PROVIDER_TIMEOUT_MS,async signal=>{
+      const r=await fetch(target,{redirect:"manual",signal,headers:{"Accept":"application/json","User-Agent":"KidsYouTubeParent/1.0"}});
+      if(r.status>=300&&r.status<400)return providerFailure("UPSTREAM_REDIRECT",502,origin);
+      if(!r.ok){
+        const mapped=r.status===401||r.status===403?403:r.status===429?429:502;
+        return providerFailure("UPSTREAM_UNAVAILABLE",mapped,origin);
+      }
+      if(oversized(r,MAX_PROVIDER_BYTES))return providerFailure("UPSTREAM_TOO_LARGE",502,origin);
+      const text=await r.text();
+      if(text.length>MAX_PROVIDER_BYTES)return providerFailure("UPSTREAM_TOO_LARGE",502,origin);
+      try{JSON.parse(text);}catch{return providerFailure("UPSTREAM_INVALID",502,origin);}
+      return new Response(text,{status:200,headers:{...cors(origin),"Content-Type":"application/json; charset=utf-8"}});
+    });
+  }catch(e){
+    return providerFailure(e instanceof DOMException&&e.name==="AbortError"?"UPSTREAM_TIMEOUT":"UPSTREAM_UNAVAILABLE",e instanceof DOMException&&e.name==="AbortError"?504:502,origin);
+  }
 }
 function safeNote(v:unknown){return String(v||"").replace(/[\r\n\uFEFF]/g," ").replace(/\s+/g," ").trim().slice(0,500);}
 function splitEntry(line:string){
@@ -156,15 +193,20 @@ async function metadata(input:string){
   const url=canonicalize(input), u=new URL(url), id=u.searchParams.get("v");
   if(id){
     const endpoint="https://www.youtube.com/oembed?url="+encodeURIComponent(url)+"&format=json";
-    const r=await fetch(endpoint,{headers:{"User-Agent":"KidsYouTubeParent/1.0"}});
-    if(r.ok){const d=await r.json();return {url,kind:"video",id,title:safeNote(d.title)||"סרטון YouTube",author:safeNote(d.author_name),thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};}
-    return {url,kind:"video",id,title:"סרטון YouTube",author:"",thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};
+    try{
+      return await timed(METADATA_TIMEOUT_MS,async signal=>{
+        const r=await fetch(endpoint,{signal,redirect:"manual",headers:{"Accept":"application/json","User-Agent":"KidsYouTubeParent/1.0"}});
+        if(r.ok){const d=await r.json();return {url,kind:"video",id,title:safeNote(d.title)||"סרטון YouTube",author:safeNote(d.author_name),thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};}
+        return {url,kind:"video",id,title:"סרטון YouTube",author:"",thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};
+      });
+    }catch{return {url,kind:"video",id,title:"סרטון YouTube",author:"",thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};}
   }
   let title="",thumbnail="";
   try{
-    const r=await fetch(url,{redirect:"follow",headers:{"User-Agent":"Mozilla/5.0","Accept-Language":"he,en;q=0.8"}});
-    if(r.ok){
-      const html=await r.text();
+    await timed(METADATA_TIMEOUT_MS,async signal=>{
+      const r=await fetch(url,{redirect:"manual",signal,headers:{"User-Agent":"Mozilla/5.0","Accept-Language":"he,en;q=0.8"}});
+      if(!r.ok||oversized(r,MAX_YOUTUBE_HTML_BYTES))return;
+      const html=await r.text();if(html.length>MAX_YOUTUBE_HTML_BYTES)return;
       title=metaContent(html,"og:title");
       if(!title){const m=html.match(/<title>([^<]+)<\/title>/i);if(m)title=htmlText(m[1]);}
       title=safeNote(title.replace(/\s*-\s*YouTube\s*$/i,""));
@@ -173,7 +215,7 @@ async function metadata(input:string){
         const m=html.match(/"avatar"\s*:\s*\{\s*"thumbnails"\s*:\s*\[\s*\{\s*"url"\s*:\s*"([^"]+)"/i);
         if(m){try{thumbnail=safeThumbnail(JSON.parse('"'+m[1]+'"'));}catch{}}
       }
-    }
+    });
   }catch{}
   return {url,kind:"channel",id:null,title:title||url.split("/").pop()||"ערוץ YouTube",author:"",thumbnail};
 }
@@ -200,7 +242,13 @@ Deno.serve(async(req)=>{
     }
     if(req.method==="GET"&&action==="list"){ if(url.searchParams.get("format")==="text") return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}}); return json({list:s.list_text,updatedAt:s.updated_at,setupRequired:!s.password_hash},200,origin); }
     if(req.method!=="POST")return json({error:"METHOD"},405,origin);
-    const body=await req.json().catch(()=>({}));
+    const declared=Number(req.headers.get("content-length")||0);
+    if(Number.isFinite(declared)&&declared>MAX_BODY_BYTES)return json({error:"TOO_LARGE"},413,origin);
+    let body:any={};
+    try{
+      const rawBody=await req.text();if(rawBody.length>MAX_BODY_BYTES)return json({error:"TOO_LARGE"},413,origin);
+      body=rawBody?JSON.parse(rawBody):{};
+    }catch{return json({error:"BAD_JSON"},400,origin);}
     if(action==="setup"){
       if(s.password_hash)return json({error:"ALREADY_SETUP"},409,origin);
       const password=typeof body.password==="string"?body.password:"";
