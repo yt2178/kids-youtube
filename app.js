@@ -27,6 +27,9 @@ const CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
 const CACHE_KEY = 'kidsYoutubeVideos';
 const INSTANCE_KEY = 'kidsYoutubeLastInstance';
 const VIEW_KEY = 'kidsYoutubeViewMode';
+const SORT_KEY = 'kidsYoutubeSortMode';
+const CHANNEL_FILTER_KEY = 'kidsYoutubeChannelFilter';
+const PARENT_CATALOG = new URL(location.href).searchParams.get('parentCatalog') === '1' && window.parent !== window;
 const SCOPE = new URL('./', location.href).href;
 // A provider iframe may need its own storage for playback/preferences.
 // Its origin must stay external; CSP also blocks a redirect into our origin.
@@ -36,7 +39,7 @@ function installFramePolicy() {
 }
 installFramePolicy();
 const $ = id => document.getElementById(id);
-const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','refresh','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','clear-search','channel-heading','channel-name','back-channels','browse-title','empty-clear','view-grid','view-list','sort-options'].map(id => [id, $(id)]));
+const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','search-toggle','search-row','clear-search','pull-refresh','channel-heading','channel-name','back-channels','browse-title','empty-clear','view-grid','view-list','sort-options'].map(id => [id, $(id)]));
 let displayed = new Map();
 let activeConfig = {videos:[], channels:[]};
 let activeLists = Object.create(null);
@@ -57,8 +60,10 @@ let searchQuery = '';
 const browseStates = new Map();
 let playerSequence = 0;
 let searchTimer = null;
-let sortMode = 'list';
-let channelFilter = '';
+const savedSort = storageGet(SORT_KEY);
+let sortMode = ['newest','list','name'].includes(savedSort) ? savedSort : 'newest';
+const savedChannelFilter = storageGet(CHANNEL_FILTER_KEY);
+let channelFilter = typeof savedChannelFilter === 'string' ? savedChannelFilter : '';
 let paginationBusy = false;
 const channelProgress = new Map();
 const verifiedChannelVideos = new Map();
@@ -245,10 +250,11 @@ function render(config, lists) {
   if (!isChannels && sortMode === 'newest') items.sort((a,b) => b.published-a.published || a.title.localeCompare(b.title,'he'));
   if (!isChannels && sortMode === 'name') items.sort((a,b) => a.title.localeCompare(b.title,'he'));
   ui.filters.hidden = isChannels;ui['sort-options'].hidden=isChannels;
+  ui.sort.value=sortMode;
   const options = document.createDocumentFragment();
   const allOption = document.createElement('option'); allOption.value = ''; allOption.textContent = 'כל הערוצים'; options.append(allOption);
   for (const c of config.channels) { const option = document.createElement('option'); option.value = c.id; option.textContent = c.name; options.append(option); }
-  if (!config.channels.some(c => c.id === channelFilter)) channelFilter = '';
+  if (!config.channels.some(c => c.id === channelFilter)) {channelFilter = '';storageSet(CHANNEL_FILTER_KEY,'');}
   ui['channel-filter'].replaceChildren(options); ui['channel-filter'].value = viewMode==='videos' ? '' : selected ? selected.id : channelFilter; ui['channel-filter'].disabled = !!selected || viewMode==='videos';
   ui['all-tab'].setAttribute('aria-pressed', String(viewMode === 'all'));
   ui['videos-tab'].setAttribute('aria-pressed', String(viewMode === 'videos'));
@@ -524,7 +530,7 @@ async function loadApp() {
   loadError=false;
   channelProgress.clear(); verifiedChannelVideos.clear();
   loading = true; lastLoad = Date.now();
-  ui.refresh.disabled = true; ui.grid.setAttribute('aria-busy','true');
+  ui.grid.setAttribute('aria-busy','true');
   ui.empty.hidden = true; status('רגע קטן, הסרטונים בדרך…', true);
   const previous = readSnapshot();
   channelDates = {...(previous ? previous.channelDates : {})};
@@ -537,19 +543,10 @@ async function loadApp() {
   activeLinkRecords = Object.create(null);
   try {
     let raw;
-    try {
-      try {
-        const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
-        if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
-        raw = remote.list;
-      } catch (_) { raw = await fetchText('./videos.txt'); }
-    }
-    catch (error) {
-      if (!previous) throw error;
-      config = previous.config; lists = previous.channelLists;
-      activeLinkRecords = previous.linkRecords;
-    }
-    if (!config) {
+    const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+    if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
+    raw = remote.list;
+    {
       try {
         // Compatibility for an old JSON list pasted into the new file.
         if (raw.trimStart().startsWith('{')) config = normalizeConfig(JSON.parse(raw));
@@ -569,10 +566,6 @@ async function loadApp() {
     }
     // Manual approvals appear immediately; cached channels only after fresh config validation.
     render(config, lists);
-    if (!freshConfig) {
-      status('מוצגת הרשימה השמורה. כדי לקבל סרטונים ועדכונים חדשים, התחברו לאינטרנט ורעננו.');
-      return;
-    }
     if (entries && entries.length) {
       status('מזהים את הסרטונים והערוצים…', true);
       await parallelMap(entries.filter((entry,index) => entry.kind === 'channel' || index < SETTINGS.cardsPerPage), async entry => {
@@ -616,7 +609,7 @@ async function loadApp() {
       status('');
     } else status('');
   } finally {
-    loading = false; ui.refresh.disabled = false; ui.grid.removeAttribute('aria-busy');
+    loading = false; ui.grid.removeAttribute('aria-busy');
     render(activeConfig, activeLists);
   }
 }
@@ -777,6 +770,10 @@ function launchNativeApp() {
 function openPlayer(id) {
   const video = displayed.get(id);
   if (!video || (!getApprovedVideos().has(id) && !getApprovedChannels().has(video.channelId))) return;
+  if (PARENT_CATALOG) {
+    window.parent.postMessage({type:'kids-parent-open-video',id:video.id,title:video.title,author:video.author||''},location.origin);
+    return;
+  }
   flushSearch();
   const alreadyOpen = !!playback;
   if (playback && playback.controller) playback.controller.abort();
@@ -812,19 +809,39 @@ ui['videos-tab'].addEventListener('click', () => switchBrowse('videos'));
 ui['all-tab'].addEventListener('click', () => switchBrowse('all'));
 ui['channels-tab'].addEventListener('click', () => switchBrowse('channels'));
 ui['back-channels'].addEventListener('click', () => switchBrowse('channels'));
+ui['search-toggle'].addEventListener('click',()=>{
+  const opening=ui['search-row'].hidden;
+  ui['search-row'].hidden=!opening;ui['search-toggle'].setAttribute('aria-expanded',String(opening));
+  if(opening)ui.search.focus({preventScroll:true});
+  else if(!searchQuery){ui.search.value='';}
+});
 ui.search.addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer=setTimeout(() => {searchTimer=null;searchQuery=ui.search.value.slice(0,100);visibleCount=SETTINGS.cardsPerPage;render(activeConfig,activeLists);},SETTINGS.searchDebounceMs);
 });
-ui.sort.addEventListener('change', () => {sortMode=ui.sort.value;render(activeConfig,activeLists);});
-ui['channel-filter'].addEventListener('change', () => {channelFilter=ui['channel-filter'].value;visibleCount=SETTINGS.cardsPerPage;render(activeConfig,activeLists);});
+ui.sort.addEventListener('change', () => {sortMode=ui.sort.value;storageSet(SORT_KEY,sortMode);render(activeConfig,activeLists);});
+ui['channel-filter'].addEventListener('change', () => {channelFilter=ui['channel-filter'].value;storageSet(CHANNEL_FILTER_KEY,channelFilter);visibleCount=SETTINGS.cardsPerPage;render(activeConfig,activeLists);});
 ui['clear-cache'].addEventListener('click', () => {providers.clearCache();providers.resetHealth();loadApp();});
 ui.search.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); flushSearch(); ui.search.blur(); } });
 ui['clear-search'].addEventListener('click', clearSearch);
 ui['empty-clear'].addEventListener('click', () => {if(ui['empty-clear'].dataset.action==='retry')loadApp();else clearSearch();});
 ui['view-grid'].addEventListener('click',()=>setViewStyle('grid'));
 ui['view-list'].addEventListener('click',()=>setViewStyle('list'));
-ui.refresh.addEventListener('click', loadApp);
+let pullStartY=null,pullDistance=0;
+function resetPull(){pullStartY=null;pullDistance=0;ui['pull-refresh'].dataset.active='false';ui['pull-refresh'].textContent='משכו למטה לרענון';}
+document.addEventListener('touchstart',event=>{
+  if(loading||playback||window.scrollY>0||event.touches.length!==1||event.target.closest('input,select,button,textarea'))return;
+  pullStartY=event.touches[0].clientY;pullDistance=0;
+},{passive:true});
+document.addEventListener('touchmove',event=>{
+  if(pullStartY===null||event.touches.length!==1)return;
+  pullDistance=Math.max(0,Math.min(110,event.touches[0].clientY-pullStartY));
+  if(pullDistance>12){ui['pull-refresh'].dataset.active='true';ui['pull-refresh'].textContent=pullDistance>=70?'שחררו כדי לרענן':'משכו למטה לרענון';}
+},{passive:true});
+document.addEventListener('touchend',()=>{
+  const refresh=pullStartY!==null&&pullDistance>=70&&!loading&&!playback&&window.scrollY<=0;
+  resetPull();if(refresh)loadApp();
+},{passive:true});
 ui.more.addEventListener('click', loadMoreVideos);
 ui.back.addEventListener('click', () => closePlayer());
 window.addEventListener('popstate', () => closePlayer(true));
