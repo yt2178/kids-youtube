@@ -7,7 +7,7 @@ test('parent provider proxy is authenticated and restricted to exact configured 
   assert.match(source,/action==="provider"/);assert.match(source,/if\(!await auth\(req,s\)\)return json\(\{error:"UNAUTHORIZED"\},401,origin\)/);
   assert.match(source,/PROVIDER_ORIGINS\.has\(u\.origin\)/);
   assert.match(source,/\/api\\\/v1\\\/videos/);assert.match(source,/\/api\\\/v1\\\/channels/);
-  assert.match(source,/u\.pathname==="\/api\/v1\/resolveurl"/);assert.match(source,/u\.pathname==="\/api\/v1\/stats"/);
+  assert.match(source,/u\.pathname==="\/api\/v1\/resolveurl"/);assert.doesNotMatch(source,/u\.pathname==="\/api\/v1\/stats"/);
   assert.doesNotMatch(source,/proxyProvider[\s\S]{0,1600}redirect:"follow"/);
   assert.match(source,/PROVIDER_TIMEOUT_MS = 3500/);assert.match(source,/timed\(PROVIDER_TIMEOUT_MS/);
   assert.match(source,/X-Kids-Provider-Status/);
