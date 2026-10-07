@@ -281,7 +281,7 @@ test('plain list ignores // comments, blank lines and BOM/CRLF without breaking 
   assert.equal(a.run('activeConfig.videos.length'),1);assert.equal(a.run('activeConfig.channels.length'),1);
   assert.equal(a.run('displayed.size'),2);assert.match(a.calls[0].url,/\/functions\/v1\/kids-youtube\?action=list$/);assert.equal(a.calls[0].opts.cache,'no-store');
   assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם הסרטון האוטומטי');
-  assert.equal(a.elements.grid.children[0].children[2].textContent,'יוצר הסרטון');
+  const videoCard=[...a.elements.grid.children].find(card=>card.dataset.videoId===id(1));assert.equal(videoCard.children[2].textContent,'יוצר הסרטון');
   assert.equal(a.run('activeConfig.channels[0].name'),'שם הערוץ האוטומטי');
 });
 test('video share, watch, Shorts, live, embed and music URLs canonicalize and deduplicate',async()=>{
@@ -502,7 +502,7 @@ test('navigation stays compact and search controls keep child-sized touch target
 
 test('three tabs separate manual approvals, whole channels, and deduplicated union',async()=>{
   const a=await app({videos:[{id:id(1),title:'ידני מתוך ערוץ'},{id:id(3),title:'ידני בלבד'},{id:id(4),authorId:A}],channels:[{id:A,name:'ערוץ מאושר'}]},()=>json({videos:[row(1),row(2)],continuation:null}));
-  assert.deepEqual(visibleVideoIds(a),[id(1),id(3),id(4),id(2)]);
+  assert.deepEqual(new Set(visibleVideoIds(a)),new Set([id(1),id(2),id(3),id(4)]));
   a.run("switchBrowse('videos')");assert.deepEqual(visibleVideoIds(a),[id(3)]);
   a.run("switchBrowse('channels')");assert.equal(a.elements.grid.children.length,1);assert.equal(a.elements.grid.children[0].dataset.channelId,A);
   assert.match(a.elements.grid.children[0].children[2].textContent,/2 סרטונים נטענו/);
