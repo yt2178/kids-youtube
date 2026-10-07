@@ -14,7 +14,7 @@ const A = 'UC' + 'A'.repeat(22), B = 'UC' + 'B'.repeat(22);
 const id = n => 'vid' + String(n).padStart(8,'0');
 const row = (n,channel=A) => ({videoId:id(n),title:'סרטון '+n,authorId:channel});
 const empty = {videos:[],channels:[]};
-const json = data => ({ok:true,json:async()=>data,text:async()=>typeof data === 'string' ? data : JSON.stringify(data)});
+const json = (data,{status=200,headers={}}={}) => ({ok:status>=200&&status<300,status,headers:{get:key=>headers[String(key).toLowerCase()]??headers[key]??null},json:async()=>data,text:async()=>typeof data === 'string' ? data : JSON.stringify(data)});
 const fail = () => { throw new Error('Unavailable'); };
 async function until(check) {
   for(let i=0;i<200;i++) { if(check()) return; await new Promise(r=>setTimeout(r,2)); }
@@ -40,7 +40,7 @@ class Element {
 async function app(config=empty,api=()=>json({videos:[],continuation:null}),store=new Map(),options={}) {
   const elements={};const calls=[];
   const docListeners={};
-  const document={head:new Element('head'),body:new Element('body'),activeElement:null,hidden:false,addEventListener:(k,fn)=>(docListeners[k]??=[]).push(fn),
+  const document={head:new Element('head'),body:new Element('body'),activeElement:null,hidden:false,addEventListener:(k,fn)=>(docListeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>docListeners[k]=(docListeners[k]||[]).filter(f=>f!==fn),
     getElementById:id=>elements[id],createElement:tag=>{const el=new Element(tag);el.doc=document;return el;},
     createDocumentFragment:()=>new Element('fragment',true)};
   for(const m of html.matchAll(/<([a-z][a-z0-9-]*)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
@@ -567,13 +567,36 @@ test('parent catalog sends an approved video to its authenticated host instead o
 test('parent catalog proxies provider calls through authenticated Supabase instead of direct Invidious CORS',async()=>{
   const store=new Map([['kidsParentToken','parent-token']]),parentWindow={postMessage(){}};
   const a=await app(empty,()=>json({software:{name:'test'}}),store,{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow});
-  const before=a.calls.length;await a.run("providerFetch('https://invidious.tiekoetter.com/api/v1/stats')");
+  const before=a.calls.length;await a.run("providerFetch('https://invidious.tiekoetter.com/api/v1/channels/"+A+"')");
   const call=a.calls.slice(before).at(-1),u=new URL(call.url);
   assert.equal(u.searchParams.get('action'),'provider');
-  assert.equal(u.searchParams.get('target'),'https://invidious.tiekoetter.com/api/v1/stats');
+  assert.equal(u.searchParams.get('target'),'https://invidious.tiekoetter.com/api/v1/channels/'+A);
   assert.equal(call.opts.headers.Authorization,'Bearer parent-token');
   assert.equal(a.calls.slice(before).some(x=>x.url.startsWith('https://invidious.')),false);
+  await assert.rejects(a.run("providerFetch('https://example.org/api/v1/channels/"+A+"')"),/INVALID_PARENT_PROVIDER/);
 });
+test('parent proxy synthetic upstream status triggers provider fallback without direct cross-origin requests',async()=>{
+  const store=new Map([['kidsParentToken','parent-token']]),parentWindow={postMessage(){}};
+  const seen=[];
+  const a=await app({videos:[],channels:[{id:A}]},url=>{
+    const target=new URL(url).searchParams.get('target')||'';
+    seen.push(target);
+    if(target.startsWith('https://invidious.f5.si/'))return json({error:'UPSTREAM_UNAVAILABLE'},{headers:{'x-kids-provider-status':'403'}});
+    return json({videos:[row(1)],continuation:null});
+  },store,{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow});
+  assert.equal(a.run('displayed.size'),1);
+  assert.ok(seen.some(x=>x.startsWith('https://invidious.f5.si/')));
+  assert.ok(seen.some(x=>x.startsWith('https://invidious.tiekoetter.com/')));
+  assert.equal(a.calls.some(x=>/^https:\/\/(?:invidious|yt\.)/.test(x.url)),false);
+});
+test('parent catalog CSP and channel images never grant direct Invidious browser access',async()=>{
+  const parent=await app(empty,undefined,new Map(),{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow:{postMessage(){}}});
+  const meta=parent.document.head.children[0];assert.match(meta.content,/connect-src 'self' https:\/\/jxhelpxhrmwvzrrfrjuh\.supabase\.co/);
+  assert.doesNotMatch(meta.content,/connect-src[^;]*invidious|connect-src[^;]*chocolatemoo/);
+  assert.equal(parent.run("safeChannelImage('https://invidious.f5.si/thumb.jpg')"),'');
+  assert.equal(parent.run("safeChannelImage('https://yt3.googleusercontent.com/thumb.jpg')"),'https://yt3.googleusercontent.com/thumb.jpg');
+});
+
 test('parent catalog thumbnails load eagerly and child thumbnails remain lazy',async()=>{
   const parent=await app({videos:[{id:id(1),title:'מאושר'}],channels:[]},undefined,new Map(),{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow:{postMessage(){}}});
   assert.equal(parent.elements.grid.children[0].children[0].children[0].loading,'eager');
@@ -582,10 +605,27 @@ test('parent catalog thumbnails load eagerly and child thumbnails remain lazy',a
 });
 test('approval freshness polling is reduced to one minute and disabled inside parent catalog',()=>{
   assert.match(scripts[1],/authorizationRefreshMs:\s*60\s*\*\s*1000/);
-  assert.match(scripts[1],/if\(!PARENT_CATALOG\)setInterval\(checkAuthorizationFreshness,SETTINGS\.authorizationRefreshMs\)/);
+  assert.match(scripts[1],/if \(typeof setInterval === 'function' && !PARENT_CATALOG\)/);
+  assert.doesNotMatch(scripts[1],/if\(!PARENT_CATALOG\)setInterval\(checkAuthorizationFreshness/);
 });
 
 
+test('authorization change detected during pagination fails closed immediately and queues a reload',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});
+  a.run('paginationBusy=true');
+  a.context.fetch=async url=>String(url).includes('action=list')?json({list:JSON.stringify({videos:[{id:id(2)}],channels:[]}),updatedAt:'changed'}):fail();
+  await a.run('checkAuthorizationFreshness()');
+  assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.run('authorizationReloadPending'),true);
+  assert.match(a.elements['status-text'].textContent,/רשימת ההורה השתנתה/);
+});
+test('native-app launch visibility listener is cleaned up even when the app is not installed',async()=>{
+  const a=await app({videos:[{id:id(1),title:'סרטון'}],channels:[]},undefined,new Map(),{timerCap:5});
+  a.run(`openPlayer('${id(1)}');launchNativeApp()`);
+  assert.equal((a.docListeners.visibilitychange||[]).length,1);
+  await new Promise(r=>setTimeout(r,12));
+  assert.equal((a.docListeners.visibilitychange||[]).length,0);
+});
 test('re-rendering keeps existing thumbnail nodes rather than issuing duplicate loads',async()=>{
   const a=await app({videos:[{id:id(1)}],channels:[]});const image=a.elements.grid.children[0].children[0].children[0];a.run('render(activeConfig,activeLists)');assert.equal(a.elements.grid.children[0].children[0].children[0],image);assert.equal(image.loading,'lazy');
 });
