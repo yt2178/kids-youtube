@@ -55,7 +55,11 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.offline?fail():json({list:raw});if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
-  context.window=context;context.parent=options.parentWindow||context;
+  context.window=context;
+  if(options.parentWindow){
+    const origin=new URL(options.href||'https://example.test/kids-youtube/').origin;
+    context.parent={location:{origin},...options.parentWindow};
+  }else context.parent=context;
   if(options.storageAccessDenied)Object.defineProperty(context,'localStorage',{get(){throw new Error('SecurityError: storage access denied');}});
   vm.runInContext(scripts[0],context,{filename:'service-worker-registration.js'});
   vm.runInContext(providerScript,context,{filename:'providers.js'});
@@ -564,6 +568,13 @@ test('parent catalog sends an approved video to its authenticated host instead o
   assert.equal(sent.length,1);assert.equal(sent[0].message.id,id(1));assert.equal(sent[0].origin,'https://example.test');
   assert.equal(a.elements.player.hidden,true);
 });
+test('parent catalog mode requires a same-origin parent frame',async()=>{
+  const parentWindow={location:{get origin(){throw new Error('cross-origin');}},postMessage(){throw new Error('must not post');}};
+  const a=await app({videos:[{id:id(1)}],channels:[]},undefined,new Map([['kidsParentToken','secret']]),{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow});
+  assert.equal(a.run('PARENT_CATALOG'),false);
+  assert.equal(a.run("safeChannelImage('https://invidious.f5.si/thumb.jpg')"),'https://invidious.f5.si/thumb.jpg');
+});
+
 test('parent catalog proxies provider calls through authenticated Supabase instead of direct Invidious CORS',async()=>{
   const store=new Map([['kidsParentToken','parent-token']]),parentWindow={postMessage(){}};
   const a=await app(empty,()=>json({software:{name:'test'}}),store,{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow});
