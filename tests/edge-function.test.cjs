@@ -45,3 +45,10 @@ test('proxy allowlist has no wildcard host or generic path escape hatch',()=>{
   assert.doesNotMatch(source,/startsWith\("\/api\/v1\/"/);
   assert.match(source,/u\.protocol!=="https:"\|\|u\.username\|\|u\.password\|\|u\.port/);
 });
+
+test('YouTube metadata redirects are followed only inside exact allowed YouTube page hosts',()=>{
+  assert.match(source,/const YOUTUBE_PAGE_HOSTS = new Set\(\["youtube\.com","www\.youtube\.com","m\.youtube\.com","music\.youtube\.com"\]\)/);
+  assert.match(source,/function safeYoutubePage/);assert.match(source,/!YOUTUBE_PAGE_HOSTS\.has\(h\)/);
+  assert.match(source,/for\(let redirects=0;redirects<=3;redirects\+\+\)/);
+  assert.match(source,/current=safeYoutubePage\(location,current\.href\)/);
+});
