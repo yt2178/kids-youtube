@@ -46,7 +46,7 @@
     .tab span { font-size:20px; line-height:1; }
     .tab[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); box-shadow:0 5px 18px #e9456030; }
     .sr-only { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important; }
-    .compact-actions{display:flex;justify-content:flex-end;margin-top:7px}.icon-button{width:48px;min-height:44px;padding:6px;font-size:20px}.search-row { display:flex; gap:7px; margin-top:7px; }.pull-refresh{height:0;overflow:hidden;text-align:center;color:var(--muted);font-size:14px;transition:height .15s;padding:0}.pull-refresh[data-active="true"]{height:34px;padding:7px 0 3px}
+    .compact-actions{display:flex;justify-content:flex-end;margin-top:7px}.icon-button{width:48px;min-height:44px;padding:6px;font-size:20px}.search-row { display:flex; gap:7px; margin-top:7px; }.pull-refresh{height:0;overflow:hidden;text-align:center;color:var(--muted);font-size:14px;transition:height .15s;padding:0}.pull-refresh[data-active="true"]{height:34px;padding:7px 0 3px}.pull-refresh[data-loading="true"]::before,#more[data-busy="true"]::before{content:"";display:inline-block;width:16px;height:16px;border:2px solid #665d76;border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;margin-inline-end:8px;vertical-align:-3px}
     #search { width:100%; min-width:0; min-height:52px; border:1px solid #57516d; border-radius:13px; padding:10px 15px; background:#202033; color:var(--text); }
     #search::placeholder { color:#aaa5ba; }
     #search::-webkit-search-cancel-button { -webkit-appearance:none; }
@@ -206,7 +206,7 @@
   </section>
   <noscript>כדי לצפות בסרטונים, יש להפעיל JavaScript בדפדפן.</noscript>
   <script src="./providers.js?v=20261006h" defer></script>
-  <script src="./app.js?v=20261007a" defer></script>
+  <script src="./app.js?v=20261008a" defer></script>
 
 </body>
 </html>

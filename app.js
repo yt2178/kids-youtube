@@ -21,7 +21,7 @@ const SETTINGS = Object.freeze({
   channelTTL: 5 * 60 * 1000,
   searchDebounceMs: 150,
   refreshOnReturnMs: 5 * 60 * 1000,
-  authorizationRefreshMs: 15 * 1000
+  authorizationRefreshMs: 60 * 1000
 });
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
@@ -31,6 +31,7 @@ const VIEW_KEY = 'kidsYoutubeViewMode';
 const SORT_KEY = 'kidsYoutubeSortMode';
 const CHANNEL_FILTER_KEY = 'kidsYoutubeChannelFilter';
 const PARENT_CATALOG = new URL(location.href).searchParams.get('parentCatalog') === '1' && window.parent !== window;
+const PARENT_API = 'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 const SCOPE = new URL('./', location.href).href;
 // A provider iframe may need its own storage for playback/preferences.
 // Its origin must stay external; CSP also blocks a redirect into our origin.
@@ -76,7 +77,15 @@ let approvalMarker = '';
 const savedView = storageGet(VIEW_KEY);
 let viewStyle = savedView === 'list' ? 'list' : 'grid';
 function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
-const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:fetch, storage:optionalStorage(), timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});
+function parentToken(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
+function providerFetch(input,options={}) {
+  if(!PARENT_CATALOG)return fetch(input,options);
+  let target;try{target=new URL(String(input),location.href);}catch(_){return fetch(input,options);}
+  if(!INVIDIOUS_INSTANCES.includes(target.origin))return fetch(input,options);
+  const value=parentToken(),headers={...(options.headers||{}),...(value?{Authorization:'Bearer '+value}:{})};
+  return fetch(PARENT_API+'?action=provider&target='+encodeURIComponent(target.href),{...options,headers});
+}
+const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:providerFetch, storage:optionalStorage(), timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});
 const diagnosticsEnabled = new URL(location.href).searchParams.get('diagnostics') === '1';
 ui['diagnostic-panel'].hidden = !diagnosticsEnabled;
 const providerButtons = [];
@@ -174,7 +183,6 @@ function status(text, busy = false) {
   ui['status-text'].textContent = text;
   ui.spinner.hidden = true;
   if (!text) {ui.status.hidden=true;return;}
-  if (busy && displayed.size) {ui.status.hidden=true;return;}
   if (busy) {
     ui.status.hidden=true;
     statusTimer=setTimeout(()=>{
@@ -295,7 +303,7 @@ function render(config, lists) {
       thumb.append(fallback);
       if (item.thumbnail) {
         const image = document.createElement('img'); image.className = 'channel-avatar'; image.src = item.thumbnail;
-        image.alt = ''; image.loading = 'lazy'; image.decoding = 'async'; image.referrerPolicy = 'no-referrer';
+        image.alt = ''; image.loading = PARENT_CATALOG ? 'eager' : 'lazy'; image.decoding = 'async'; image.referrerPolicy = 'no-referrer';
         fallback.hidden = true;
         image.addEventListener('error', () => { image.hidden = true; fallback.hidden = false; }, {once:true});
         thumb.append(image);
@@ -309,7 +317,7 @@ function render(config, lists) {
       const thumb = document.createElement('span'); thumb.className = 'thumb';
       const image = document.createElement('img');
       image.src = 'https://img.youtube.com/vi/' + item.id + '/hqdefault.jpg';
-      image.alt = ''; image.loading = 'lazy'; image.decoding = 'async'; image.referrerPolicy = 'no-referrer';
+      image.alt = ''; image.loading = PARENT_CATALOG ? 'eager' : 'lazy'; image.decoding = 'async'; image.referrerPolicy = 'no-referrer';
       image.addEventListener('error', () => { image.hidden = true; }, {once:true});
       const play = document.createElement('span'); play.className = 'play'; play.setAttribute('aria-hidden','true');
       play.textContent = '▶';
@@ -509,7 +517,8 @@ async function loadVisibleMetadata() {
 }
 async function loadMoreVideos() {
   if (loading || paginationBusy || playback) return;
-  paginationBusy = true; visibleCount += SETTINGS.cardsPerPage;
+  const loadingText='טוענים עוד סרטונים…';
+  paginationBusy = true;ui.more.dataset.busy='true';status(loadingText,true);visibleCount += SETTINGS.cardsPerPage;
   render(activeConfig,activeLists);
   const relevant = activeConfig.channels.filter(c => (viewMode==='all' || !!selectedChannelId) && (!selectedChannelId || c.id === selectedChannelId) && (selectedChannelId || !channelFilter || c.id === channelFilter) && channelProgress.get(c.id)?.continuation);
   try {
@@ -519,7 +528,7 @@ async function loadMoreVideos() {
       saveSnapshot(activeConfig,activeLists); render(activeConfig,activeLists);
       if (result.failed) status('חלק מהסרטונים אינם זמינים כרגע. אפשר לנסות שוב מאוחר יותר.');
     })]);
-  } finally {paginationBusy = false; render(activeConfig,activeLists);}
+  } finally {paginationBusy = false;delete ui.more.dataset.busy;render(activeConfig,activeLists);if(ui['status-text'].textContent===loadingText)status('');}
 }
 async function parallelMap(items, worker) {
   let index = 0;
@@ -861,7 +870,9 @@ document.addEventListener('touchmove',event=>{
 },{passive:true});
 document.addEventListener('touchend',()=>{
   const refresh=pullStartY!==null&&pullDistance>=70&&!loading&&!playback&&window.scrollY<=0;
-  resetPull();if(refresh)loadApp();
+  if(!refresh){resetPull();return;}
+  pullStartY=null;pullDistance=0;ui['pull-refresh'].dataset.active='true';ui['pull-refresh'].dataset.loading='true';ui['pull-refresh'].textContent='מרענן…';
+  Promise.resolve(loadApp()).finally(()=>{delete ui['pull-refresh'].dataset.loading;resetPull();});
 },{passive:true});
 ui.more.addEventListener('click', loadMoreVideos);
 ui.back.addEventListener('click', () => closePlayer());
@@ -914,5 +925,5 @@ loadApp();
 
 if (typeof setInterval === 'function') {
   setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
-  setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
+  if(!PARENT_CATALOG)setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
 }

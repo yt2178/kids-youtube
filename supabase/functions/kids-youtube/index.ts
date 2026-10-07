@@ -1,6 +1,11 @@
 const WEB_ORIGIN = "https://yt2178.github.io";
 const ANDROID_ORIGIN = "https://appassets.androidplatform.net";
 const ALLOWED_ORIGINS = new Set([WEB_ORIGIN, ANDROID_ORIGIN]);
+const PROVIDER_ORIGINS = new Set([
+  "https://invidious.f5.si",
+  "https://invidious.tiekoetter.com",
+  "https://yt.chocolatemoo53.com"
+]);
 const BASE = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ROW = BASE + "/rest/v1/kids_youtube_state?singleton=eq.true&select=list_text,password_hash,session_secret,version,updated_at";
@@ -82,6 +87,56 @@ function share(text:string){
   if(!found.size)found.add(canonicalize(text.trim()));
   if(found.size!==1)throw Error("ONE_LINK_ONLY"); return [...found][0];
 }
+function htmlText(value:string){
+  return safeNote(value.replace(/&amp;/gi,"&").replace(/&#39;|&apos;/gi,"'").replace(/&quot;/gi,'"').replace(/&lt;/gi,"<").replace(/&gt;/gi,">"));
+}
+function metaContent(html:string,key:string){
+  const wanted=key.toLowerCase();
+  for(const tag of html.match(/<meta\b[^>]*>/gi)||[]){
+    const lower=tag.toLowerCase();
+    const named=lower.includes('property="'+wanted+'"')||lower.includes("property='"+wanted+"'")||lower.includes('name="'+wanted+'"')||lower.includes("name='"+wanted+"'");
+    if(!named)continue;
+    const m=tag.match(/\bcontent=["']([^"']+)["']/i);if(m)return htmlText(m[1]);
+  }
+  return "";
+}
+function safeThumbnail(raw:string){
+  try{
+    const u=new URL(htmlText(raw));const h=u.hostname.toLowerCase();
+    const ok=["ggpht.com","googleusercontent.com","ytimg.com"].some(base=>h===base||h.endsWith("."+base));
+    return u.protocol==="https:"&&!u.username&&!u.password&&!u.port&&ok?u.href:"";
+  }catch{return "";}
+}
+function providerTarget(raw:string){
+  if(typeof raw!=="string"||raw.length>24000)throw Error("INVALID_PROVIDER");
+  const u=new URL(raw);
+  if(u.protocol!=="https:"||u.username||u.password||u.port||!PROVIDER_ORIGINS.has(u.origin))throw Error("INVALID_PROVIDER");
+  const q=[...u.searchParams.keys()];
+  if(u.pathname==="/api/v1/stats"&&q.length===0)return u;
+  if(/^\/api\/v1\/videos\/[A-Za-z0-9_-]{11}$/.test(u.pathname)&&q.length===0)return u;
+  if(/^\/api\/v1\/channels\/UC[A-Za-z0-9_-]{22}$/.test(u.pathname)&&q.length===0)return u;
+  if(/^\/api\/v1\/channels\/UC[A-Za-z0-9_-]{22}\/videos$/.test(u.pathname)){
+    if(q.some(k=>k!=="continuation")||u.searchParams.getAll("continuation").length>1||(u.searchParams.get("continuation")||"").length>20000)throw Error("INVALID_PROVIDER");
+    return u;
+  }
+  if(u.pathname==="/api/v1/resolveurl"&&q.length===1&&q[0]==="url"){
+    const approved=canonicalize(u.searchParams.get("url")||"");
+    if(new URL(approved).searchParams.has("v"))throw Error("INVALID_PROVIDER");
+    u.searchParams.set("url",approved);return u;
+  }
+  throw Error("INVALID_PROVIDER");
+}
+async function proxyProvider(raw:string,origin:string|null){
+  let target:URL;try{target=providerTarget(raw);}catch{return json({error:"INVALID_PROVIDER"},400,origin);}
+  try{
+    const r=await fetch(target,{redirect:"manual",headers:{"Accept":"application/json","User-Agent":"KidsYouTubeParent/1.0"}});
+    if(!r.ok)return json({error:"UPSTREAM_UNAVAILABLE"},200,origin);
+    const text=await r.text();
+    if(text.length>2000000)return json({error:"UPSTREAM_TOO_LARGE"},200,origin);
+    try{JSON.parse(text);}catch{return json({error:"UPSTREAM_INVALID"},200,origin);}
+    return new Response(text,{status:200,headers:{...cors(origin),"Content-Type":"application/json; charset=utf-8"}});
+  }catch{return json({error:"UPSTREAM_UNAVAILABLE"},200,origin);}
+}
 function safeNote(v:unknown){return String(v||"").replace(/[\r\n\uFEFF]/g," ").replace(/\s+/g," ").trim().slice(0,500);}
 function splitEntry(line:string){
   const value=line.replace(/^\uFEFF/,"").trim(), parts=value.split(/\s+\/\//,2);
@@ -105,12 +160,22 @@ async function metadata(input:string){
     if(r.ok){const d=await r.json();return {url,kind:"video",id,title:safeNote(d.title)||"סרטון YouTube",author:safeNote(d.author_name),thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};}
     return {url,kind:"video",id,title:"סרטון YouTube",author:"",thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};
   }
-  let title="";
+  let title="",thumbnail="";
   try{
-    const r=await fetch(url,{redirect:"follow",headers:{"User-Agent":"Mozilla/5.0"}});
-    if(r.ok){const html=await r.text();const m=html.match(/<meta\s+(?:property|name)=["']og:title["']\s+content=["']([^"']+)["']/i)||html.match(/<title>([^<]+)<\/title>/i);if(m)title=safeNote(m[1].replace(/&amp;/g,"&").replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/\s*-\s*YouTube\s*$/i,""));}
+    const r=await fetch(url,{redirect:"follow",headers:{"User-Agent":"Mozilla/5.0","Accept-Language":"he,en;q=0.8"}});
+    if(r.ok){
+      const html=await r.text();
+      title=metaContent(html,"og:title");
+      if(!title){const m=html.match(/<title>([^<]+)<\/title>/i);if(m)title=htmlText(m[1]);}
+      title=safeNote(title.replace(/\s*-\s*YouTube\s*$/i,""));
+      thumbnail=safeThumbnail(metaContent(html,"og:image"));
+      if(!thumbnail){
+        const m=html.match(/"avatar"\s*:\s*\{\s*"thumbnails"\s*:\s*\[\s*\{\s*"url"\s*:\s*"([^"]+)"/i);
+        if(m){try{thumbnail=safeThumbnail(JSON.parse('"'+m[1]+'"'));}catch{}}
+      }
+    }
   }catch{}
-  return {url,kind:"channel",id:null,title:title||url.split("/").pop()||"ערוץ YouTube",author:"",thumbnail:""};
+  return {url,kind:"channel",id:null,title:title||url.split("/").pop()||"ערוץ YouTube",author:"",thumbnail};
 }
 function existingUrls(raw:string){
   const out=new Set<string>(); for(const line of raw.replace(/^\uFEFF/,"").split(/\r?\n/)){const v=line.trim();if(!v||v.startsWith("//"))continue;try{out.add(canonicalize(v.split(/\s+\/\//,1)[0]));}catch{}}
@@ -129,6 +194,10 @@ Deno.serve(async(req)=>{
   if(origin && !ALLOWED_ORIGINS.has(origin))return json({error:"ORIGIN_DENIED"},403,origin);
   try{
     const url=new URL(req.url), action=url.searchParams.get("action")||"list", s=await state();
+    if(req.method==="GET"&&action==="provider"){
+      if(!await auth(req,s))return json({error:"UNAUTHORIZED"},401,origin);
+      return proxyProvider(url.searchParams.get("target")||"",origin);
+    }
     if(req.method==="GET"&&action==="list"){ if(url.searchParams.get("format")==="text") return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}}); return json({list:s.list_text,updatedAt:s.updated_at,setupRequired:!s.password_hash},200,origin); }
     if(req.method!=="POST")return json({error:"METHOD"},405,origin);
     const body=await req.json().catch(()=>({}));

@@ -11,6 +11,7 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   const html=fs.readFileSync('parents.html','utf8'),script=fs.readFileSync('parents.js','utf8');
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
+  assert.match(html,/font-src 'self' https:\/\/fonts\.gstatic\.com/);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
   assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
@@ -24,7 +25,7 @@ class ParentElement{
 }
 function memoryStorage(map){return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,String(v)),removeItem:k=>map.delete(k)};}
 async function parentApp(handler,{local=new Map(),session=new Map()}={}){
-  const ids=['auth','auth-title','auth-help','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','catalog-player-dialog','catalog-player-title','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
   const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements.preview.hidden=true;elements.remember.checked=true;
   let reloads=0;const calls=[],windowListeners={};const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(local),sessionStorage:memoryStorage(session),
@@ -52,9 +53,25 @@ test('inspect gets metadata, embeds video, prefills name and add saves it',async
   });
   app.elements.password.value='1234';await app.fire('login');app.elements.link.value=video;await app.fire('inspect');
   assert.equal(app.elements['media-title'].textContent,'ילד טרמפולינה');assert.equal(app.elements.note.value,'ילד טרמפולינה');assert.match(app.elements['youtube-player'].src,/youtube\.com\/embed\/mVTlbvQ_010/);
-  await app.fire('save');assert.match(app.elements.status.textContent,/נוסף לרשימה/);
+  assert.equal(app.elements['youtube-player-loading'].hidden,false);await app.fire('youtube-player','load');assert.equal(app.elements['youtube-player-loading'].hidden,true);
+  await app.fire('save');assert.match(app.elements.status.textContent,/נוסף לרשימה/);assert.equal(app.elements.save.disabled,false);
 });
 
+
+test('channel preview shows the real safe channel image and falls back only on image failure',async()=>{
+  const local=new Map([['kidsParentToken','token']]);
+  const app=await parentApp(async action=>{
+    if(action==='list')return {list:'https://www.youtube.com/@meirshows // ערוץ מאיר\n',setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    if(action==='metadata')return {url:'https://www.youtube.com/@meirshows',kind:'channel',id:null,title:'ערוץ מאיר לילדים',author:'',thumbnail:'https://yt3.googleusercontent.com/example'};
+    throw Error(action);
+  },{local});
+  app.elements.link.value='https://www.youtube.com/@meirshows';await app.fire('inspect');
+  assert.equal(app.elements['channel-image'].hidden,false);assert.equal(app.elements['channel-image'].src,'https://yt3.googleusercontent.com/example');
+  assert.equal(app.elements['channel-symbol'].hidden,true);
+  await app.fire('channel-image','error');
+  assert.equal(app.elements['channel-image'].hidden,true);assert.equal(app.elements['channel-symbol'].hidden,false);
+});
 
 test('existing approved video is identified before save and duplicate add is disabled',async()=>{
   const local=new Map([['kidsParentToken','token']]);let mutateCalls=0;
@@ -92,13 +109,16 @@ test('parent catalog reuses the child interface and opens only trusted iframe me
   const local=new Map([['kidsParentToken','token']]);
   const app=await parentApp(async action=>{if(action==='list')return {list:video+' // ילד טרמפולינה\n',setupRequired:false};if(action==='status')return {authenticated:true};throw Error(action);},{local});
   await app.fire('catalog-tab');
-  assert.equal(app.elements['catalog-view'].hidden,false);assert.match(app.elements['parent-catalog'].src,/index\.html\?parentCatalog=1/);
+  assert.equal(app.elements['catalog-view'].hidden,false);assert.match(app.elements['parent-catalog'].src,/index\.html\?parentCatalog=1/);assert.equal(app.elements['parent-catalog-loading'].hidden,false);
+  await app.fire('parent-catalog','load');assert.equal(app.elements['parent-catalog-loading'].hidden,true);
   const handler=app.windowListeners.message[0],trusted=app.elements['parent-catalog'].contentWindow;
   handler({origin:'https://evil.test',source:trusted,data:{type:'kids-parent-open-video',id:'mVTlbvQ_010',title:'לא'}});assert.equal(app.elements['catalog-player-dialog'].open,false);
   handler({origin:'https://example.test',source:{},data:{type:'kids-parent-open-video',id:'mVTlbvQ_010',title:'לא'}});assert.equal(app.elements['catalog-player-dialog'].open,false);
   handler({origin:'https://example.test',source:trusted,data:{type:'kids-parent-open-video',id:'mVTlbvQ_010',title:'ילד טרמפולינה'}});
-  assert.equal(app.elements['catalog-player-dialog'].open,true);assert.match(app.elements['catalog-player'].src,/youtube\.com\/embed\/mVTlbvQ_010/);
+  assert.equal(app.elements['catalog-player-dialog'].open,true);assert.match(app.elements['catalog-player'].src,/youtube\.com\/embed\/mVTlbvQ_010/);assert.equal(app.elements['catalog-player-loading'].hidden,false);
+  await app.fire('catalog-player','load');assert.equal(app.elements['catalog-player-loading'].hidden,true);
   assert.equal(app.elements['catalog-player-title'].textContent,'ילד טרמפולינה');
+  await app.fire('management-tab');assert.equal(app.elements['parent-catalog'].src,'');
 });
 
 test('invalid remembered session is cleared and logout clears both stores',async()=>{
