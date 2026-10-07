@@ -52,7 +52,7 @@ test('inspect gets metadata, embeds video, prefills name and add saves it',async
   });
   app.elements.password.value='1234';await app.fire('login');app.elements.link.value=video;await app.fire('inspect');
   assert.equal(app.elements['media-title'].textContent,'ילד טרמפולינה');assert.equal(app.elements.note.value,'ילד טרמפולינה');assert.match(app.elements['youtube-player'].src,/youtube\.com\/embed\/mVTlbvQ_010/);
-  await app.fire('save');assert.match(app.elements.status.textContent,/נוסף לילדים/);
+  await app.fire('save');assert.match(app.elements.status.textContent,/נוסף לרשימה/);
 });
 
 
