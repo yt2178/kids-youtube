@@ -51,7 +51,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   const listeners={};
   const history={state:null,pushState(state){this.state=state;},replaceState(state){this.state=state;},back(){this.state=null;}};
   const context=vm.createContext({URL,AbortController,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
-    navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/'},document,
+    navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/',origin:new URL(options.href||'https://example.test/kids-youtube/').origin},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.offline?fail():json({list:raw});if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
