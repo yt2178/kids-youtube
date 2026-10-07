@@ -83,13 +83,21 @@ test('native failures are rejected centrally without accepting invalid metadata'
   const invalid=assert.rejects(q,e=>e.code==='PROVIDER_ERROR');
   reply({id:messages[1].id,data:{bad:true}});await invalid;
 });
-test('native authorization fails closed and playback rechecks the parent list',()=>{
+test('native authorization fails closed, persists no approval snapshot, and playback rechecks the parent list',()=>{
   const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
   assert.match(source,/String displayWhitelist\(\) throws Exception \{[\s\S]*return whitelist\(true\);/);
   const playback=source.slice(source.indexOf('Playback playback(String id)'));
   assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
-  assert.doesNotMatch(source,/displayWhitelist\(\)[\s\S]{0,500}getSharedPreferences/);
+  assert.doesNotMatch(source,/getSharedPreferences|native-list|putString\("display"/);
 });
+test('native player shows a real loading indicator until playback is ready or fails',()=>{
+  const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  assert.match(source,/private ProgressBar loading/);assert.match(source,/loading=new ProgressBar/);
+  assert.match(source,/showLoading\(true\).*showMessage\("מתחבר\.\.\."\)/s);
+  assert.match(source,/STATE_READY[\s\S]{0,300}showLoading\(false\)/);
+  assert.match(source,/unavailable\(\)[\s\S]{0,300}showLoading\(false\)/);
+});
+
 test('native activity restricts messages to the packaged main frame and stops media',()=>{
   const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
   assert.match(source,/!isMainFrame/);assert.match(source,/Set.of\(ORIGIN\)/);
