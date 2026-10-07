@@ -33,3 +33,13 @@ test('parent page uses password login, remembered session and direct backend sav
   assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
   assert.doesNotMatch(html,/GitHub|המשך לאישור/);
 });
+
+test('obsolete GitHub issue approval path stays removed',()=>{
+  for(const path of [
+    '.github/workflows/parent-approval.yml',
+    '.github/ISSUE_TEMPLATE/parent-approval.yml',
+    'scripts/parent-approval.cjs'
+  ]) assert.equal(fs.existsSync(path),false,path);
+  const docs=fs.readFileSync('PARENTS.md','utf8');
+  assert.doesNotMatch(docs,/issues\/new|Submit new issue|Create issue|הרשאת כתיבה לריפו/);
+});
