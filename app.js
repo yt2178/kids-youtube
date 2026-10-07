@@ -558,6 +558,10 @@ async function loadApp() {
         else {
           ({entries, invalidLines} = parseLinkList(raw));
           for (const entry of entries) {
+            // A direct ID is the parent's exact grant and cached metadata may only
+            // decorate that same ID. A handle/legacy alias must be resolved again
+            // before it grants anything to the visible catalog.
+            if (!entry.id) continue;
             const record = cachedLinkRecord(entry, previous ? previous.linkRecords : {});
             if (record) activeLinkRecords[entry.url] = record;
           }
