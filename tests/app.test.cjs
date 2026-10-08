@@ -905,3 +905,29 @@ test('two directly approved videos survive metadata and channel outages and late
   assert.equal(a.run(`displayed.has('${id(1)}')`),true);
   assert.equal(a.run(`displayed.has('${id(2)}')`),true);
 });
+
+test('approved legacy handle uses only the matching current server UC record; cached channel page survives provider outage',async()=>{
+  const handle='https://www.youtube.com/@meirshows',channel='UCV6xoqUxJzkWwCbDmEwMSYw';
+  const target=id(4),when=new Date().toISOString();
+  const catalog={version:3,updatedAt:'stable',entries:[{
+    approval_url:handle,kind:'channel',item_id:channel,title:'ערוץ מאיר',
+    page:[{id:target,videoId:target,title:'סרטון מהערוץ',channelId:channel,authorId:channel}],
+    pages_loaded:1,complete:true,continuation:null,checked_at:when
+  }]};
+  const a=await app(handle+'\n',()=>{throw Error('Invidious must not be required for current pinned entry')},new Map(),{sharedCatalog:catalog});
+  assert.equal(a.run('displayed.size'),1);
+  assert.equal(a.run(`displayed.get('${target}').title`),'סרטון מהערוץ');
+  assert.equal(a.run('catalogMetrics.providerCalls'),0);
+  const revoked=await app('',()=>{throw Error('provider not required')},new Map(),{sharedCatalog:catalog});
+  assert.equal(revoked.run('displayed.size'),0);
+});
+test('legacy handle mapping only in localStorage must not grant channel access',async()=>{
+  const handle='https://www.youtube.com/@meirshows',channel='UCV6xoqUxJzkWwCbDmEwMSYw';
+  const store=new Map([['kidsYoutubeVideos',JSON.stringify({
+    scope:'https://example.test/kids-youtube/',version:2,savedAt:Date.now(),
+    config:{videos:[],channels:[{id:channel}]},channelLists:{[channel]:[{id:id(9),channelId:channel}]},
+    linkRecords:{[handle]:{kind:'channel',id:channel,name:'מיפוי ישן'}}
+  })]]);
+  const a=await app(handle+'\n',()=>{throw Error('provider unavailable')},store);
+  assert.equal(a.run('displayed.size'),0);
+});
