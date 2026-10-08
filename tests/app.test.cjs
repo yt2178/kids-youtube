@@ -57,8 +57,8 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
   if(options.parentWindow){
-    const origin=new URL(options.href||'https://example.test/kids-youtube/').origin;
-    context.parent={location:{origin},...options.parentWindow};
+    const here=new URL(options.href||'https://example.test/kids-youtube/');
+    context.parent={location:{origin:here.origin,pathname:new URL('./parents.html',here).pathname},...options.parentWindow};
   }else context.parent=context;
   if(options.storageAccessDenied)Object.defineProperty(context,'localStorage',{get(){throw new Error('SecurityError: storage access denied');}});
   vm.runInContext(scripts[0],context,{filename:'service-worker-registration.js'});
@@ -68,6 +68,13 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   return {context,elements,calls,store,document,listeners,docListeners,run:code=>vm.runInContext(code,context)};
 }
 const plain = obj => JSON.parse(JSON.stringify(obj));
+
+test('public child CSP is exact and permits only required application origins',()=>{
+  const policy=(html.match(/<meta id="app-csp" http-equiv="Content-Security-Policy" content="([^"]+)">/)||[])[1];
+  assert.ok(policy);assert.match(policy,/default-src 'self'/);assert.match(policy,/media-src 'none'/);assert.match(policy,/frame-src 'none'/);
+  assert.match(policy,/connect-src 'self' https:\/\/jxhelpxhrmwvzrrfrjuh\.supabase\.co https:\/\/invidious\.f5\.si https:\/\/invidious\.tiekoetter\.com https:\/\/yt\.chocolatemoo53\.com/);
+  assert.doesNotMatch(policy,/https:\/\/\*|\s\*\s|unsafe-eval|fonts\.gstatic/);
+});
 
 test('local JS and service worker parse, no third-party scripts/frameworks',()=>{
   scripts.forEach(s=>new vm.Script(s));new vm.Script(fs.readFileSync(path.join(root,'sw.js'),'utf8'));
@@ -565,6 +572,7 @@ test('parent catalog sends an approved video to its authenticated host instead o
   const sent=[],parentWindow={postMessage:(message,origin)=>sent.push({message,origin})};
   const a=await app({videos:[{id:id(1),title:'מאושר'}],channels:[]},undefined,new Map(),{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow});
   a.run(`openPlayer('${id(1)}')`);
+  await until(()=>sent.length===1);
   assert.equal(sent.length,1);assert.equal(sent[0].message.id,id(1));assert.equal(sent[0].origin,'https://example.test');
   assert.equal(a.elements.player.hidden,true);
 });
@@ -575,6 +583,22 @@ test('parent catalog mode requires a same-origin parent frame',async()=>{
   assert.equal(a.run("safeChannelImage('https://invidious.f5.si/thumb.jpg')"),'https://invidious.f5.si/thumb.jpg');
 });
 
+test('parent catalog rejects a different same-origin GitHub Pages path',async()=>{
+  const parentWindow={location:{origin:'https://example.test',pathname:'/other-project/parents.html'},postMessage(){throw new Error('must not post');}};
+  const a=await app({videos:[{id:id(1)}],channels:[]},undefined,new Map([['kidsParentToken','secret']]),{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow});
+  assert.equal(a.run('PARENT_CATALOG'),false);
+});
+
+test('parent iframe playback is denied when the authoritative grant is revoked',async()=>{
+  const config={videos:[{id:id(1),title:'Approved'}],channels:[]};
+  const sent=[],parentWindow={postMessage:m=>sent.push(m)};
+  const a=await app(config,undefined,new Map(),{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow});
+  config.videos=[];
+  a.run(`openPlayer('${id(1)}')`);
+  await until(()=>a.run('displayed.size')===0);
+  assert.equal(sent.length,0);
+  assert.ok(a.calls.filter(c=>c.url.includes('action=list')).length>=2);
+});
 test('parent catalog proxies provider calls through authenticated Supabase instead of direct Invidious CORS',async()=>{
   const store=new Map([['kidsParentToken','parent-token']]),parentWindow={postMessage(){}};
   const a=await app(empty,()=>json({software:{name:'test'}}),store,{href:'https://example.test/kids-youtube/?parentCatalog=1',parentWindow});
