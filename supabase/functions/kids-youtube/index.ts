@@ -355,7 +355,11 @@ async function youtubeFeedPage(channelId:string,deadline:number){
       const r=await fetch(u,{signal,redirect:"manual",headers:{"Accept":"application/atom+xml, application/xml"}});
       if(!r.ok||oversized(r,500000))return null;
       const xml=await readBounded(r.body,500000);
-      if(xmlValue(xml,"yt:channelId")!==channelId)return null;
+      const feedChannelId=xmlValue(xml,"yt:channelId");
+      // YouTube's Atom feed may omit the conventional UC prefix in yt:channelId.
+      // Match the whole immutable ID in either documented observed encoding;
+      // never infer an approval or use the feed as an authorization source.
+      if(feedChannelId!==channelId && "UC"+feedChannelId!==channelId)return null;
       const entries=xml.match(/<entry\b[^>]*>[\s\S]*?<\/entry>/gi)||[];
       const videos=[];
       for(const block of entries.slice(0,20)){
