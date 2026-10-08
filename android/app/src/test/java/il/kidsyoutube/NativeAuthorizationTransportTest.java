@@ -98,4 +98,43 @@ public final class NativeAuthorizationTransportTest {
         assertFalse(transport.client.followRedirects());
         assertNotNull(transport.client.connectionPool());
     }
+    @Test public void realOkHttpFailsWithinPerCallDeadlineWhenServerNeverResponds() throws Exception {
+        try(MockWebServer server=new MockWebServer()){
+            server.enqueue(new MockResponse().setSocketPolicy(
+                    okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE));
+            server.start();
+            ExtractorDownloader transport=new ExtractorDownloader(false);
+            okhttp3.Call call=transport.client.newCall(new okhttp3.Request.Builder()
+                    .url(server.url("/list")).build());
+            call.timeout().timeout(450,TimeUnit.MILLISECONDS);
+            long start=System.nanoTime();
+            try(okhttp3.Response ignored=call.execute()){
+                fail("a stalled header response must not become an authorization success");
+            }catch(IOException expected){
+                long elapsed=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start);
+                assertTrue("elapsed="+elapsed,elapsed<2200);
+            }
+        }
+    }
+
+    @Test public void productionClientNeverTrustsAnUntrustedTlsEndpoint() throws Exception {
+        try(MockWebServer server=new MockWebServer()){
+            okhttp3.tls.HeldCertificate certificate=new okhttp3.tls.HeldCertificate.Builder()
+                    .addSubjectAlternativeName("localhost").build();
+            okhttp3.tls.HandshakeCertificates serverCerts=
+                    new okhttp3.tls.HandshakeCertificates.Builder()
+                            .heldCertificate(certificate).build();
+            server.useHttps(serverCerts.sslSocketFactory(),false);
+            server.enqueue(new MockResponse().setBody(document("mVTlbvQ_010",1)));
+            server.start();
+            ExtractorDownloader production=new ExtractorDownloader(false);
+            try(okhttp3.Response ignored=production.client.newCall(
+                    new okhttp3.Request.Builder().url(server.url("/")).build()).execute()){
+                fail("untrusted TLS certificates must never be accepted");
+            }catch(javax.net.ssl.SSLException expected){
+                // Must fail certificate verification with normal production TLS policy.
+            }
+        }
+    }
+
 }
