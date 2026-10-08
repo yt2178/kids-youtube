@@ -315,21 +315,12 @@ async function stableChannelId(url:string,deadline=Date.now()+PREPARE_TIMEOUT_MS
   return /^UC[A-Za-z0-9_-]{22}$/.test(id)?id:"";
 }
 function xmlValue(xml:string,tag:string){
-  const pattern=new RegExp("<"+tag.replace(/[.*+?^$()|[\]\\]/g,"\\async function stableChannelId(url:string,deadline=Date.now()+PREPARE_TIMEOUT_MS){
-  const match=url.match(/^https:\/\/www\.youtube\.com\/channel\/(UC[A-Za-z0-9_-]{22})$/);
-  if(match)return match[1];
-  const data=await providerData("/api/v1/resolveurl?url="+encodeURIComponent(url),deadline);
-  const id=data?.ucid||data?.browseId||"";
-  return /^UC[A-Za-z0-9_-]{22}$/.test(id)?id:"";
-}")+">([\\s\\S]*?)<\\/"+tag.replace(/[.*+?^$()|[\]\\]/g,"\\async function stableChannelId(url:string,deadline=Date.now()+PREPARE_TIMEOUT_MS){
-  const match=url.match(/^https:\/\/www\.youtube\.com\/channel\/(UC[A-Za-z0-9_-]{22})$/);
-  if(match)return match[1];
-  const data=await providerData("/api/v1/resolveurl?url="+encodeURIComponent(url),deadline);
-  const id=data?.ucid||data?.browseId||"";
-  return /^UC[A-Za-z0-9_-]{22}$/.test(id)?id:"";
-}")+">","i");
-  const m=xml.match(pattern);
-  return m?htmlText(m[1]):"";
+  // The caller supplies fixed XML tag names only, never user input.
+  const open="<"+tag+">",close="</"+tag+">";
+  const start=xml.indexOf(open);
+  if(start<0)return "";
+  const end=xml.indexOf(close,start+open.length);
+  return end<0?"":htmlText(xml.slice(start+open.length,end));
 }
 // Public YouTube channel feed: a bounded, key-free first-page fallback, not
 // YouTube Data API and not an authorization source.
