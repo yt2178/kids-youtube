@@ -785,3 +785,40 @@ test('measured warm startup reduces provider requests and metadata phase duratio
   console.log('SIMULATED_CATALOG_BENCHMARK coldProviders='+coldProvider+
     ' warmProviders='+warmProvider+' coldMetadataMs='+coldMetadataMs+' warmMetadataMs='+warmMetadataMs);
 });
+
+test('warm channel catalog restores validated pagination cursor without reloading first pages',async()=>{
+  const store=new Map(),config={videos:[],channels:[{id:A,name:'ערוץ'}]};
+  const first=await app(config,url=>{
+    const token=new URL(url).searchParams.get('continuation');
+    if(token==='two')return json({videos:[row(2)],continuation:'three'});
+    if(token==='three')return json({videos:[row(3)],continuation:null});
+    return json({videos:[row(1)],continuation:'two'});
+  },store);
+  assert.equal(first.run('displayed.size'),1);
+  await first.run('loadMoreVideos()');assert.equal(first.run('displayed.size'),2);
+  const saved=JSON.parse(store.get('kidsYoutubeVideos'));
+  assert.equal(saved.channelProgress[A].continuation,'three');
+  for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
+  const warm=await app(config,url=>{
+    assert.equal(new URL(url).searchParams.get('continuation'),'three');
+    return json({videos:[row(3)],continuation:null});
+  },store);
+  assert.equal(warm.run('displayed.size'),2);
+  assert.equal(warm.calls.length,1,'fresh auth only, no channel page rediscovery');
+  await warm.run('loadMoreVideos()');
+  assert.equal(warm.run('displayed.size'),3);
+  assert.equal(warm.calls.length,2,'only next continuation requested');
+});
+test('an expired channel cursor is discarded but cached content remains only after authorization',async()=>{
+  const store=new Map(),config={videos:[],channels:[{id:A}]};
+  await app(config,()=>json({videos:[row(1)],continuation:'two'}),store);
+  const snapshot=JSON.parse(store.get('kidsYoutubeVideos'));
+  snapshot.channelDates[A]=Date.now()-6*60*1000;
+  store.set('kidsYoutubeVideos',JSON.stringify(snapshot));
+  for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
+  const next=await app(config,()=>json({videos:[row(2)],continuation:null}),store);
+  assert.ok(next.calls.length>1,'expired cursor forces a fresh first-page request');
+  assert.equal(next.run('displayed.size'),2);
+  const removed=await app(empty,()=>{throw Error('provider should never authorize revoked content')},store);
+  assert.equal(removed.run('displayed.size'),0);
+});
