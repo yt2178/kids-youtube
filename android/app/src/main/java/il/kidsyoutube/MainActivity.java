@@ -133,6 +133,16 @@ public final class MainActivity extends Activity {
     private void setupWeb() {
         WebSettings settings=web.getSettings();
         settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);
+        if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0){
+            WebView.setWebContentsDebuggingEnabled(true);
+            web.setWebChromeClient(new android.webkit.WebChromeClient(){
+                @Override public boolean onConsoleMessage(android.webkit.ConsoleMessage message){
+                    android.util.Log.d("KidsWeb",message.messageLevel()+": "+message.message()+
+                            " @"+message.sourceId()+":"+message.lineNumber());
+                    return true;
+                }
+            });
+        }
         settings.setTextZoom(Math.round(getResources().getConfiguration().fontScale*100));
         settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
