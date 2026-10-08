@@ -47,6 +47,13 @@ public final class MainActivity extends Activity {
     private long resumeAt;
     private Runnable playerTimeout;
     private boolean destroyed;
+    private long startupStartedAt;
+    private void debugStartup(String stage){
+        if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)==0)return;
+        android.util.Log.d("KidsStartup",stage+" elapsedMs="+
+                (android.os.SystemClock.elapsedRealtime()-startupStartedAt)+
+                " build="+getString(R.string.kids_build_sha));
+    }
 
     private final class Task extends FutureTask<Void> {
         final String id;
@@ -57,7 +64,10 @@ public final class MainActivity extends Activity {
     }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        startupStartedAt=android.os.SystemClock.elapsedRealtime();
+        debugStartup("onCreate-start");
         api=new NativeApi(this);
+        debugStartup("native-api-created");
         FrameLayout root=new FrameLayout(this);root.setBackgroundColor(Color.rgb(26,26,46));
         if(Build.VERSION.SDK_INT>=30){
             getWindow().setDecorFitsSystemWindows(false);
@@ -71,6 +81,7 @@ public final class MainActivity extends Activity {
             root.requestApplyInsets();
         }
         web=new WebView(this);root.addView(web,new FrameLayout.LayoutParams(-1,-1));
+        debugStartup("webview-created");
         overlay=new LinearLayout(this);overlay.setOrientation(LinearLayout.VERTICAL);
         overlay.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         overlay.setBackgroundColor(Color.rgb(15,15,29));overlay.setVisibility(View.GONE);
@@ -96,7 +107,9 @@ public final class MainActivity extends Activity {
         overlay.addView(playerView,new LinearLayout.LayoutParams(-1,0,1));
         root.addView(overlay,new FrameLayout.LayoutParams(-1,-1));
         setContentView(root);
+        debugStartup("view-hierarchy-ready");
         setupWeb();
+        debugStartup("webview-load-started");
         handleDeepLink(getIntent());
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
@@ -127,6 +140,9 @@ public final class MainActivity extends Activity {
         WebViewAssetLoader loader=new WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(this)).build();
         web.setWebViewClient(new WebViewClient(){
+            @Override public void onPageFinished(WebView view,String url){
+                if(HOME.equals(url))debugStartup("webview-page-finished");
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request) {
                 // No outgoing browser intents, arbitrary URL entry or remote documents.
                 return !HOME.equals(request.getUrl().toString());
