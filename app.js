@@ -703,7 +703,7 @@ async function loadApp({forceCatalog=false}={}) {
     try {
       const catalog=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=catalog');
       if(!stillAuthorized())return;
-      if(catalog&&catalog.available!==false){
+      if(catalog&&catalog.available!==false&&Array.isArray(catalog.entries)){
         if(catalog.version!==remote.version||catalog.updatedAt!==remote.updatedAt)
           throw new Error('CATALOG_AUTH_CHANGED');
         shared=sharedCatalogSnapshot(parseLinkList(raw).entries,catalog);
