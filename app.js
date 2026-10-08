@@ -708,6 +708,7 @@ async function retryCatalogContents(){
   try{
     const remote=await fetchJson(PARENT_API+'?action=list');
     if(!current())return;
+    if(document.hidden){catalogRetryPending=true;return;}
     if(!remote||typeof remote.list!=='string')throw Error('INVALID_REMOTE_LIST');
     const next=String(remote.updatedAt||'')+'\0'+remote.list;
     if(next!==marker){
@@ -720,6 +721,7 @@ async function retryCatalogContents(){
     await parallelMap(channels,async channel=>{
       const result=await loadChannel(channel,1,true);
       if(!current())return;
+      if(document.hidden){catalogRetryPending=true;return;}
       if(result.failed){failures++;return;}
       pendingChannelRetry.delete(channel.id);
       const nextLists={...activeLists,[channel.id]:result.complete?result.videos:cleanChannelVideos([...result.videos,...(activeLists[channel.id]||[])],channel)};
