@@ -1175,7 +1175,10 @@ test('optional catalog timeout plus metadata network failure preserves only fres
 });
 test('load-start records user pull and scheduled retry triggers independently',async()=>{
  const logs=[],list='https://www.youtube.com/watch?v='+id(1)+'\n';
- const a=await app(list,()=>json({videoId:id(1),title:'מוכן',authorId:A}),new Map(),{logCollector:logs});
+ const a=await app(list,()=>json({videoId:id(1),title:'מוכן',authorId:A}),new Map(),{
+   logCollector:logs,nativeMode:true,
+   nativeFetchAuthorization:async()=>({list,version:3,updatedAt:'fresh',catalogVersion:1})
+ });
  await a.run("loadApp({forceCatalog:true,trigger:'pull-to-refresh'})");
  const starts=logs.filter(x=>x.startsWith('KidsCatalog load-start'));
  assert.ok(starts.some(x=>x.includes('"trigger":"startup"')));
