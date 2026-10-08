@@ -5,7 +5,8 @@ def outputRes = layout.buildDirectory.dir('generated/kidsRes')
 tasks.register('prepareKidsAssets') {
     inputs.files(['index.html','app.js','providers.js','manifest.json','android/native-adapter.js',
         'android/LICENSE','android/THIRD_PARTY_NOTICES.md'].collect { new File(webRoot,it) })
-    inputs.files(fileTree(new File(webRoot,'icons')) { include '*.png' })    outputs.dir outputAssets
+    inputs.files(fileTree(new File(webRoot,'icons')) { include '*.png' })
+    outputs.dir outputAssets
     outputs.dir outputRes
     doLast {
         def once = { String text, String needle, String replacement ->
