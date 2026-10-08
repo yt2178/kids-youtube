@@ -53,10 +53,10 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   const context=vm.createContext({URL,AbortController,Response,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console:options.logCollector?{log:(...args)=>options.logCollector.push(args.map(String).join(' '))}:console,history,
     navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/',origin:new URL(options.href||'https://example.test/kids-youtube/').origin},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
-    fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.listFetch?options.listFetch({url:target,opts,calls,raw}):options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
+    fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.listFetch?options.listFetch({url:target,opts,calls,raw}):options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return options.catalogFetch?options.catalogFetch({url:target,opts,calls}):json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
-  if(options.nativeMode)context.KidsNative={...(options.nativeFetchAuthorization?{fetchAuthorization:options.nativeFetchAuthorization}:{})};
+  if(options.nativeMode)context.KidsNative={...(options.nativeFetchAuthorization?{fetchAuthorization:options.nativeFetchAuthorization}:{}),...(options.nativeFetchCatalog?{fetchCatalog:options.nativeFetchCatalog}:{})};
   if(options.parentWindow){
     const here=new URL(options.href||'https://example.test/kids-youtube/');
     context.parent={location:{origin:here.origin,pathname:new URL('./parents.html',here).pathname},...options.parentWindow};
@@ -1126,4 +1126,59 @@ test('optional partial-channel retry auth timeout keeps 17 freshly approved prep
   assert.equal(a.run('authorizationGeneration'),generation);
   assert.notEqual(a.run('approvalMarker'),'');
   assert.doesNotMatch(a.elements['status-text'].textContent,/לא הצלחנו לאמת כרגע/);
+});
+
+test('device catalog WebView timeout falls back once to native transport for same grant version',async()=>{
+ const list='https://www.youtube.com/watch?v='+id(1)+'\n';
+ const catalog={version:3,updatedAt:'fresh',entries:[{
+   approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',item_id:id(1),
+   title:'שם מוכן מהשרת',checked_at:new Date().toISOString()
+ }]};
+ let nativeCalls=0,extractorCalls=0;
+ const a=await app(list,()=>{extractorCalls++;throw Error('No NewPipe discovery expected')},new Map(),{
+   nativeMode:true,sharedCatalog:catalog,
+   nativeFetchAuthorization:async()=>({list,version:3,updatedAt:'fresh',catalogVersion:1}),
+   catalogFetch:()=>{throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'});},
+   nativeFetchCatalog:async grant=>{
+     nativeCalls++;assert.equal(grant.version,3);assert.equal(grant.updatedAt,'fresh');return catalog;
+   }
+ });
+ assert.equal(nativeCalls,1);assert.equal(extractorCalls,0);
+ assert.equal(a.run('displayed.size'),1);
+ assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם מוכן מהשרת');
+ assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,0);
+});
+test('catalog fallback mismatch fails closed rather than granting stale content',async()=>{
+ const list='https://www.youtube.com/watch?v='+id(1)+'\n';
+ const a=await app(list,()=>json({videoId:id(1),title:'unverified',authorId:A}),new Map(),{
+  nativeMode:true,sharedCatalog:{version:3,updatedAt:'fresh',entries:[]},
+  nativeFetchAuthorization:async()=>({list,version:3,updatedAt:'fresh',catalogVersion:1}),
+  catalogFetch:()=>{throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'})},
+  nativeFetchCatalog:async()=>({version:2,updatedAt:'old',entries:[{
+    approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',item_id:id(1),title:'stale'
+  }]})
+ });
+ assert.equal(a.run('displayed.size'),0);assert.equal(a.run('approvalMarker'),'');
+});
+test('optional catalog timeout plus metadata network failure preserves only freshly approved manual card',async()=>{
+ const list='https://www.youtube.com/watch?v='+id(1)+'\n';
+ let nativeCalls=0;
+ const a=await app(list,()=>{throw Object.assign(new Error('DNS_ERROR'),{code:'DNS_ERROR'})},new Map(),{
+  nativeMode:true,sharedCatalog:{version:3,updatedAt:'fresh',entries:[]},
+  nativeFetchAuthorization:async()=>({list,version:3,updatedAt:'fresh',catalogVersion:1}),
+  catalogFetch:()=>{throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'})},
+  nativeFetchCatalog:async()=>{nativeCalls++;throw Object.assign(new Error('CONNECT_ERROR'),{code:'CONNECT_ERROR'})}
+ });
+ assert.equal(nativeCalls,1);assert.equal(a.run('displayed.size'),1);
+ assert.equal(a.run('approvalMarker').includes(list),true);
+ assert.match(a.elements['status-text'].textContent,/חלק מהפרטים/);
+});
+test('load-start records user pull and scheduled retry triggers independently',async()=>{
+ const logs=[],list='https://www.youtube.com/watch?v='+id(1)+'\n';
+ const a=await app(list,()=>json({videoId:id(1),title:'מוכן',authorId:A}),new Map(),{logCollector:logs});
+ await a.run("loadApp({forceCatalog:true,trigger:'pull-to-refresh'})");
+ const starts=logs.filter(x=>x.startsWith('KidsCatalog load-start'));
+ assert.ok(starts.some(x=>x.includes('"trigger":"startup"')));
+ assert.ok(starts.some(x=>x.includes('"trigger":"pull-to-refresh"')));
+ assert.ok(starts.every(x=>x.includes('"trigger":')));
 });
