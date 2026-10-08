@@ -830,3 +830,14 @@ test('an expired channel cursor is discarded but cached content remains only aft
   const removed=await app(empty,()=>{throw Error('provider should never authorize revoked content')},store);
   assert.equal(removed.run('displayed.size'),0);
 });
+
+test('an automatic retry postponed in background resumes on foreground with fresh authorization',async()=>{
+  const a=await app({videos:[],channels:[{id:A}]},()=>{throw Error('temporary upstream error')},new Map(),{timerCap:15});
+  a.document.hidden=true;
+  await until(()=>a.run('catalogRetryPending')===true);
+  const previous=a.calls.filter(x=>x.url.includes('action=list')).length;
+  a.document.hidden=false;a.docListeners.visibilitychange[0]();
+  await until(()=>a.calls.filter(x=>x.url.includes('action=list')).length>previous);
+  assert.equal(a.run('catalogRetryPending'),false);
+  assert.ok(a.run('catalogMetrics.retries')>=1);
+});
