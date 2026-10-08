@@ -65,7 +65,7 @@ final class NativeApi {
         if(!force && checkedAt>0 && System.currentTimeMillis()-checkedAt<LIST_TTL)return raw;
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
         okhttp3.Request request=new okhttp3.Request.Builder().url(listUrl)
-                .header("Cache-Control","no-cache").build();
+                .header("Cache-Control","no-cache").tag(String.class,"authorization").build();
         Call call=downloader.client.newCall(request);
         if(scope!=null)scope.add(call);
         try(okhttp3.Response response=call.execute()){
@@ -94,6 +94,43 @@ final class NativeApi {
         // Fail closed: stale approvals are never displayed as current approvals.
         return whitelist(true);
     }
+    JSONObject sharedCatalog(JSONObject expected) throws Exception {
+        if(expected==null || !expected.has("version") || !expected.has("updatedAt"))
+            throw new IOException("INVALID_REQUEST");
+        final int version=expected.optInt("version",-1);
+        final String updatedAt=expected.optString("updatedAt","");
+        if(version<0||updatedAt.isEmpty())throw new IOException("INVALID_REQUEST");
+        // This operation is display-only; authority must first come from the
+        // current successful fresh native authorization for the same load.
+        synchronized(this){
+            if(lastAuthorization==null || checkedAt==0
+                    || lastAuthorization.optInt("version",-2)!=version
+                    || !updatedAt.equals(lastAuthorization.optString("updatedAt","")))
+                throw new IOException("CATALOG_AUTH_CHANGED");
+        }
+        if(!listUrl.endsWith("?action=list&format=native"))
+            throw new IOException("INVALID_CATALOG_ENDPOINT");
+        final String catalogUrl=listUrl.substring(0,listUrl.indexOf('?'))+"?action=catalog";
+        RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
+        okhttp3.Request request=new okhttp3.Request.Builder().url(catalogUrl)
+                .header("Cache-Control","no-cache").tag(String.class,"catalog").build();
+        Call call=downloader.client.newCall(request);if(scope!=null)scope.add(call);
+        try(okhttp3.Response response=call.execute()){
+            if(!response.isSuccessful())throw new IOException("CATALOG_UNAVAILABLE");
+            JSONObject data=new JSONObject(ExtractorDownloader.readBounded(response.body(),1500000));
+            if(data.optInt("version",-2)!=version
+                    || !updatedAt.equals(data.optString("updatedAt","")))
+                throw new IOException("CATALOG_AUTH_CHANGED");
+            synchronized(this){
+                if(lastAuthorization==null || lastAuthorization.optInt("version",-2)!=version
+                        || !updatedAt.equals(lastAuthorization.optString("updatedAt","")))
+                    throw new IOException("CATALOG_AUTH_CHANGED");
+            }
+            if(scope!=null)scope.check();
+            return data;
+        }finally{if(scope!=null)scope.remove(call);}
+    }
+
     synchronized JSONObject displayAuthorization() throws Exception {
         // One native transport is authoritative for the WebView and the playback
         // bridge. Never return a previous document after a failed fresh request.
