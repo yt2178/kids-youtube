@@ -704,7 +704,7 @@ async function loadApp({forceCatalog=false}={}) {
   let config = null;
   let lists = Object.create(null);
   let invalidConfig = false;
-  let entries = null, linkFailures = 0, invalidLines = [];
+  let entries = null, linkFailures = 0, failures=0, invalidLines = [];
   let cacheSaved = true;
   activeLinkRecords = Object.create(null);
   try {
@@ -787,7 +787,7 @@ async function loadApp({forceCatalog=false}={}) {
     const restoredChannels=forceCatalog?0:restoreChannelProgress(config,lists,{channelProgress:{...(previous?.channelProgress||{}),...shared.progress},channelDates:{...(previous?.channelDates||{}),...shared.dates}});
     catalogMetrics.channelCacheHits+=restoredChannels;
     const channelsStarted=Date.now();
-    let finished = 0, failures = 0, limited = 0;
+    let finished = 0, limited = 0;
     if (config.channels.length) status('טוענים את הסרטונים מהערוצים…', true);
     await parallelMap(config.channels, async channel => {
       const restored=channelProgress.get(channel.id);
@@ -813,7 +813,6 @@ async function loadApp({forceCatalog=false}={}) {
     if (!cacheSaved) messages.push('לא הצלחנו לשמור נתונים זמניים במכשיר. התוכן עדיין זמין כל עוד יש חיבור לאינטרנט.');
     if(linkFailures||failures){messages.push('המערכת תנסה להשלים את הפרטים שוב באופן אוטומטי.');scheduleCatalogRetry();}
     else {catalogRetryAttempts=0;catalogRetryPending=false;}
-    debugCatalog('load-complete',{displayed:displayed.size,linksFailed:linkFailures,channelsFailed:failures,metrics:{...catalogMetrics}});
     status(messages.join(' '));
   } catch (error) {
     if(!stillAuthorized())return;
@@ -828,7 +827,10 @@ async function loadApp({forceCatalog=false}={}) {
   } finally {
     catalogMetrics.completedMs=Date.now()-startedAt;
     loading = false; ui.grid.removeAttribute('aria-busy');
-    if(stillAuthorized())render(activeConfig, activeLists);
+    if(stillAuthorized()){
+      render(activeConfig, activeLists);
+      if(!loadError)debugCatalog('load-complete',{displayed:displayed.size,linksFailed:linkFailures,channelsFailed:failures,metrics:{...catalogMetrics}});
+    }
     if(pendingOnlineRefresh&&navigator.onLine!==false){pendingOnlineRefresh=false;catalogRetryPending=false;loadApp();}
     else if(catalogRetryPending&&!document.hidden&&!playback&&!paginationBusy&&navigator.onLine!==false){
       catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});
