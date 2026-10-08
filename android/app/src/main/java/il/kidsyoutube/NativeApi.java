@@ -34,6 +34,10 @@ final class NativeApi {
     // started later (including when a cancelled request finishes late).
     private final AtomicLong authorizationGeneration=new AtomicLong();
     private final boolean debugBuild;
+    // Test-only transport seam: calls exercise the same production whitelist.
+    NativeApi(ExtractorDownloader downloader,String listUrl) {
+        this.downloader=downloader;this.listUrl=listUrl;this.debugBuild=false;
+    }
     NativeApi(Context context) {
         // Do not initialize NewPipe on Activity.onCreate's UI thread.
         debugBuild=(context.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0;
@@ -79,6 +83,7 @@ final class NativeApi {
         }
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
         final long generation=authorizationGeneration.incrementAndGet();
+        if(force)synchronized(this){checkedAt=0;lastAuthorization=null;}
         okhttp3.Request request=new okhttp3.Request.Builder().url(listUrl)
                 .header("Cache-Control","no-cache").tag(String.class,"authorization").build();
         Call call=downloader.client.newCall(request);
@@ -393,6 +398,7 @@ final class NativeApi {
             String text=String.valueOf(cause.getMessage());
             if(text.contains("NOT_APPROVED"))return "NOT_APPROVED";
             if(text.contains("CATALOG_AUTH_CHANGED"))return "CATALOG_AUTH_CHANGED";
+            if(text.contains("AUTH_SUPERSEDED"))return "NETWORK_ERROR";
             if(cause instanceof org.schabi.newpipe.extractor.exceptions.ReCaptchaException
                     || text.contains("UPSTREAM_BLOCKED") || text.contains("LOGIN_REQUIRED")
                     || text.toLowerCase(Locale.ROOT).contains("not a bot"))return "UPSTREAM_BLOCKED";
