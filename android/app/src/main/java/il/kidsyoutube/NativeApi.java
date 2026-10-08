@@ -18,7 +18,7 @@ import org.schabi.newpipe.extractor.stream.*;
 final class NativeApi {
     private final String listUrl;
     static final long LIST_TTL=30000, META_TTL=6*60*60*1000, CHANNEL_TTL=5*60*1000;
-    final ExtractorDownloader downloader=new ExtractorDownloader();
+    final ExtractorDownloader downloader;
     private volatile ApprovalPolicy policy=ApprovalPolicy.parse("");
     private volatile String raw="";
     private JSONObject lastAuthorization;
@@ -32,6 +32,7 @@ final class NativeApi {
     NativeApi(Context context) {
         // Do not initialize NewPipe on Activity.onCreate's UI thread.
         debugBuild=(context.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0;
+        downloader=new ExtractorDownloader(debugBuild);
         listUrl=context.getString(R.string.kids_list_url);
     }
     private synchronized void ensureExtractor() {
@@ -361,14 +362,27 @@ final class NativeApi {
     static String errorCode(Throwable error) {
         for(Throwable cause=error;cause!=null;cause=cause.getCause()) {
             String text=String.valueOf(cause.getMessage());
+            if(text.contains("NOT_APPROVED"))return "NOT_APPROVED";
+            if(text.contains("CATALOG_AUTH_CHANGED"))return "CATALOG_AUTH_CHANGED";
             if(cause instanceof org.schabi.newpipe.extractor.exceptions.ReCaptchaException
                     || text.contains("UPSTREAM_BLOCKED") || text.contains("LOGIN_REQUIRED")
                     || text.toLowerCase(Locale.ROOT).contains("not a bot"))return "UPSTREAM_BLOCKED";
             if(text.contains("RATE_LIMITED"))return "RATE_LIMITED";
+            if(cause instanceof java.net.UnknownHostException)return "DNS_ERROR";
+            if(cause instanceof javax.net.ssl.SSLException)return "TLS_ERROR";
+            if(cause instanceof java.net.ConnectException || cause instanceof java.net.NoRouteToHostException)
+                return "CONNECT_ERROR";
             if(cause instanceof java.io.InterruptedIOException)return "TIMEOUT";
-            if(text.contains("NOT_APPROVED"))return "NOT_APPROVED";
+            if(cause instanceof IOException && (text.contains("WHITELIST_UNAVAILABLE")
+                    ||text.contains("CATALOG_UNAVAILABLE")||text.contains("unexpected end of stream")
+                    ||text.contains("Connection reset")||text.contains("Canceled")))return "NETWORK_ERROR";
         }
         return "VIDEO_UNAVAILABLE";
+    }
+    static String safeRootClass(Throwable error){
+        Throwable root=error;
+        for(int i=0;root!=null&&root.getCause()!=null&&i<10;i++)root=root.getCause();
+        return root==null?"Unknown":root.getClass().getSimpleName();
     }
     void recordFailure(Throwable error) {
         String code=errorCode(error);
