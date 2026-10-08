@@ -56,6 +56,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
+  if(options.nativeMode)context.KidsNative={};
   if(options.parentWindow){
     const here=new URL(options.href||'https://example.test/kids-youtube/');
     context.parent={location:{origin:here.origin,pathname:new URL('./parents.html',here).pathname},...options.parentWindow};
@@ -869,4 +870,23 @@ test('shared catalog with a mismatched grant version fails closed even if it has
     kind:'video',item_id:id(1),title:'ישן',checked_at:new Date().toISOString()}]};
   const a=await app('https://www.youtube.com/watch?v='+id(1),()=>{throw Error('No provider');},new Map(),{sharedCatalog:catalog,grantVersion:7});
   assert.equal(a.run('displayed.size'),0);assert.equal(a.run('approvalMarker'),'');
+});
+
+test('native first-run prepared channel page never sends an Invidious cursor to NewPipe',async()=>{
+  const now=new Date().toISOString();
+  const catalog={version:7,updatedAt:'stable',entries:[{
+    approval_url:'https://www.youtube.com/channel/'+A,kind:'channel',item_id:A,
+    title:'מוכן מהשרת',page:[{id:id(1),videoId:id(1),title:'סרטון מוכן',channelId:A,authorId:A}],
+    pages_loaded:1,continuation:'invidious-opaque-cursor',complete:false,checked_at:now
+  }]};
+  const list='https://www.youtube.com/channel/'+A+'\n';
+  const a=await app(list,url=>{
+    assert.doesNotMatch(url,/invidious-opaque-cursor/);
+    return json({videos:[row(1),row(2)],continuation:'native-token'});
+  },new Map(),{nativeMode:true,sharedCatalog:catalog});
+  assert.equal(a.run('displayed.size'),1);
+  assert.equal(a.run('catalogMetrics.providerCalls'),0);
+  await a.run('loadMoreVideos()');
+  assert.equal(a.run('displayed.size'),2);
+  assert.equal(a.run('channelProgress.get('+JSON.stringify(A)+').continuation'),'native-token');
 });
