@@ -13,6 +13,8 @@ import org.schabi.newpipe.extractor.exceptions.ReCaptchaException;
 
 final class ExtractorDownloader extends Downloader {
     final OkHttpClient client;
+    // Keep the optional legacy parent companion source-compatible.
+    ExtractorDownloader(){this(false);}
     ExtractorDownloader(boolean debugBuild) {
         OkHttpClient.Builder builder=new OkHttpClient.Builder()
                 .connectTimeout(5,TimeUnit.SECONDS).readTimeout(8,TimeUnit.SECONDS)
