@@ -21,6 +21,7 @@ final class NativeApi {
     final ExtractorDownloader downloader=new ExtractorDownloader();
     private volatile ApprovalPolicy policy=ApprovalPolicy.parse("");
     private volatile String raw="";
+    private JSONObject lastAuthorization;
     private volatile long checkedAt;
     private final Map<String,Alias> aliases=new ConcurrentHashMap<>();
     private final Map<String,Cache> cache=new ConcurrentHashMap<>();
@@ -85,13 +86,23 @@ final class NativeApi {
             }
             if(!next.fingerprint.equals(policy.fingerprint)){cache.clear();cursors.clear();}
             aliases.clear();aliases.putAll(pinned);
-            raw=text;policy=next;checkedAt=System.currentTimeMillis();
+            raw=text;policy=next;lastAuthorization=doc;checkedAt=System.currentTimeMillis();
             return text;
         } finally {if(scope!=null)scope.remove(call);}
     }
     String displayWhitelist() throws Exception {
         // Fail closed: stale approvals are never displayed as current approvals.
         return whitelist(true);
+    }
+    synchronized JSONObject displayAuthorization() throws Exception {
+        // One native transport is authoritative for the WebView and the playback
+        // bridge. Never return a previous document after a failed fresh request.
+        whitelist(true);
+        if(lastAuthorization==null || !lastAuthorization.has("updatedAt")
+                || !lastAuthorization.has("version")
+                || lastAuthorization.optInt("catalogVersion",-1)!=1)
+            throw new IOException("INVALID_AUTH_RESPONSE");
+        return new JSONObject(lastAuthorization.toString());
     }
     private void checkNetwork() throws IOException {
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
