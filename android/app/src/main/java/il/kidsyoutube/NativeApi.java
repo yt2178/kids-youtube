@@ -106,10 +106,10 @@ final class NativeApi {
                     pinned.put(url,new Alias(id));
             }
             if(scope!=null)scope.check();
-            long entered=android.os.SystemClock.elapsedRealtime();
+            long entered=System.nanoTime();
             synchronized(this){
                 if(debugBuild&&scope!=null)scope.phase("authorization-state-lock-wait",
-                        android.os.SystemClock.elapsedRealtime()-entered);
+                        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-entered));
                 if(scope!=null)scope.check();
                 if(generation!=authorizationGeneration.get())
                     throw new IOException("AUTH_SUPERSEDED");
