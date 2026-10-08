@@ -3,8 +3,8 @@ const fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'..');
 const production='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 function validate(url){
-  if(typeof url!=='string'||!/^https:\/\/[a-z0-9-]+\.supabase\.co\/functions\/v1\/kids-youtube$/.test(url)||url===production)
-    throw Error('STAGING_BACKEND_URL must be a different HTTPS Supabase project, same function path');
+  if(typeof url!=='string'||!/^https:\/\/[a-z0-9-]+\.supabase\.co\/functions\/v1\/kids-youtube(?:-staging)?$/.test(url)||url===production)
+    throw Error('STAGING_BACKEND_URL must use a distinct HTTPS staging function/project URL');
   return url;
 }
 function build(url=process.env.STAGING_BACKEND_URL,out=path.join(root,'staging-dist')){
@@ -25,7 +25,7 @@ function build(url=process.env.STAGING_BACKEND_URL,out=path.join(root,'staging-d
       const manifest=JSON.parse(text);manifest.name+=' — בדיקה';manifest.short_name+=' בדיקה';
       text=JSON.stringify(manifest,null,2);
     }
-    if(text.includes(productionHost)||text.includes(production))
+    if(text.includes(production))
       throw Error('Production backend remains in staging file '+name);
     fs.writeFileSync(path.join(out,name),text);
   }
