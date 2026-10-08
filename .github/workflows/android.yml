@@ -32,6 +32,28 @@ jobs:
           test "$code" = "200"
           grep -qi '^access-control-allow-origin: https://appassets.androidplatform.net' "$headers"
           node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(typeof j.list!=='string')process.exit(1)" "$body"
+      - name: Verify live server catalog and pinned Meir channel
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(mktemp)"
+          code="$(curl --silent --show-error --max-time 30 \
+            --output "$body" --write-out '%{http_code}' \
+            -H 'Origin: https://appassets.androidplatform.net' \
+            'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=catalog')"
+          test "$code" = 200
+          node - "$body" <<'NODE'
+          const fs=require('fs');
+          const response=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(!Number.isSafeInteger(response.version)||!Array.isArray(response.entries))throw Error('Invalid live catalog response');
+          const channel=response.entries.find(x=>x.approval_url==='https://www.youtube.com/@meirshows');
+          if(!channel)throw Error('Approved Meir channel missing from live catalog');
+          if(channel.item_id!=='UCV6xoqUxJzkWwCbDmEwMSYw')throw Error('Unexpected UC mapping');
+          const videos=Array.isArray(channel.page)?channel.page:[];
+          if(videos.some(v=>v.authorId!==channel.item_id))throw Error('Wrong author identity in live feed');
+          console.log('Live Meir catalog:',{version:response.version,pinnedUc:channel.item_id,videos:videos.length,checkedAt:channel.checked_at,available:response.available!==false});
+          if(!videos.length)throw Error('Live Meir catalog still empty after read-through');
+          NODE
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
