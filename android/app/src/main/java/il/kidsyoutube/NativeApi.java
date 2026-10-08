@@ -27,16 +27,17 @@ final class NativeApi {
     private final Map<String,Cursor> cursors=new ConcurrentHashMap<>();
     private volatile long cooldownUntil;
     private volatile boolean extractorReady;
+    private final boolean debugBuild;
     NativeApi(Context context) {
         // Do not initialize NewPipe on Activity.onCreate's UI thread.
+        debugBuild=(context.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0;
     }
     private synchronized void ensureExtractor() {
         if(extractorReady)return;
         long started=android.os.SystemClock.elapsedRealtime();
         NewPipe.init(downloader);
         extractorReady=true;
-        if((android.os.Build.TYPE.equals("userdebug")||android.os.Build.TYPE.equals("eng"))
-                || il.kidsyoutube.BuildConfig.DEBUG)
+        if(debugBuild)
             android.util.Log.d("KidsStartup","newpipe-init-worker-ms="+
                     (android.os.SystemClock.elapsedRealtime()-started));
     }
