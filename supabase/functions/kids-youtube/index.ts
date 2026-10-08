@@ -41,6 +41,19 @@ function oversized(response:Response,max:number){
   const raw=response.headers.get("content-length");if(!raw)return false;
   const size=Number(raw);return Number.isFinite(size)&&size>max;
 }
+async function readBounded(stream:ReadableStream<Uint8Array>|null,max:number){
+  if(!stream)return "";
+  const reader=stream.getReader(),chunks:Uint8Array[]=[];let total=0;
+  try{
+    for(;;){
+      const {done,value}=await reader.read();if(done)break;if(!value)continue;
+      total+=value.byteLength;if(total>max){await reader.cancel("TOO_LARGE").catch(()=>{});throw Error("TOO_LARGE");}
+      chunks.push(value);
+    }
+  }finally{reader.releaseLock();}
+  const out=new Uint8Array(total);let offset=0;for(const chunk of chunks){out.set(chunk,offset);offset+=chunk.byteLength;}
+  return new TextDecoder().decode(out);
+}
 function providerFailure(error:string,status:number,origin:string|null){
   return new Response(JSON.stringify({error}),{status:200,headers:{...cors(origin),"X-Kids-Provider-Status":String(status)}});
 }
@@ -183,13 +196,13 @@ async function proxyProvider(raw:string,origin:string|null){
         return providerFailure("UPSTREAM_UNAVAILABLE",mapped,origin);
       }
       if(oversized(r,MAX_PROVIDER_BYTES))return providerFailure("UPSTREAM_TOO_LARGE",502,origin);
-      const text=await r.text();
-      if(text.length>MAX_PROVIDER_BYTES)return providerFailure("UPSTREAM_TOO_LARGE",502,origin);
+      let text:string;try{text=await readBounded(r.body,MAX_PROVIDER_BYTES);}catch(e){if(signal.aborted)throw e;if(e instanceof Error&&e.message==="TOO_LARGE")return providerFailure("UPSTREAM_TOO_LARGE",502,origin);throw e;}
       try{JSON.parse(text);}catch{return providerFailure("UPSTREAM_INVALID",502,origin);}
       return new Response(text,{status:200,headers:{...cors(origin),"Content-Type":"application/json; charset=utf-8"}});
     });
   }catch(e){
-    return providerFailure(e instanceof DOMException&&e.name==="AbortError"?"UPSTREAM_TIMEOUT":"UPSTREAM_UNAVAILABLE",e instanceof DOMException&&e.name==="AbortError"?504:502,origin);
+    const timedOut=e!==null&&typeof e==="object"&&"name" in e&&e.name==="AbortError";
+    return providerFailure(timedOut?"UPSTREAM_TIMEOUT":"UPSTREAM_UNAVAILABLE",timedOut?504:502,origin);
   }
 }
 function safeNote(v:unknown){return String(v||"").replace(/[\r\n\uFEFF]/g," ").replace(/\s+/g," ").trim().slice(0,500);}
@@ -214,7 +227,11 @@ async function metadata(input:string){
     try{
       return await timed(METADATA_TIMEOUT_MS,async signal=>{
         const r=await fetch(endpoint,{signal,redirect:"manual",headers:{"Accept":"application/json","User-Agent":"KidsYouTubeParent/1.0"}});
-        if(r.ok){const d=await r.json();return {url,kind:"video",id,title:safeNote(d.title)||"סרטון YouTube",author:safeNote(d.author_name),thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};}
+        if(r.ok){
+          if(oversized(r,1000000))throw Error("OEMBED_TOO_LARGE");
+          const d=JSON.parse(await readBounded(r.body,1000000));
+          return {url,kind:"video",id,title:safeNote(d.title)||"סרטון YouTube",author:safeNote(d.author_name),thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};
+        }
         return {url,kind:"video",id,title:"סרטון YouTube",author:"",thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};
       });
     }catch{return {url,kind:"video",id,title:"סרטון YouTube",author:"",thumbnail:"https://img.youtube.com/vi/"+id+"/hqdefault.jpg"};}
@@ -224,7 +241,7 @@ async function metadata(input:string){
     await timed(METADATA_TIMEOUT_MS,async signal=>{
       const r=await fetchYoutubePage(url,signal);
       if(!r.ok||oversized(r,MAX_YOUTUBE_HTML_BYTES))return;
-      const html=await r.text();if(html.length>MAX_YOUTUBE_HTML_BYTES)return;
+      let html:string;try{html=await readBounded(r.body,MAX_YOUTUBE_HTML_BYTES);}catch{return;}
       title=metaContent(html,"og:title");
       if(!title){const m=html.match(/<title>([^<]+)<\/title>/i);if(m)title=htmlText(m[1]);}
       title=safeNote(title.replace(/\s*-\s*YouTube\s*$/i,""));
@@ -262,11 +279,12 @@ Deno.serve(async(req)=>{
     if(req.method!=="POST")return json({error:"METHOD"},405,origin);
     const declared=Number(req.headers.get("content-length")||0);
     if(Number.isFinite(declared)&&declared>MAX_BODY_BYTES)return json({error:"TOO_LARGE"},413,origin);
-    let body:any={};
-    try{
-      const rawBody=await req.text();if(rawBody.length>MAX_BODY_BYTES)return json({error:"TOO_LARGE"},413,origin);
-      body=rawBody?JSON.parse(rawBody):{};
-    }catch{return json({error:"BAD_JSON"},400,origin);}
+    let body:any={},rawBody:string;
+    try{rawBody=await readBounded(req.body,MAX_BODY_BYTES);}
+    catch{return json({error:"TOO_LARGE"},413,origin);}
+    try{body=rawBody?JSON.parse(rawBody):{};}
+    catch{return json({error:"BAD_JSON"},400,origin);}
+    if(body===null||typeof body!=="object"||Array.isArray(body))return json({error:"BAD_JSON"},400,origin);
     if(action==="setup"){
       if(s.password_hash)return json({error:"ALREADY_SETUP"},409,origin);
       const password=typeof body.password==="string"?body.password:"";
@@ -298,7 +316,9 @@ Deno.serve(async(req)=>{
     }
     if(action==="mutate"){
       if(!await auth(req,s))return json({error:"UNAUTHORIZED"},401,origin);
-      const op=body.operation, url2=share(body.link||""), note=safeNote(body.note);
+      const op=body.operation, note=safeNote(body.note);
+      if(op!=="add"&&op!=="remove")return json({error:"INVALID_OPERATION"},400,origin);
+      let url2:string;try{url2=share(body.link||"");}catch{return json({error:"INVALID_LINK"},400,origin);}
       for(let i=0;i<3;i++){
         const fresh=i?await state():s; const updated=edit(fresh.list_text,op,url2,note);
         if(updated===fresh.list_text)return json({ok:true,changed:false,list:fresh.list_text},200,origin);
