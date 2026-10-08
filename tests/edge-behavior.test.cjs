@@ -4,9 +4,9 @@ const {webcrypto,createHash}=require('node:crypto');
 const API_ORIGIN='https://yt2178.github.io';
 const A='https://www.youtube.com/watch?v=mVTlbvQ_010',B='https://www.youtube.com/watch?v=AAAAAAAAAAA';
 const hash=(pass,secret)=>createHash('sha256').update(secret+'\0'+pass).digest('base64url');
-async function createFixture({upstream,configured=true}={}){
+async function createFixture({upstream,configured=true,onCatalogRead}={}){
  const db={list_text:A+'\n',password_hash:configured?hash('familyPassword!','secret123'):null,session_secret:'secret123',version:7,updated_at:'date'};
- let serve,patches=0,conflict=false;const catalog=new Map();
+ let serve,patches=0,conflict=false,stateReads=0,catalogReads=0;const catalog=new Map();
  async function fetcher(input,opts={}){
   const u=new URL(String(input));
   if(u.origin!=='https://test.supabase.co'){
@@ -14,6 +14,7 @@ async function createFixture({upstream,configured=true}={}){
     throw Error('Unexpected outbound fetch: '+u.href);
   }
   if(u.pathname.includes('/kids_youtube_catalog')){
+    if(opts.method!=='POST'){catalogReads++;if(onCatalogRead)await onCatalogRead(db);}
     if(opts.method==='POST'){
       const row=JSON.parse(opts.body);catalog.set(row.approval_url,row);
       return new Response('',{status:201});
@@ -25,6 +26,7 @@ async function createFixture({upstream,configured=true}={}){
     if(conflict||expected!==db.version)return new Response('[]',{status:200});
     Object.assign(db,JSON.parse(opts.body));
   }
+  stateReads++;
   return new Response(JSON.stringify([db]),{status:200});
  }
  const source=stripTypeScriptTypes(fs.readFileSync('supabase/functions/kids-youtube/index.ts','utf8'),{mode:'strip'});
@@ -40,7 +42,7 @@ async function createFixture({upstream,configured=true}={}){
    const res=await serve(req);return {status:res.status,data:await res.json(),headers:res.headers};
  }
  const token=(await request('login',{body:{password:'familyPassword!'}})).data.token;
- return {db,catalog,request,token,patches:()=>patches,conflict:flag=>conflict=flag};
+ return {db,catalog,request,token,patches:()=>patches,stateReads:()=>stateReads,catalogReads:()=>catalogReads,conflict:flag=>conflict=flag};
 }
 test('stale manual replace cannot overwrite another parent mutation',async()=>{
  const f=await createFixture(),original=await f.request('list',{method:'GET'});
@@ -338,4 +340,42 @@ test('native authorization filters prepared display cache against current approv
  assert.equal(response.status,200);
  assert.equal(response.data.preparedCatalog.entries.length,0);
  assert.equal(response.data.list,A+'\n');
+});
+
+test('native snapshot refuses revoked grant changed during catalog table read',async()=>{
+ let changed=false;
+ const f=await createFixture({onCatalogRead:async db=>{
+   if(!changed){changed=true;db.list_text='';db.version++;db.updated_at='after-revocation';}
+ }});
+ f.catalog.set(A,{approval_url:A,kind:'video',item_id:'mVTlbvQ_010',title:'previously approved',checked_at:new Date().toISOString(),page:[]});
+ const response=await f.request('list',{method:'GET',query:{format:'native'}});
+ assert.equal(response.status,409);
+ assert.equal(response.data.error,'AUTH_CHANGED_RETRY');
+ assert.equal(response.data.list,undefined);
+ assert.equal(response.data.preparedCatalog,undefined);
+ const fresh=await f.request('list',{method:'GET',query:{format:'native'}});
+ assert.equal(fresh.status,200);
+ assert.equal(fresh.data.list,'');
+ assert.ok(!fresh.data.preparedCatalog || fresh.data.preparedCatalog.entries.length===0);
+});
+test('native snapshot never returns an old authority on failed final state verification',async()=>{
+ let failed=false;
+ const f=await createFixture({onCatalogRead:async db=>{if(!failed){db.updated_at='changed-same-version';failed=true;}}});
+ const response=await f.request('list',{method:'GET',query:{format:'native'}});
+ assert.equal(response.status,409);
+ assert.equal(response.data.error,'AUTH_CHANGED_RETRY');
+});
+test('native snapshot is bounded and serves catalog in one client request',async()=>{
+ const f=await createFixture();
+ const now=new Date().toISOString();
+ f.catalog.set(A,{approval_url:A,kind:'video',item_id:'mVTlbvQ_010',title:'הכותרת המוכנה',checked_at:now,page:[]});
+ const before=f.stateReads(),beforeCatalog=f.catalogReads();
+ const response=await f.request('list',{method:'GET',query:{format:'native'}});
+ assert.equal(response.status,200);
+ assert.equal(response.data.preparedCatalog.entries.length,1);
+ assert.equal(response.data.preparedCatalog.version,response.data.version);
+ assert.equal(response.data.preparedCatalog.updatedAt,response.data.updatedAt);
+ assert.ok(JSON.stringify(response.data).length<800000);
+ assert.equal(f.stateReads()-before,2,'two internal authority reads, one external response');
+ assert.equal(f.catalogReads()-beforeCatalog,1);
 });
