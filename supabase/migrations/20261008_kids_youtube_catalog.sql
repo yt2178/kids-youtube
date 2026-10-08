@@ -21,6 +21,7 @@ create table if not exists public.kids_youtube_catalog (
 );
 alter table public.kids_youtube_catalog enable row level security;
 revoke all on public.kids_youtube_catalog from public, anon, authenticated;
+grant select, insert, update, delete on public.kids_youtube_catalog to service_role;
 create index if not exists kids_youtube_catalog_checked_idx
   on public.kids_youtube_catalog (checked_at);
 comment on table public.kids_youtube_catalog is
