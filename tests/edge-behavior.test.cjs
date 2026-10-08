@@ -317,3 +317,25 @@ test('native list and browser list share the same version, marker and approval t
  assert.equal(native.data.catalogVersion,1);
  assert.ok(Array.isArray(native.data.pinnedChannels));
 });
+
+test('runtime native authorization embeds existing approved display records without an additional provider request',async()=>{
+ const f=await createFixture();
+ const now=new Date().toISOString();
+ f.catalog.set(A,{approval_url:A,kind:'video',item_id:'mVTlbvQ_010',title:'כותרת מוכנה',checked_at:now,page:[]});
+ const response=await f.request('list',{method:'GET',query:{format:'native'}});
+ assert.equal(response.status,200);
+ assert.equal(response.data.version,7);
+ assert.equal(response.data.updatedAt,'date');
+ assert.equal(response.data.preparedCatalog.version,7);
+ assert.equal(response.data.preparedCatalog.entries.length,1);
+ assert.equal(response.data.preparedCatalog.entries[0].title,'כותרת מוכנה');
+ assert.equal(response.data.list,A+'\n');
+});
+test('native authorization filters prepared display cache against current approval list',async()=>{
+ const f=await createFixture(),now=new Date().toISOString();
+ f.catalog.set(B,{approval_url:B,kind:'video',item_id:'AAAAAAAAAAA',title:'לא מאושר',checked_at:now,page:[]});
+ const response=await f.request('list',{method:'GET',query:{format:'native'}});
+ assert.equal(response.status,200);
+ assert.equal(response.data.preparedCatalog.entries.length,0);
+ assert.equal(response.data.list,A+'\n');
+});
