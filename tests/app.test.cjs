@@ -1128,7 +1128,7 @@ test('optional partial-channel retry auth timeout keeps 17 freshly approved prep
   assert.doesNotMatch(a.elements['status-text'].textContent,/לא הצלחנו לאמת כרגע/);
 });
 
-test('device catalog WebView timeout falls back once to native transport for same grant version',async()=>{
+test('Android with no embedded catalog skips both browser and native catalog fetches',async()=>{
  const list='https://www.youtube.com/watch?v='+id(1)+'\n';
  const catalog={version:3,updatedAt:'fresh',entries:[{
    approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',item_id:id(1),
@@ -1143,12 +1143,12 @@ test('device catalog WebView timeout falls back once to native transport for sam
      nativeCalls++;assert.equal(grant.version,3);assert.equal(grant.updatedAt,'fresh');return catalog;
    }
  });
- assert.equal(nativeCalls,1);assert.equal(extractorCalls,0);
+ assert.equal(nativeCalls,0);assert.ok(extractorCalls>=1);
  assert.equal(a.run('displayed.size'),1);
- assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם מוכן מהשרת');
+ assert.notEqual(a.run(`displayed.get('${id(1)}').title`),'שם מוכן מהשרת');
  assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,0);
 });
-test('catalog fallback mismatch fails closed rather than granting stale content',async()=>{
+test('missing bundled catalog cannot authorize stale content or cause a second catalog request',async()=>{
  const list='https://www.youtube.com/watch?v='+id(1)+'\n';
  const a=await app(list,()=>json({videoId:id(1),title:'unverified',authorId:A}),new Map(),{
   nativeMode:true,sharedCatalog:{version:3,updatedAt:'fresh',entries:[]},
@@ -1158,7 +1158,9 @@ test('catalog fallback mismatch fails closed rather than granting stale content'
     approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',item_id:id(1),title:'stale'
   }]})
  });
- assert.equal(a.run('displayed.size'),0);assert.equal(a.run('approvalMarker'),'');
+ assert.equal(a.run('displayed.size'),1,'direct grant remains authoritative');
+ assert.ok(a.run('approvalMarker').includes(list));
+ assert.notEqual(a.run(`displayed.get('${id(1)}').title`),'stale');
 });
 test('optional catalog timeout plus metadata network failure preserves only freshly approved manual card',async()=>{
  const list='https://www.youtube.com/watch?v='+id(1)+'\n';
@@ -1169,7 +1171,7 @@ test('optional catalog timeout plus metadata network failure preserves only fres
   catalogFetch:()=>{throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'})},
   nativeFetchCatalog:async()=>{nativeCalls++;throw Object.assign(new Error('CONNECT_ERROR'),{code:'CONNECT_ERROR'})}
  });
- assert.equal(nativeCalls,1);assert.equal(a.run('displayed.size'),1);
+ assert.equal(nativeCalls,0);assert.equal(a.run('displayed.size'),1);
  assert.equal(a.run('approvalMarker').includes(list),true);
  assert.match(a.elements['status-text'].textContent,/חלק מהפרטים/);
 });
@@ -1209,7 +1211,7 @@ test('bundled old-version catalog is never authorization; metadata failure canno
    nativeFetchAuthorization:async()=>({list,version:17,updatedAt:'fresh-time',catalogVersion:1,preparedCatalog:prepared}),
    catalogFetch:()=>{catalogAttempts++;return json({version:17,updatedAt:'fresh-time',entries:[]})}
  });
- assert.equal(catalogAttempts,1,'invalid embedded cache cannot replace validated grants');
+ assert.equal(catalogAttempts,0,'invalid embedded cache cannot cause a second native/browser request');
  assert.equal(a.run('displayed.size'),1,'direct video grant remains visible despite metadata failure');
  assert.notEqual(a.run(`displayed.get('${id(1)}').title`),'ישן');
  const revoked=await app('',()=>{throw Error('provider should not be used')},new Map(),{
