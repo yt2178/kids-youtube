@@ -492,11 +492,11 @@ function safeChannelImage(value, base) {
 function sharedCatalogSnapshot(entries, response){
   const records=Object.create(null),lists=Object.create(null),dates=Object.create(null),progress=Object.create(null);
   if(!response||!Array.isArray(response.entries)||response.entries.length>500)return {records,lists,dates,progress};
-  const approved=new Map(entries.filter(e=>!!e.id).map(e=>[e.url,e]));
+  const approved=new Map(entries.map(e=>[e.url,e]));
   for(const row of response.entries){
     if(!row||typeof row.approval_url!=='string')continue;
     const entry=approved.get(row.approval_url);
-    if(!entry||row.kind!==entry.kind||row.item_id!==entry.id)continue;
+    if(!entry||row.kind!==entry.kind||(entry.id&&row.item_id!==entry.id))continue;
     const checked=Date.parse(row.checked_at);
     if(!Number.isFinite(checked)||checked>Date.now()+300000)continue;
     const title=cleanTitle(row.title);
@@ -747,13 +747,13 @@ async function loadApp({forceCatalog=false}={}) {
         // Render the first useful result and then batches, not each late title.
         if(++resolvedCount===1 || resolvedCount%3===0){
           config=configFromLinkRecords(entries,activeLinkRecords);
-          lists=pruneLists(config,lists);
+          lists=pruneLists(config,{...lists,...shared.lists});
           render(config,lists);
         }
       });
       if(!stillAuthorized())return;
       config=configFromLinkRecords(entries,activeLinkRecords);
-      lists=pruneLists(config,lists);
+      lists=pruneLists(config,{...lists,...shared.lists});
       if(!saveSnapshot(config,lists))cacheSaved=false;
       render(config,lists);
     }
