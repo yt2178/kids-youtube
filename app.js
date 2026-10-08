@@ -91,6 +91,7 @@ let authorizationGeneration = 0;
 let pendingOnlineRefresh = false;
 let catalogRetryTimer = null;
 let catalogRetryAttempts = 0;
+let catalogRetryPending = false;
 const catalogMetrics = {startedAt:0,authorizationMs:0,metadataMs:0,channelsMs:0,firstUsefulMs:0,completedMs:0,requests:0,providerCalls:0,renderCalls:0,displayCacheHits:0,channelCacheHits:0,retries:0};
 const savedView = storageGet(VIEW_KEY);
 let viewStyle = savedView === 'list' ? 'list' : 'grid';
@@ -620,7 +621,7 @@ function scheduleCatalogRetry(){
   const delays=[35000,90000,180000],delay=delays[catalogRetryAttempts++];
   catalogRetryTimer=setTimeout(()=>{
     catalogRetryTimer=null;
-    if(document.hidden||playback||loading||paginationBusy||navigator.onLine===false)return;
+    if(document.hidden||playback||loading||paginationBusy||navigator.onLine===false){catalogRetryPending=true;return;}
     catalogMetrics.retries++;
     loadApp({forceCatalog:true});
   },delay);
@@ -629,7 +630,7 @@ function scheduleCatalogRetry(){
 }
 async function loadApp({forceCatalog=false}={}) {
   if (loading || paginationBusy || !ui.player.hidden) return;
-  clearTimeout(catalogRetryTimer);catalogRetryTimer=null;
+  clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;
   const startedAt=Date.now();catalogMetrics.startedAt=startedAt;
   catalogMetrics.requests=0;catalogMetrics.providerCalls=0;catalogMetrics.renderCalls=0;
   catalogMetrics.displayCacheHits=0;catalogMetrics.channelCacheHits=0;
@@ -748,7 +749,10 @@ async function loadApp({forceCatalog=false}={}) {
     catalogMetrics.completedMs=Date.now()-startedAt;
     loading = false; ui.grid.removeAttribute('aria-busy');
     if(stillAuthorized())render(activeConfig, activeLists);
-    if(pendingOnlineRefresh&&navigator.onLine!==false){pendingOnlineRefresh=false;loadApp();}
+    if(pendingOnlineRefresh&&navigator.onLine!==false){pendingOnlineRefresh=false;catalogRetryPending=false;loadApp();}
+    else if(catalogRetryPending&&!document.hidden&&!playback&&!paginationBusy&&navigator.onLine!==false){
+      catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});
+    }
   }
 }
 
@@ -1059,9 +1063,10 @@ ui.install.addEventListener('click', async () => {
 });
 window.addEventListener('appinstalled', () => { installPrompt = null; ui.install.hidden = true; });
 window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
-window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp();});
+window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;catalogRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp();});
 document.addEventListener('visibilitychange', () => {
   if(document.hidden||navigator.onLine===false)return;
+  if(catalogRetryPending&&!loading&&!paginationBusy&&!playback){catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});return;}
   if(Date.now()-lastLoad>SETTINGS.refreshOnReturnMs){loadApp();return;}
   if(!PARENT_CATALOG&&!NATIVE_MODE)providers.healthCheck().then(audit);
   checkAuthorizationFreshness();
