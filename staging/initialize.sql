@@ -9,7 +9,8 @@ create table if not exists public.kids_youtube_state (
   updated_at timestamptz not null default now()
 );
 alter table public.kids_youtube_state enable row level security;
-revoke all on public.kids_youtube_state from anon, authenticated;
+revoke all on public.kids_youtube_state from public, anon, authenticated;
+grant select, insert, update, delete on public.kids_youtube_state to service_role;
 insert into public.kids_youtube_state(singleton,list_text,password_hash,session_secret,version)
 values (true,'',null,encode(gen_random_bytes(32),'base64'),0)
 on conflict(singleton) do nothing;
