@@ -12,6 +12,14 @@ concurrency:
   group: android-family-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  capture-script:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run PowerShell capture script and mocked ADB selection tests
+        shell: pwsh
+        run: ./tests/collect-late-authorization.test.ps1
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 25
