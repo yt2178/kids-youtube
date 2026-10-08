@@ -49,12 +49,36 @@ public final class MainActivity extends Activity {
     private Runnable playerTimeout;
     private boolean destroyed;
     private long startupStartedAt;
-    private void debugBridge(String method,String id,String phase,long started,String outcome){
+    private void debugBridge(String method,String id,String phase,long started,String outcome,RequestScope scope){
         if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)==0)return;
         android.util.Log.d("KidsCatalog","native-request "+phase+
-                " operation="+method+" requestId="+id+
+                " operation="+method+" bridgeId="+id+scope.trace()+
                 " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-started)+
                 " result="+outcome);
+    }
+    private void logWebDiagnostic(String message){
+        if(message==null || !message.startsWith("KidsCatalog ") || message.length()>1500)return;
+        int split=message.indexOf(" {");
+        if(split<0)return;
+        String event=message.substring(12,split);
+        if(!event.matches("[a-z0-9-]{1,48}"))return;
+        try{
+            JSONObject fields=new JSONObject(message.substring(split+1));
+            StringBuilder out=new StringBuilder("event=").append(event);
+            for(String key:new String[]{"loadCycle","requestId","serial","version","catalogVersion","ms","timeoutMs","authorizationMs"}){
+                if(fields.has(key) && !fields.isNull(key)){
+                    Object value=fields.opt(key);
+                    if(value instanceof Number && ((Number)value).longValue()>=0)
+                        out.append(" ").append(key).append("=").append(((Number)value).longValue());
+                }
+            }
+            for(String key:new String[]{"kind","source","transport","outcome","trigger","reason"}){
+                String value=fields.optString(key,"");
+                if(value.matches("[A-Za-z0-9_-]{1,48}"))
+                    out.append(" ").append(key).append("=").append(value);
+            }
+            android.util.Log.d("KidsWeb",out.toString());
+        }catch(JSONException ignored){}
     }
     private void debugStartup(String stage){
         if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)==0)return;
@@ -145,8 +169,9 @@ public final class MainActivity extends Activity {
             WebView.setWebContentsDebuggingEnabled(true);
             web.setWebChromeClient(new android.webkit.WebChromeClient(){
                 @Override public boolean onConsoleMessage(android.webkit.ConsoleMessage message){
-                    android.util.Log.d("KidsWeb",message.messageLevel()+": "+message.message()+
-                            " @"+message.sourceId()+":"+message.lineNumber());
+                    // Emit allowlisted structured diagnostics only, never page source URLs
+                    // or arbitrary console output (which can contain signed links).
+                    logWebDiagnostic(message.message());
                     return true;
                 }
             });
@@ -222,12 +247,20 @@ public final class MainActivity extends Activity {
             if(!Set.of("whitelist","authorization","catalog","api","clear").contains(method)){
                 respond(reply,id,null,"INVALID_REQUEST");return;
             }
-            RequestScope scope=new RequestScope(14000);
+            JSONObject traceArg=method.equals("authorization")?data.optJSONObject("argument"):null;
+            long jsCycle=traceArg==null?0:traceArg.optLong("loadCycle",0);
+            long jsRequestId=traceArg==null?0:traceArg.optLong("requestId",0);
+            if(jsCycle<0||jsCycle>1000000000L||jsRequestId<0||jsRequestId>1000000000L){
+                respond(reply,id,null,"INVALID_REQUEST");return;
+            }
+            RequestScope scope=new RequestScope(14000,id,jsCycle,jsRequestId);
             String argument=data.optString("argument","");
             Task task=new Task(id,scope,()->{
                 scope.enter();
                 final long started=android.os.SystemClock.elapsedRealtime();
-                debugBridge(method,id,"start",started,"pending");
+                if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0)
+                    scope.phase("worker-queue-wait",started-scope.queuedAtMs);
+                debugBridge(method,id,"start",started,"pending",scope);
                 try {
                     Object result;
                     if(method.equals("whitelist"))result=api.displayWhitelist();
@@ -235,11 +268,11 @@ public final class MainActivity extends Activity {
                     else if(method.equals("catalog"))result=api.sharedCatalog(data.optJSONObject("argument"));
                     else if(method.equals("clear")){api.clear();result=Boolean.TRUE;}
                     else result=api.request(argument);
-                    scope.check();debugBridge(method,id,"end",started,"ok");
+                    scope.check();debugBridge(method,id,"end",started,"ok",scope);
                     respond(reply,id,result,null);
                 }catch(Exception e){
                     String reason=scope.cancelled?"CANCELLED":NativeApi.errorCode(e);
-                    debugBridge(method,id,"end",started,reason);
+                    debugBridge(method,id,"end",started,reason,scope);
                     // Debug type-only diagnostics: exception messages may contain signed media URLs.
                     if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0)
                         android.util.Log.d("KidsCatalog","native-failure operation="+method+
