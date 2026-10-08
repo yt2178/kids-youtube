@@ -272,9 +272,11 @@ test('RSS feed from a different UC identity is rejected even if it offers valid-
   const f=await createFixture({upstream:async url=>
     url.pathname==='/feeds/videos.xml'?new Response(feed,{status:200}):new Response('',{status:503})
   });
-  f.db.list_text=handle+'\\n';
+  f.db.list_text=handle+'\n';
   f.catalog.set(handle,{approval_url:handle,kind:'channel',item_id:channel,page:[],pages_loaded:0,complete:false,checked_at:new Date().toISOString()});
   const result=await f.request('prepare',{token:f.token,body:{link:handle}});
+  assert.equal(result.status,200);
+  assert.equal(result.data.reason,'PROVIDER_UNAVAILABLE');
   assert.equal(result.data.prepared,false);
   assert.equal(f.catalog.get(handle).page.length,0);
 });
