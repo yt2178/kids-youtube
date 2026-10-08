@@ -64,7 +64,7 @@
   }
   window.KidsNative = {
     createManager,
-    openPlayer:id=>call('play',id,undefined,30000).catch(()=>{}),
+    openPlayer:(id,title)=>call('play',{id,title:typeof title==='string'?title.slice(0,200):''},undefined,30000).catch(()=>{}),
     call
   };
   // Existing diagnostic controls are only for browser Invidious providers.
