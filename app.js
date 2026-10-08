@@ -53,7 +53,7 @@ function installFramePolicy() {
 }
 installFramePolicy();
 const $ = id => document.getElementById(id);
-const ui = Object.fromEntries(['app','grid','count','status','status-text','spinner','empty','empty-title','empty-text','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','search-toggle','search-row','clear-search','pull-refresh','channel-heading','channel-name','back-channels','browse-title','empty-clear','view-grid','view-list','sort-options'].map(id => [id, $(id)]));
+const ui = Object.fromEntries(['app','grid','count','status','status-text','status-retry','spinner','empty','empty-title','empty-text','more','player','back','player-title','media-host','player-spinner','player-message','next-player','player-error','retry-video','app-open-message','install','videos-tab','channels-tab','all-tab','sort','channel-filter','filters','diagnostics','provider-controls','diagnostic-panel','clear-cache','search','search-label','search-toggle','search-row','clear-search','pull-refresh','channel-heading','channel-name','back-channels','browse-title','empty-clear','view-grid','view-list','sort-options'].map(id => [id, $(id)]));
 let displayed = new Map();
 let activeConfig = {videos:[], channels:[]};
 let activeLists = Object.create(null);
@@ -245,11 +245,12 @@ function status(text, busy = false) {
   clearTimeout(statusTimer);statusTimer=null;
   ui['status-text'].textContent = text;
   ui.spinner.hidden = true;
+  if(ui['status-retry'])ui['status-retry'].hidden=!loadError||!!busy;
   if (!text) {ui.status.hidden=true;return;}
   if (busy) {
     ui.status.hidden=true;
     statusTimer=setTimeout(()=>{
-      if (loading || paginationBusy) {
+      if (loading || paginationBusy || contentRetryBusy) {
         ui.status.hidden=false;ui.spinner.hidden=false;
       }
     },260);
@@ -721,6 +722,7 @@ function scheduleCatalogRetry(reason='partial'){
 async function retryCatalogContents(){
   if(contentRetryBusy||loading||paginationBusy||document.hidden||navigator.onLine===false||!approvalMarker)return;
   contentRetryBusy=true;
+  status('משלימים את הפרטים החסרים…',true);
   const generation=authorizationGeneration,cycle=loadCycle,serial=++authorityCheckSerial,marker=approvalMarker;
   const current=()=>generation===authorizationGeneration&&cycle===loadCycle&&serial===authorityCheckSerial;
   debugCatalog('partial-retry-start',{loadCycle:cycle,pending:pendingChannelRetry.size});
@@ -749,7 +751,7 @@ async function retryCatalogContents(){
     });
     if(!current())return;
     debugCatalog('partial-retry-complete',{loadCycle:cycle,remaining:pendingChannelRetry.size,failures});
-    if(failures||pendingChannelRetry.size)scheduleCatalogRetry('partial');
+    if(failures||pendingChannelRetry.size){status('חלק מהתוכן עדיין לא התעדכן. ננסה שוב אוטומטית.');scheduleCatalogRetry('partial');}
     else {catalogRetryAttempts=0;status('');}
   }catch(e){
     if(!current())return;
@@ -765,7 +767,7 @@ async function retryCatalogContents(){
       failClosedAuthorization(undefined,'partial-retry-no-authority');
       scheduleCatalogRetry('authorization');
     }
-  }finally{contentRetryBusy=false;}
+  }finally{contentRetryBusy=false;ui.spinner.hidden=true;}
 }
 async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
   if (loading || paginationBusy || !ui.player.hidden) return;
@@ -940,7 +942,7 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
     activeLinkRecords = Object.create(null);approvalMarker='';
     // Any authority failure clears the local grant snapshot too.
     saveSnapshot({videos:[], channels:[]}, {});
-    status('');scheduleCatalogRetry('authorization');
+    status('לא הצלחנו לאמת את אישורי ההורה כרגע. התוכן מוסתר עד שהחיבור יחזור.');scheduleCatalogRetry('authorization');
   } finally {
     catalogMetrics.completedMs=Date.now()-startedAt;
     loading = false; ui.grid.removeAttribute('aria-busy');
@@ -1242,6 +1244,9 @@ document.addEventListener('touchend',()=>{
   Promise.resolve(loadApp({forceCatalog:true,trigger:'pull-to-refresh'})).finally(()=>{delete ui['pull-refresh'].dataset.loading;resetPull();});
 },{passive:true});
 ui.more.addEventListener('click', loadMoreVideos);
+ui['status-retry'].addEventListener('click',()=>{if(!loading&&!paginationBusy){
+  catalogRetryAttempts=0;loadApp({trigger:'error-retry'});
+}});
 ui.back.addEventListener('click', () => closePlayer());
 window.addEventListener('popstate', () => closePlayer(true));
 ui['next-player'].addEventListener('click', () => {
