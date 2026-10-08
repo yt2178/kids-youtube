@@ -6,6 +6,10 @@ tasks.register('prepareKidsAssets') {
     inputs.files(['index.html','app.js','providers.js','manifest.json','android/native-adapter.js',
         'android/LICENSE','android/THIRD_PARTY_NOTICES.md'].collect { new File(webRoot,it) })
     inputs.files(fileTree(new File(webRoot,'icons')) { include '*.png' })
+    // Staging and production produce different WebView assets. The backend URL
+    // and build mode must invalidate Gradle's input/output cache.
+    inputs.property('kidsStaging',project.findProperty('kidsStaging')?.toString() ?: 'false')
+    inputs.property('kidsBackendUrl',project.findProperty('kidsBackendUrl')?.toString() ?: '')
     outputs.dir outputAssets
     outputs.dir outputRes
     doLast {
@@ -56,6 +60,8 @@ const providers = KidsNative.createManager();''')
                 throw new GradleException('Non-production Supabase endpoint required for staging')
             def stagingHost=new URI(stagingUrl).host
             app=app.replace(productionUrl,stagingUrl)
+            app=app.replace('kidsYoutube','kidsStagingYoutube')
+            app=app.replace('kidsParentToken','kidsStagingParentToken')
             html=html.replace('jxhelpxhrmwvzrrfrjuh.supabase.co',stagingHost)
             if(app.split(java.util.regex.Pattern.quote(productionUrl),-1).drop(1).any { !it.startsWith('-staging') })
                 throw new GradleException('Production endpoint leaked into staging assets')
