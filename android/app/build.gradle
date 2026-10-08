@@ -9,11 +9,17 @@ android {
         targetSdk 35
         versionCode 3
         versionName '0.3-beta'
-        resValue 'string','kids_list_url',productionBackend+'?action=list&format=text'
+        resValue 'string','kids_list_url',productionBackend+'?action=list&format=native'
         resValue 'string','kids_backend_url',productionBackend
         resValue 'string','kids_app_label','סרטונים לילדים'
         resValue 'string','kids_deep_link_scheme','kidsyoutube'
-        def candidateSha=System.getenv('KIDS_BUILD_SHA') ?: 'local'
+        def candidateSha=System.getenv('KIDS_BUILD_SHA')
+        if(!candidateSha){
+            try {
+                def process=new ProcessBuilder('git','rev-parse','HEAD').directory(rootProject.projectDir).redirectErrorStream(true).start()
+                candidateSha=process.waitFor(3,java.util.concurrent.TimeUnit.SECONDS) && process.exitValue()==0 ? process.inputStream.text.trim() : 'local'
+            }catch(Exception ignored){candidateSha='local'}
+        }
         resValue 'string','kids_build_sha',(candidateSha ==~ /[a-f0-9]{40}/ ? candidateSha : 'local')
     }
     compileOptions {
