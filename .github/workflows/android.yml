@@ -53,6 +53,21 @@ jobs:
           node android/check-bundle.cjs
           cd android
           ./gradlew --no-daemon -PincludeParentCompanion=true :parent:testDebugUnitTest --stacktrace
+      - name: Audit Java deprecations and Gradle warnings
+        shell: bash
+        run: |
+          cat > /tmp/kids-audit-lint.init.gradle <<'EOF'
+          gradle.beforeProject { project ->
+              project.tasks.withType(JavaCompile).configureEach {
+                  options.compilerArgs.add('-Xlint:deprecation')
+              }
+          }
+          EOF
+          cd android
+          ./gradlew --no-daemon --rerun-tasks --warning-mode all \
+            --init-script /tmp/kids-audit-lint.init.gradle \
+            -PincludeParentCompanion=true \
+            :app:compileDebugJavaWithJavac :parent:compileDebugJavaWithJavac
       - name: Verify native reports
         run: |
           python3 - <<'PY'
