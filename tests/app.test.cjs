@@ -1269,3 +1269,79 @@ test('failed authorization displays a finite error with explicit retry button an
  assert.equal(a.elements['status-retry'].hidden,false);
  assert.match(a.elements['status-text'].textContent,/לא הצלחנו לאמת/);
 });
+
+test('late native poll fails closed after successful startup, then a fresh grant recovers',async()=>{
+  const list='https://www.youtube.com/watch?v='+id(1)+'\n',stamp='stable';
+  const catalog={version:3,updatedAt:stamp,entries:[{approval_url:'https://www.youtube.com/watch?v='+id(1),
+    kind:'video',item_id:id(1),title:'מוכן מראש',checked_at:new Date().toISOString()}]};
+  let calls=0;
+  const a=await app(list,()=>{throw Error('no provider discovery');},new Map(),{
+    nativeMode:true,
+    nativeFetchAuthorization:async()=>{
+      if(++calls===2)throw Object.assign(new Error('NETWORK_ERROR'),{code:'NETWORK_ERROR'});
+      return {list,version:3,updatedAt:stamp,catalogVersion:1,preparedCatalog:catalog};
+    },
+    listFetch:()=>{throw Error('No independent WebView authorization transport');}
+  });
+  assert.equal(a.run('displayed.size'),1);
+  assert.equal(a.run('approvalMarker')!=='',true);
+  await a.run("checkAuthorizationFreshness('poll')");
+  assert.equal(a.run('displayed.size'),0,'failed periodic authority must hide every card');
+  assert.equal(a.run('approvalMarker'),'','old grant must not remain usable');
+  assert.equal(a.run('catalogRetryAttempts'),1,'recovery is scheduled once with bounded backoff');
+  assert.equal(a.elements.spinner.hidden,true,'no endless loading spinner on failure');
+  await a.run("loadApp({trigger:'test-recovery'})");
+  assert.equal(a.run('displayed.size'),1,'recovery requires another successful fresh grant');
+  assert.equal(a.run('catalogRetryAttempts'),0);
+  assert.equal(calls,3,'startup + failed poll + recovery; no hidden extra authority calls');
+  assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,0);
+});
+
+test('late successful response from old native poll never restores a revoked or failed-closed grant',async()=>{
+  const list='https://www.youtube.com/watch?v='+id(1)+'\n',stamp='stable';
+  const grant={list,version:3,updatedAt:stamp,catalogVersion:1,preparedCatalog:{
+    version:3,updatedAt:stamp,entries:[{approval_url:'https://www.youtube.com/watch?v='+id(1),
+    kind:'video',item_id:id(1),title:'מוכן מראש',checked_at:new Date().toISOString()}]}};
+  let resolvePoll,calls=0;
+  const a=await app(list,()=>{throw Error('no provider discovery')},new Map(),{
+    nativeMode:true,
+    nativeFetchAuthorization:async()=>{
+      if(++calls===2)return new Promise(resolve=>{resolvePoll=resolve;});
+      return grant;
+    }
+  });
+  assert.equal(a.run('displayed.size'),1);
+  const oldPoll=a.run("checkAuthorizationFreshness('poll')");
+  await until(()=>typeof resolvePoll==='function');
+  a.run("failClosedAuthorization('auth verification unavailable','test-fail-closed')");
+  assert.equal(a.run('displayed.size'),0);
+  resolvePoll(grant);
+  await oldPoll;
+  assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.run('approvalMarker'),'');
+  await a.run("loadApp({trigger:'test-fresh-recovery'})");
+  assert.equal(a.run('displayed.size'),1);
+  assert.equal(calls,3);
+});
+
+test('native 409-equivalent NETWORK_ERROR is bounded, fail-closed and recoverable without a load loop',async()=>{
+  const list='https://www.youtube.com/watch?v='+id(2)+'\n',stamp='test-rev';
+  let calls=0;
+  const a=await app(list,()=>json({videoId:id(2),title:'מאושר',authorId:A}),new Map(),{
+    nativeMode:true,
+    nativeFetchAuthorization:async()=>{
+      calls++;
+      if(calls===2)throw Object.assign(new Error('NETWORK_ERROR'),{code:'NETWORK_ERROR'});
+      return {list,version:3,updatedAt:stamp,catalogVersion:1};
+    }
+  });
+  assert.equal(a.run('displayed.size'),1);
+  await a.run("checkAuthorizationFreshness('poll')");
+  assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.run('authorizationCheckInFlight'),false);
+  assert.equal(calls,2,'failure does not cause an immediate unbounded network loop');
+  assert.ok(a.run('catalogRetryAttempts')>=1&&a.run('catalogRetryAttempts')<=3);
+  await a.run("loadApp({trigger:'test-409-recovery'})");
+  assert.equal(a.run('displayed.size'),1);
+  assert.equal(calls,3);
+});
