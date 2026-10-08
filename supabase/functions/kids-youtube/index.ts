@@ -432,6 +432,16 @@ Deno.serve(async(req)=>{
       const op=body.operation, note=safeNote(body.note);
       if(op!=="add"&&op!=="remove")return json({error:"INVALID_OPERATION"},400,origin);
       let url2:string;try{url2=share(body.link||"");}catch{return json({error:"INVALID_LINK"},400,origin);}
+      // Newly approved @handles are pinned to a UC identifier if a trusted
+      // provider can resolve them. Existing grants are left untouched.
+      const originalUrl=url2;
+      if(op==="add"&&!new URL(url2).searchParams.has("v")&&!url2.includes("/channel/")
+          &&!existingUrls(s.list_text).has(url2)){
+        try{
+          const id=await stableChannelId(url2);
+          if(id)url2="https://www.youtube.com/channel/"+id;
+        }catch{} // Never infer an identity from an expired local alias.
+      }
       for(let i=0;i<3;i++){
         const fresh=i?await state():s; const updated=edit(fresh.list_text,op,url2,note);
         if(updated===fresh.list_text)return json({ok:true,changed:false,list:fresh.list_text,version:fresh.version},200,origin);
@@ -440,7 +450,7 @@ Deno.serve(async(req)=>{
           if(op==="add"){
             try{prepared=await timed(PREPARE_TIMEOUT_MS,()=>prepareCatalog(url2));}catch{prepared={prepared:false,reason:"PREPARATION_UNAVAILABLE"};}
           }
-          return json({ok:true,changed:true,list:updated,version:fresh.version+1,catalog:prepared},200,origin);
+          return json({ok:true,changed:true,list:updated,version:fresh.version+1,approvalUrl:url2,pinned:op==="add"&&url2!==originalUrl,catalog:prepared},200,origin);
         }
       }
       return json({error:"CONFLICT"},409,origin);
