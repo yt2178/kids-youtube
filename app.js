@@ -901,29 +901,45 @@ async function loadApp({forceCatalog=false}={}) {
     }
     if(pendingOnlineRefresh&&navigator.onLine!==false){pendingOnlineRefresh=false;catalogRetryPending=false;loadApp();}
     else if(catalogRetryPending&&!document.hidden&&!playback&&!paginationBusy&&navigator.onLine!==false){
-      catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});
+      catalogRetryPending=false;catalogMetrics.retries++;
+      if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true});
     }
   }
 }
 
-function failClosedAuthorization(message='לא הצלחנו לאמת כרגע את רשימת ההורה.') {
+function failClosedAuthorization(message='לא הצלחנו לאמת כרגע את רשימת ההורה.',reason='authorization'){
   clearTimeout(catalogRetryTimer);catalogRetryTimer=null;
-  authorizationGeneration++;loadError=true;approvalMarker='';activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
+  authorizationGeneration++;++authorityCheckSerial;loadError=true;approvalMarker='';
+  pendingChannelRetry.clear();catalogRetryPending=false;
+  debugCatalog('authorization-blocked',{loadCycle,reason,generation:authorizationGeneration});
+  activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
   displayed=new Map();ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;saveSnapshot(activeConfig,{});
   status(message);render(activeConfig,activeLists);
 }
-async function checkAuthorizationFreshness() {
-  if(loading||playback||document.hidden||navigator.onLine===false)return;
+async function checkAuthorizationFreshness(source='poll'){
+  if(authorizationCheckInFlight||contentRetryBusy||loading||playback||document.hidden||navigator.onLine===false)return;
+  authorizationCheckInFlight=true;
+  const cycle=loadCycle,serial=++authorityCheckSerial,generation=authorizationGeneration;
+  const current=()=>cycle===loadCycle&&serial===authorityCheckSerial&&generation===authorizationGeneration&&!loading;
+  const started=Date.now();
+  debugCatalog('authorization-check-start',{source,loadCycle:cycle,serial});
   try{
-    const remote=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+    const remote=await fetchJson(PARENT_API+'?action=list');
+    if(!current()){debugCatalog('authorization-check-stale',{source,loadCycle:cycle,serial,outcome:'success'});return;}
     if(!remote||typeof remote.list!=='string')throw new Error('INVALID_REMOTE_LIST');
     const marker=String(remote.updatedAt||'')+'\0'+remote.list;
+    debugCatalog('authorization-check-end',{source,loadCycle:cycle,serial,outcome:'ok',ms:Date.now()-started,changed:marker!==approvalMarker});
     if(!approvalMarker||marker!==approvalMarker){
-      failClosedAuthorization('רשימת ההורה השתנתה. מאמתים אותה מחדש…');
+      failClosedAuthorization('רשימת ההורה השתנתה. מאמתים אותה מחדש…','grant-change');
       if(paginationBusy){authorizationReloadPending=true;return;}
       await loadApp();
     }
-  }catch(_){failClosedAuthorization();}
+  }catch(e){
+    if(!current()){debugCatalog('authorization-check-stale',{source,loadCycle:cycle,serial,outcome:e?.code||'failed'});return;}
+    debugCatalog('authorization-check-end',{source,loadCycle:cycle,serial,outcome:e?.code||e?.message||'failed',ms:Date.now()-started});
+    failClosedAuthorization(undefined,'fresh-check-failed');
+    scheduleCatalogRetry('authorization');
+  }finally{authorizationCheckInFlight=false;}
 }
 
 function playerMessage(text, busy = false) {
@@ -1124,7 +1140,8 @@ function closePlayer(fromHistory = false) {
   if (target) target.focus({preventScroll:true}); scrollToPosition(returnScrollY);
   if (!fromHistory && history.state && history.state.kidsYoutubePlayer) history.back();
   if(catalogRetryPending&&!document.hidden&&!loading&&!paginationBusy&&navigator.onLine!==false){
-    catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});
+    catalogRetryPending=false;catalogMetrics.retries++;
+    if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true});
   }
 }
 function flushSearch() {
@@ -1219,15 +1236,19 @@ window.addEventListener('offline', () => {failClosedAuthorization('אין חיב
 window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;catalogRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp();});
 document.addEventListener('visibilitychange', () => {
   if(document.hidden||navigator.onLine===false)return;
-  if(catalogRetryPending&&!loading&&!paginationBusy&&!playback){catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});return;}
+  if(catalogRetryPending&&!loading&&!paginationBusy&&!playback){
+    catalogRetryPending=false;catalogMetrics.retries++;
+    if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true});
+    return;
+  }
   if(Date.now()-lastLoad>SETTINGS.refreshOnReturnMs){loadApp();return;}
   if(!PARENT_CATALOG&&!NATIVE_MODE)providers.healthCheck().then(audit);
-  checkAuthorizationFreshness();
+  checkAuthorizationFreshness('foreground');
 });
 if (history.state && history.state.kidsYoutubePlayer) history.replaceState(null, '', location.href);
 loadApp();
 
 if (typeof setInterval === 'function' && !PARENT_CATALOG) {
   if(!NATIVE_MODE)setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
-  setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
+  setInterval(()=>checkAuthorizationFreshness('poll'),SETTINGS.authorizationRefreshMs);
 }
