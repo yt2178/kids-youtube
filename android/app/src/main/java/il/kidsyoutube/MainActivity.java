@@ -27,6 +27,7 @@ public final class MainActivity extends Activity {
     static final String ORIGIN="https://appassets.androidplatform.net";
     static final String HOME=ORIGIN+"/assets/index.html";
     static final String SUPABASE_HOST="jxhelpxhrmwvzrrfrjuh.supabase.co";
+    private String effectiveSupabaseHost;
     static final String SUPABASE_PATH="/functions/v1/kids-youtube";
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ThreadPoolExecutor workers=new ThreadPoolExecutor(3,3,0,TimeUnit.SECONDS,
@@ -66,6 +67,7 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         startupStartedAt=android.os.SystemClock.elapsedRealtime();
         debugStartup("onCreate-start");
+        effectiveSupabaseHost=Uri.parse(getString(R.string.kids_backend_url)).getHost();
         api=new NativeApi(this);
         debugStartup("native-api-created");
         FrameLayout root=new FrameLayout(this);root.setBackgroundColor(Color.rgb(26,26,46));
@@ -154,7 +156,7 @@ public final class MainActivity extends Activity {
                     return result==null ? denied() : result;
                 }
                 String h=u.getHost();
-                boolean supabaseApi="https".equals(u.getScheme()) && SUPABASE_HOST.equals(h)
+                boolean supabaseApi="https".equals(u.getScheme()) && effectiveSupabaseHost.equals(h)
                         && SUPABASE_PATH.equals(u.getPath()) && !request.isForMainFrame();
                 if(supabaseApi)return null;
                 boolean image="https".equals(u.getScheme()) && h!=null
