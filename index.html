@@ -14,7 +14,7 @@
   <script>
     // GitHub Pages exposes the parent console only. Keep this same HTML intact
     // for the Android asset-loader and the authenticated parent iframe.
-    if(location.hostname==='yt2178.github.io' && window.top===window)
+    if(typeof location!=='undefined' && location.hostname==='yt2178.github.io' && window.top===window)
       location.replace(new URL('./parents.html',location.href));
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(function () {
