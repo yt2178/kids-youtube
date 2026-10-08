@@ -56,7 +56,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.listFetch?options.listFetch({url:target,opts,calls,raw}):options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
-  if(options.nativeMode)context.KidsNative={};
+  if(options.nativeMode)context.KidsNative={...(options.nativeFetchAuthorization?{fetchAuthorization:options.nativeFetchAuthorization}:{})};
   if(options.parentWindow){
     const here=new URL(options.href||'https://example.test/kids-youtube/');
     context.parent={location:{origin:here.origin,pathname:new URL('./parents.html',here).pathname},...options.parentWindow};
@@ -1065,4 +1065,37 @@ test('debug request trace identifies list timeout source and later authorization
  assert.ok(records.some(x=>x.includes('request-end')&&x.includes('"outcome":"TIMEOUT"')));
  assert.ok(records.some(x=>x.includes('authorization-ok')));
  assert.equal(records.some(x=>x.includes('https://')||x.includes('Bearer ')),false);
+});
+
+test('Android first load and periodic verification share the native authoritative transport, not WebView HTTP',async()=>{
+ const list='https://www.youtube.com/watch?v='+id(1)+'\n';
+ const calls=[];
+ const doc={list,version:3,updatedAt:'2026-10-08T16:28:30Z',catalogVersion:1};
+ const a=await app(list,()=>json({videoId:id(1),title:'מוכן',authorId:A}),new Map(),{
+   nativeMode:true,
+   nativeFetchAuthorization:async()=>{calls.push('native-authorization');return doc;},
+   listFetch:()=>{throw Error('WebView must not request native grants over a second transport');},
+   sharedCatalog:{version:3,updatedAt:doc.updatedAt,entries:[
+     {approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',item_id:id(1),title:'שם מהשרת',
+      checked_at:new Date().toISOString()}
+   ]}
+ });
+ assert.equal(a.run('displayed.size'),1);
+ assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם מהשרת');
+ assert.equal(calls.length,1);
+ assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,0);
+ await a.run("checkAuthorizationFreshness('poll')");
+ assert.equal(calls.length,2);
+ assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,0);
+ assert.equal(a.run('displayed.size'),1);
+});
+test('Android native whitelist failure remains fail-closed instead of falling back to browser grants',async()=>{
+ const raw='https://www.youtube.com/watch?v='+id(2)+'\n';
+ const a=await app(raw,()=>json({videoId:id(2),title:'מוכן',authorId:A}),new Map(),{
+ nativeMode:true,nativeFetchAuthorization:async()=>{throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'})},
+ listFetch:()=>{throw Error('Forbidden silent fallback');}
+ });
+ assert.equal(a.run('displayed.size'),0);
+ assert.equal(a.run('approvalMarker'),'');
+ assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,0);
 });
