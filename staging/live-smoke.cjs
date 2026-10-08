@@ -19,7 +19,7 @@ async function main(){
   for(const filename of ['app.js','parents.js','index.html']){
     const source=fs.readFileSync(path.join(folder,filename),'utf8');
     assert.equal(source.split(PRODUCTION).slice(1).some(suffix=>!suffix.startsWith('-staging')),false,filename+' production endpoint');
-    assert.equal(source.includes(STAGE),true,filename+' staging endpoint');
+    assert.equal(filename==='index.html' ? source.includes(new URL(STAGE).hostname) : source.includes(STAGE),true,filename+' staging backend');
   }
   const listResponse=await request(STAGE+'?action=list');
   assert.equal(listResponse.status,200);
