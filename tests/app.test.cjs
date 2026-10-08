@@ -705,3 +705,22 @@ test('global channel filter does not hide manual approvals or block pagination i
   const before=a.calls.length;await a.run('loadMoreVideos()');assert.equal(a.calls.length,before+1);assert.deepEqual(visibleVideoIds(a),[id(2),id(3)]);
 });
 
+
+test('late Supabase approval response cannot revive cards after fail-closed',async()=>{
+  const a=await app({videos:[{id:id(1)}],channels:[]});
+  let complete;a.context.fetch=()=>new Promise(resolve=>complete=resolve);
+  const pending=a.run('loadApp()');await until(()=>typeof complete==='function');
+  a.run("failClosedAuthorization('אימות נכשל')");
+  complete(json({list:JSON.stringify({videos:[{id:id(1)}],channels:[]}),updatedAt:'old'}));
+  await pending;assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.elements.grid.children.length,0);assert.equal(a.run('approvalMarker'),'');
+});
+test('late Invidious channel response cannot revive cards after fail-closed',async()=>{
+  let finish,hold=false;
+  const a=await app({videos:[],channels:[{id:A}]},()=>hold?new Promise(resolve=>finish=resolve):json({videos:[],continuation:null}));
+  hold=true;a.run('providers.clearCache()');
+  const pending=a.run('loadApp()');await until(()=>typeof finish==='function');
+  a.run("failClosedAuthorization('האישור בוטל')");
+  finish(json({videos:[row(8)],continuation:null}));
+  await pending;assert.equal(a.run('displayed.size'),0);assert.equal(a.elements.grid.children.length,0);
+});
