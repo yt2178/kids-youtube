@@ -21,7 +21,7 @@ test('native bundle parses and keeps the three-tab UI without changing website s
     assert.match(html,/id="videos-tab"/);assert.match(html,/id="channels-tab"/);assert.match(html,/id="all-tab"/);
     assert.match(html,/frame-src 'none'/);assert.match(html,/false && 'serviceWorker'/);
     assert.match(app,/const providers = KidsNative.createManager\(\)/);
-    assert.match(app,/KidsNative.openPlayer\(id\)/);
+    assert.match(app,/KidsNative.openPlayer\(id,video.title\)/);
     assert.equal(fs.readFileSync(path.join(root,'app.js'),'utf8'),original);
   }finally{fs.rmSync(out,{recursive:true,force:true});}
 });
@@ -125,3 +125,23 @@ test('parent share target and credentials are isolated from the child app and pa
   }finally{fs.rmSync(out,{recursive:true,force:true});}
 });
 
+
+test('native bridge forwards known card title but never treats it as playback approval',async()=>{
+  const {c,messages,reply}=context();
+  const promise=c.KidsNative.openPlayer('mVTlbvQ_010','ילד טרמפולינה');
+  assert.equal(messages[0].method,'play');
+  assert.equal(messages[0].argument.id,'mVTlbvQ_010');
+  assert.equal(messages[0].argument.title,'ילד טרמפולינה');
+  reply({id:messages[0].id,data:true});await promise;
+  const native=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  assert.match(native,/openPlayer\(video,videoTitle\)/);
+  assert.match(native,/result\.title/);
+  assert.match(native,/KidsPlayback/);
+});
+test('native channel pin requires exact current parent-list membership',()=>{
+  const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  assert.match(source,/next\.channelUrls\.contains\(url\)/);
+  assert.match(source,/aliases\.clear\(\);aliases\.putAll\(pinned\)/);
+  assert.match(source,/whitelist\(true\)/);
+  assert.match(fs.readFileSync(path.join(root,'android/app/build.gradle'),'utf8'),/format=native/);
+});

@@ -48,7 +48,7 @@ async function backfillApprovedCatalog(){
       const byUrl=new Map(data.entries.filter(x=>x&&typeof x.approval_url==='string').map(x=>[x.approval_url,x]));
       const item=entries(currentList).find(e=>{
         const row=byUrl.get(e.url);
-        return !row||(!row.complete&&row.continuation&&Number(row.pages_loaded)<8);
+        return !row||(!row.complete&&(!row.continuation||Number(row.pages_loaded)<8));
       });
       if(!item)return;
       const row=byUrl.get(item.url);

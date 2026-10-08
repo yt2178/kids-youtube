@@ -259,6 +259,29 @@ async function metadata(input:string){
 const CATALOG_TABLE = BASE+"/rest/v1/kids_youtube_catalog";
 const PREPARE_TIMEOUT_MS = 12500;
 const PAGE_MAX_ITEMS = 45;
+const lastFeedAttempt = new Map<string,number>();
+async function catalogReadThrough(rows:any[],snapshot:any){
+  // Only the first missing page of one currently approved UC channel may be
+  // prepared, synchronously, under 1.9s. No background work, no cron.
+  const now=Date.now();
+  const row=rows.find(v=>v?.kind==="channel"&&/^UC[A-Za-z0-9_-]{22}$/.test(v.item_id)
+    &&(!Array.isArray(v.page)||v.page.length===0)
+    &&now-Date.parse(v.checked_at||"")>20*60*1000
+    &&now-(lastFeedAttempt.get(v.approval_url)||0)>20*60*1000);
+  if(!row)return rows;
+  lastFeedAttempt.set(row.approval_url,now);
+  const feed=await youtubeFeedPage(row.item_id,Date.now()+1800);
+  if(!feed?.videos?.length)return rows;
+  const page=feed.videos.slice(0,20).map((v:any)=>safePreparedVideo(v,row.item_id)).filter(Boolean);
+  if(!page.length)return rows;
+  try{
+    const latest=await state();
+    if(latest.version!==snapshot.version||!approvedCatalogUrls(latest.list_text).has(row.approval_url))return rows;
+    const updated={...row,page,continuation:null,pages_loaded:1,complete:false,checked_at:new Date().toISOString(),updated_at:new Date().toISOString()};
+    await saveCatalog(updated);
+    return rows.map(v=>v.approval_url===row.approval_url?updated:v);
+  }catch{return rows;}
+}
 function approvedCatalogUrls(list:string):Set<string>{return existingUrls(list);}
 async function catalogRows(approved:Set<string>){
   if(!approved.size)return [];
@@ -306,9 +329,49 @@ async function providerData(path:string,deadline=Date.now()+PREPARE_TIMEOUT_MS){
 async function stableChannelId(url:string,deadline=Date.now()+PREPARE_TIMEOUT_MS){
   const match=url.match(/^https:\/\/www\.youtube\.com\/channel\/(UC[A-Za-z0-9_-]{22})$/);
   if(match)return match[1];
+  // An already-approved exact URL with a previously resolved pinned UC id
+  // must not be silently retargeted when @handle changes or a provider fails.
+  const saved=(await catalogRows(new Set([url])))[0];
+  if(saved?.kind==="channel" && /^UC[A-Za-z0-9_-]{22}$/.test(saved.item_id))return saved.item_id;
   const data=await providerData("/api/v1/resolveurl?url="+encodeURIComponent(url),deadline);
   const id=data?.ucid||data?.browseId||"";
   return /^UC[A-Za-z0-9_-]{22}$/.test(id)?id:"";
+}
+function xmlValue(xml:string,tag:string){
+  // The caller supplies fixed XML tag names only, never user input.
+  const open="<"+tag+">",close="</"+tag+">";
+  const start=xml.indexOf(open);
+  if(start<0)return "";
+  const end=xml.indexOf(close,start+open.length);
+  return end<0?"":htmlText(xml.slice(start+open.length,end));
+}
+// Public YouTube channel feed: a bounded, key-free first-page fallback, not
+// YouTube Data API and not an authorization source.
+async function youtubeFeedPage(channelId:string,deadline:number){
+  if(!/^UC[A-Za-z0-9_-]{22}$/.test(channelId))return null;
+  try{
+    return await timed(Math.min(3500,Math.max(1,deadline-Date.now())),async signal=>{
+      const u="https://www.youtube.com/feeds/videos.xml?channel_id="+channelId;
+      const r=await fetch(u,{signal,redirect:"manual",headers:{"Accept":"application/atom+xml, application/xml"}});
+      if(!r.ok||oversized(r,500000))return null;
+      const xml=await readBounded(r.body,500000);
+      const feedChannelId=xmlValue(xml,"yt:channelId");
+      // YouTube's Atom feed may omit the conventional UC prefix in yt:channelId.
+      // Match the whole immutable ID in either documented observed encoding;
+      // never infer an approval or use the feed as an authorization source.
+      if(feedChannelId!==channelId && "UC"+feedChannelId!==channelId)return null;
+      const entries=xml.match(/<entry\b[^>]*>[\s\S]*?<\/entry>/gi)||[];
+      const videos=[];
+      for(const block of entries.slice(0,20)){
+        const id=xmlValue(block,"yt:videoId");
+        if(!/^[A-Za-z0-9_-]{11}$/.test(id))continue;
+        const published=Date.parse(xmlValue(block,"published"));
+        videos.push({videoId:id,authorId:channelId,title:xmlValue(block,"title"),
+          author:xmlValue(xml,"title"),published:Number.isFinite(published)?Math.floor(published/1000):0});
+      }
+      return videos.length?{videos,continuation:null,feedFallback:true}:null;
+    });
+  }catch{return null;}
 }
 async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|null){
   const deadline=Date.now()+PREPARE_TIMEOUT_MS;
@@ -334,7 +397,13 @@ async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|n
   if(next!==null&&(!same||saved?.continuation!==next||saved?.complete||saved?.pages_loaded>=8))
     throw Error("INVALID_CONTINUATION");
   const path="/api/v1/channels/"+id+"/videos"+(next?"?continuation="+encodeURIComponent(next):"");
-  const raw=await providerData(path,deadline);
+  // Reserve a short, bounded window for the official RSS fallback and DB
+  // commit. Trying all Invidious hosts to the outer deadline used to leave
+  // no time to save even when another source succeeded.
+  const providerDeadline=Math.min(deadline-4500,Date.now()+5400);
+  const providerResult=await providerData(path,providerDeadline);
+  const raw=providerResult&&Array.isArray(providerResult.videos)
+    ? providerResult : (!next?await youtubeFeedPage(id,deadline):null);
   if(!raw||!Array.isArray(raw.videos))return {prepared:false,reason:"PROVIDER_UNAVAILABLE"};
   const fresh=raw.videos.slice(0,PAGE_MAX_ITEMS).map((v:any)=>safePreparedVideo(v,id)).filter(Boolean);
   const previous=same&&next ? (Array.isArray(saved.page)?saved.page:[]) : [];
@@ -343,11 +412,11 @@ async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|n
     if(!v||seen.has(v.id))continue;seen.add(v.id);page.push(v);if(page.length>=8*PAGE_MAX_ITEMS)break;
   }
   const continuation=typeof raw.continuation==="string"&&raw.continuation.length<=20000?raw.continuation:null;
-  const info=await providerData("/api/v1/channels/"+id,deadline);
+  const info=raw.feedFallback||deadline-Date.now()<1000?null:await providerData("/api/v1/channels/"+id,Math.min(deadline-400,Date.now()+1300));
   const thumbnail=safeThumbnail(Array.isArray(info?.authorThumbnails)?info.authorThumbnails.find((x:any)=>safeThumbnail(x?.url))?.url:"");
   const row={approval_url:approvalUrl,kind:"channel",item_id:id,title:safeNote(info?.author||saved?.title||"ערוץ YouTube"),
     thumbnail:thumbnail||safeThumbnail(saved?.thumbnail||""),published:0,channel_id:id,page,continuation,
-    pages_loaded:Math.min(8,(next&&same?saved.pages_loaded:0)+1),complete:!continuation,updated_at:now,checked_at:now};
+    pages_loaded:Math.min(8,(next&&same?saved.pages_loaded:0)+1),complete:!raw.feedFallback&&!continuation,updated_at:now,checked_at:now};
   if(!approvedCatalogUrls((await state()).list_text).has(approvalUrl))return {prepared:false,reason:"REMOVED"};
   await saveCatalog(row);return {prepared:true,kind:"channel",count:page.length,complete:row.complete};
 }
@@ -375,10 +444,33 @@ Deno.serve(async(req)=>{
     }
     if(req.method==="GET"&&action==="catalog"){
       const allowed=approvedCatalogUrls(s.list_text);
-      try{return json({version:s.version,updatedAt:s.updated_at,entries:await catalogRows(allowed)},200,origin);}
-      catch{return json({version:s.version,updatedAt:s.updated_at,entries:[],available:false},200,origin);}
+      try{
+        const entries=await catalogRows(allowed);
+        const ready=await catalogReadThrough(entries,s);
+        return json({version:s.version,updatedAt:s.updated_at,entries:ready},200,origin);
+      }catch{return json({version:s.version,updatedAt:s.updated_at,entries:[],available:false},200,origin);}
     }
-    if(req.method==="GET"&&action==="list"){ if(url.searchParams.get("format")==="text") return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}}); return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,setupRequired:!s.password_hash},200,origin); }
+    if(req.method==="GET"&&action==="list"){
+      const format=url.searchParams.get("format");
+      if(format==="text")return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}});
+      if(format==="native"){
+        // Single coherent parent-state snapshot and server-pinned channel mapping.
+        // Missing catalog means no alias grants; direct video/UC approvals remain.
+        const pins:any[]=[];
+        try{
+          const approved=approvedCatalogUrls(s.list_text);
+          for(const row of await catalogRows(approved)){
+            if(row.kind!=="channel"||!/^UC[A-Za-z0-9_-]{22}$/.test(row.item_id))continue;
+            const time=Date.parse(row.checked_at||"");
+            if(!Number.isFinite(time)||time>Date.now()+300000)continue;
+            if(!/^https:\/\/www\.youtube\.com\/(?:@|c\/|user\/)/.test(row.approval_url))continue;
+            pins.push({url:row.approval_url,id:row.item_id});
+          }
+        }catch{}
+        return json({list:s.list_text,version:s.version,pinnedChannels:pins},200,origin);
+      }
+      return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,setupRequired:!s.password_hash},200,origin);
+    }
     if(req.method!=="POST")return json({error:"METHOD"},405,origin);
     const declared=Number(req.headers.get("content-length")||0);
     if(Number.isFinite(declared)&&declared>MAX_BODY_BYTES)return json({error:"TOO_LARGE"},413,origin);

@@ -1,7 +1,7 @@
-name: Test and build Kids YouTube family apps
+name: Test Kids YouTube Android and packaged assets
 on:
   push:
-    branches: [android-newpipe-proof, main]
+    branches: [main]
   pull_request:
     branches: [main]
     paths: ['android/**', 'tests/**', 'index.html', 'app.js', 'providers.js', 'icons/**', 'manifest.json', '.github/workflows/android.yml']
@@ -32,6 +32,48 @@ jobs:
           test "$code" = "200"
           grep -qi '^access-control-allow-origin: https://appassets.androidplatform.net' "$headers"
           node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(typeof j.list!=='string')process.exit(1)" "$body"
+      - name: Probe official YouTube channel feed from CI runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(mktemp)"
+          curl --location --silent --show-error --max-time 15 \
+            -H 'Accept: application/atom+xml, application/xml' \
+            --output "$body" \
+            --write-out 'Official RSS HTTP=%{http_code} total_seconds=%{time_total} bytes=%{size_download}\n' \
+            'https://www.youtube.com/feeds/videos.xml?channel_id=UCV6xoqUxJzkWwCbDmEwMSYw' || true
+          python3 - "$body" <<'PY'
+          import sys,xml.etree.ElementTree as ET
+          try:
+              root=ET.parse(sys.argv[1]).getroot()
+              channel=root.find('{http://www.youtube.com/xml/schemas/2015}channelId')
+              entries=root.findall('{http://www.w3.org/2005/Atom}entry')
+              print('Official RSS parsed: channelId=',channel.text if channel is not None else 'missing','entries=',len(entries))
+          except Exception as exc:
+              print('Official RSS unavailable to CI runner:',type(exc).__name__)
+          PY
+      - name: Verify live server catalog and pinned Meir channel
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(mktemp)"
+          code="$(curl --silent --show-error --max-time 30 \
+            --output "$body" --write-out '%{http_code}' \
+            -H 'Origin: https://appassets.androidplatform.net' \
+            'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=catalog')"
+          test "$code" = 200
+          node - "$body" <<'NODE'
+          const fs=require('fs');
+          const response=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          if(!Number.isSafeInteger(response.version)||!Array.isArray(response.entries))throw Error('Invalid live catalog response');
+          const channel=response.entries.find(x=>x.approval_url==='https://www.youtube.com/@meirshows');
+          if(!channel)throw Error('Approved Meir channel missing from live catalog');
+          if(channel.item_id!=='UCV6xoqUxJzkWwCbDmEwMSYw')throw Error('Unexpected UC mapping');
+          const videos=Array.isArray(channel.page)?channel.page:[];
+          if(videos.some(v=>v.authorId!==channel.item_id))throw Error('Wrong author identity in live feed');
+          console.log('Live Meir catalog:',{version:response.version,pinnedUc:channel.item_id,videos:videos.length,checkedAt:channel.checked_at,available:response.available!==false});
+          if(!videos.length)throw Error('Live Meir catalog still empty after read-through');
+          NODE
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -89,69 +131,3 @@ jobs:
           print(counts)
           Path('android/native-test-counts.json').write_text(__import__('json').dumps(counts))
           PY
-      - name: Package download files
-        run: |
-          mkdir -p family
-          cp android/app/build/outputs/apk/debug/app-debug.apk family/Kids-YouTube.apk
-          git archive --format=zip --prefix=kids-youtube/ HEAD -o family/Kids-YouTube-AndroidStudio.zip
-          cp android/native-test-counts.json family/
-          cd family
-          sha256sum *.apk *.zip > SHA256SUMS.txt
-      - name: APKs and native reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kids-youtube-family-beta
-          if-no-files-found: warn
-          path: |
-            family/
-            android/app/build/test-results/testDebugUnitTest/
-            android/parent/build/test-results/testDebugUnitTest/
-  publish:
-    needs: android
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-      actions: read
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: kids-youtube-family-beta
-          path: verified
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('node:fs');
-            const directory = 'verified/family/';
-            const counts = JSON.parse(fs.readFileSync(directory+'native-test-counts.json','utf8'));
-            if(counts.app < 10 || counts.parent < 25) throw new Error('Missing native test results');
-            const tag = 'family-beta-'+context.sha.slice(0,12);
-            const body = [
-              'אפליקציית הילדים ופרויקט מלא לפתיחה ב־Android Studio, בתוך אותו ריפו.',
-              'הורידו Kids-YouTube-AndroidStudio.zip, חלצו ופתחו ב־Android Studio את kids-youtube/android. אין צורך ב־Node או Gradle מותקן בנפרד.',
-              'להורה יש עמוד בדפדפן: סיסמה → העתקת קישור → בדיקה → הוספה או הסרה ישירה. אין צורך בחשבון GitHub או באישור ידני.',
-              'התאמות למסך קטן/גדול/לרוחב, טקסט מוגדל, אזורי מערכת ומקלדת. מנגנון הניגון המקורי נשמר; השינויים החדשים דורשים גם בדיקה פיזית.',
-              counts.app+' בדיקות Java לילדים ו־'+counts.parent+' בדיקות נסיגה של companion ההורה עברו, בנוסף לבדיקות האתר, הגשר ואזור ההורים בדפדפן.',
-              'Android 6 ומעלה ו־WebView מעודכן. אלו APK לבדיקת בטא בחתימת debug; עדכון עתידי עשוי לדרוש הסרה והתקנה מחדש.',
-              'אם גרסת בטא קודמת עם אותו מזהה מותקנת, חתימת debug חדשה עשויה לדרוש הסרה לפני התקנה.',
-              'עמוד ההורים: https://yt2178.github.io/kids-youtube/parents.html',
-              'תיעוד: https://github.com/'+context.repo.owner+'/'+context.repo.repo+'/blob/'+context.sha+'/PARENTS.md',
-              'מקור: '+context.sha
-            ].join('\n\n');
-            let release;
-            try { release=(await github.rest.repos.getReleaseByTag({...context.repo,tag})).data; }
-            catch(e) { if(e.status!==404) throw e; release=(await github.rest.repos.createRelease({...context.repo,
-              tag_name:tag,target_commitish:context.sha,name:'Kids YouTube — Android Studio + browser parent',body,prerelease:true,draft:false})).data; }
-            for(const name of ['Kids-YouTube.apk','Kids-YouTube-AndroidStudio.zip','SHA256SUMS.txt']) {
-              const data=fs.readFileSync(directory+name);
-              if(name.endsWith('.apk') && data.readUInt32LE(0)!==0x04034b50) throw new Error('Invalid APK');
-              const existing=release.assets.find(asset=>asset.name===name);
-              if(existing) { if(existing.size!==data.length) throw new Error('Existing asset mismatch'); continue; }
-              const asset=await github.rest.repos.uploadReleaseAsset({...context.repo,release_id:release.id,name,data,
-                headers:{'content-type':name.endsWith('.apk')?'application/vnd.android.package-archive':'text/plain','content-length':data.length}});
-              console.log(name+'='+asset.data.browser_download_url);
-            }
-            await core.summary.addHeading('Family beta built and published').addLink('Downloads',release.html_url)
-              .addRaw('\nNative tests: '+JSON.stringify(counts)+'\nParent flow uses direct password-based backend saves.').write();

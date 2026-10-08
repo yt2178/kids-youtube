@@ -12,6 +12,10 @@
   <link rel="icon" type="image/png" href="./icons/icon-192.png">
   <link rel="apple-touch-icon" href="./icons/icon-192.png">
   <script>
+    // GitHub Pages exposes the parent console only. Keep this same HTML intact
+    // for the Android asset-loader and the authenticated parent iframe.
+    if(typeof location!=='undefined' && location.hostname==='yt2178.github.io' && window.top===window)
+      location.replace(new URL('./parents.html',location.href));
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(function () {
         // Browsing still works if installation/storage is unavailable.
@@ -207,7 +211,7 @@
   </section>
   <noscript>כדי לצפות בסרטונים, יש להפעיל JavaScript בדפדפן.</noscript>
   <script src="./providers.js?v=20261006h" defer></script>
-  <script src="./app.js?v=20261008d" defer></script>
+  <script src="./app.js?v=20261008e" defer></script>
 
 </body>
 </html>

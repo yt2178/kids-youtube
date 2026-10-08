@@ -1,4 +1,4 @@
-# Kids YouTube — סרטונים לילדים
+> **התקנה ועדכון:** משכו את main באמצעות `git pull`, פתחו את תיקיית `android` ב־Android Studio והפעילו Run. אין עוד הפצת APK/ZIP, Releases או תגי family-beta אוטומטיים. אתר GitHub Pages מיועד להורים בלבד; קטלוג הילדים זמין באפליקציית Android.\n\n# Kids YouTube — סרטונים לילדים
 
 Kids YouTube הוא פרויקט משפחתי לילדים עם רשימת תוכן מאושרת בלבד.
 
