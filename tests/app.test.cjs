@@ -1185,3 +1185,64 @@ test('load-start records user pull and scheduled retry triggers independently',a
  assert.ok(starts.some(x=>x.includes('"trigger":"pull-to-refresh"')));
  assert.ok(starts.every(x=>x.includes('"trigger":')));
 });
+
+test('native startup uses version-matched catalog embedded in fresh authorization with no second WebView request',async()=>{
+ const url='https://www.youtube.com/watch?v='+id(1),list=url+'\n',calls=[];
+ const prepared={version:17,updatedAt:'fresh-time',entries:[{approval_url:url,kind:'video',item_id:id(1),title:'מוכן מהאימות',checked_at:new Date().toISOString()}]};
+ const a=await app(list,()=>{throw Error('No provider request required');},new Map(),{
+   nativeMode:true,
+   nativeFetchAuthorization:async()=>({list,version:17,updatedAt:'fresh-time',catalogVersion:1,preparedCatalog:prepared}),
+   catalogFetch:()=>{calls.push('WebView');throw Error('Browser catalog must not be fetched');},
+   nativeFetchCatalog:async()=>{calls.push('OkHttp');throw Error('Native fallback must not be fetched');}
+ });
+ assert.equal(a.run('displayed.size'),1);
+ assert.equal(a.run(`displayed.get('${id(1)}').title`),'מוכן מהאימות');
+ assert.equal(calls.length,0,'one successful native authorization must suffice for first display');
+ assert.equal(a.calls.length,0,'no browser network requests');
+});
+test('bundled old-version catalog is never authorization; metadata failure cannot grant removed video',async()=>{
+ const url='https://www.youtube.com/watch?v='+id(1),list=url+'\n';
+ const prepared={version:16,updatedAt:'old-time',entries:[{approval_url:url,kind:'video',item_id:id(1),title:'ישן'}]};
+ let catalogAttempts=0;
+ const a=await app(list,()=>{throw Error('Provider unavailable');},new Map(),{
+   nativeMode:true,
+   nativeFetchAuthorization:async()=>({list,version:17,updatedAt:'fresh-time',catalogVersion:1,preparedCatalog:prepared}),
+   catalogFetch:()=>{catalogAttempts++;return json({version:17,updatedAt:'fresh-time',entries:[]})}
+ });
+ assert.equal(catalogAttempts,1,'invalid embedded cache cannot replace validated grants');
+ assert.equal(a.run('displayed.size'),1,'direct video grant remains visible despite metadata failure');
+ assert.notEqual(a.run(`displayed.get('${id(1)}').title`),'ישן');
+ const revoked=await app('',()=>{throw Error('provider should not be used')},new Map(),{
+   nativeMode:true,
+   nativeFetchAuthorization:async()=>({list:'',version:18,updatedAt:'revoked',catalogVersion:1,preparedCatalog:{version:18,updatedAt:'revoked',entries:prepared.entries}}),
+   catalogFetch:()=>{throw Error('bundled grants should not fall back')}
+ });
+ assert.equal(revoked.run('displayed.size'),0);
+});
+test('slow optional content completion shows spinner only while active and stops on completion',async()=>{
+ const list='https://www.youtube.com/channel/'+A+'\n';
+ let complete,attempt=0;
+ const a=await app(list,()=>{
+   attempt++;
+   return attempt===1?json({videos:[row(1)],continuation:'next'}):new Promise(resolve=>complete=resolve);
+ },new Map(),{timerCap:12});
+ assert.equal(a.run('displayed.size'),1);
+ a.run('pendingChannelRetry.add('+JSON.stringify(A)+')');
+ const pending=a.run('retryCatalogContents()');
+ await until(()=>typeof complete==='function');
+ await new Promise(r=>setTimeout(r,15));
+ assert.equal(a.elements.spinner.hidden,false);
+ complete(json({videos:[row(1),row(2)],continuation:null}));
+ await pending;
+ assert.equal(a.elements.spinner.hidden,true);
+});
+test('failed authorization displays a finite error with explicit retry button and no cached grants',async()=>{
+ const raw='https://www.youtube.com/watch?v='+id(1);
+ const a=await app(raw,()=>json({videoId:id(1),title:'title'}),new Map(),{
+   nativeMode:true,nativeFetchAuthorization:async()=>{throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'})}
+ });
+ assert.equal(a.run('displayed.size'),0);
+ assert.equal(a.elements.spinner.hidden,true);
+ assert.equal(a.elements['status-retry'].hidden,false);
+ assert.match(a.elements['status-text'].textContent,/לא הצלחנו לאמת/);
+});
