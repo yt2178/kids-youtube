@@ -282,7 +282,7 @@ test('one JS cycle joins native worker queue, lock wait and OkHttp phases withou
   assert.match(activity,/scope\.phase\("worker-queue-wait",started-scope\.queuedAtMs\)/);
   assert.match(activity,/result=api\.tracedDisplayAuthorization\(\)/);
   assert.match(scope,/String trace\(\)\{return " bridgeId="\+bridgeId\+" loadCycle="\+loadCycle\+" jsRequestId="\+jsRequestId;/);
-  assert.match(api,/scope\.phase\("authorization-lock-wait"/);
+  assert.match(api,/scope\.phase\("authorization-state-lock-wait"/);
   assert.match(downloader,/RequestScope scope=RequestScope\.CURRENT\.get\(\)/);
   assert.match(downloader,/trace=scope==null\?/);
   assert.match(downloader,/kind\+trace\+" phase="/);
