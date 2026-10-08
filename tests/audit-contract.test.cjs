@@ -7,7 +7,12 @@ const policy=read('android/app/src/main/java/il/kidsyoutube/ApprovalPolicy.java'
 const activity=read('android/app/src/main/java/il/kidsyoutube/MainActivity.java');
 
 test('authorization source is live Supabase only and stale browser cache cannot become a grant',()=>{
-  assert.match(app,/functions\/v1\/kids-youtube\?action=list/);
+  assert.match(app,/const PARENT_API = 'https:\/\/jxhelpxhrmwvzrrfrjuh\.supabase\.co\/functions\/v1\/kids-youtube'/);
+  assert.match(app,/return fetchJson\(PARENT_API\+'\?action=list'\)/);
+  assert.match(app,/fetchAuthorization\('load'\)/);
+  assert.match(app,/window\.KidsNative\.fetchAuthorization\(\)/);
+  assert.match(native,/synchronized JSONObject displayAuthorization\(\)/);
+  assert.match(edge,/catalogVersion:1,pinnedChannels:pins/);
   assert.doesNotMatch(app,/fetchText\('\.\/videos\.txt'|fetch\(['"]\.\/videos\.txt/);
   assert.match(app,/activeConfig=\{videos:\[\],channels:\[\]\};activeLists=Object\.create\(null\);displayed=new Map\(\)/);
   assert.match(app,/failClosedAuthorization/);
@@ -51,7 +56,7 @@ test('parent UI keeps official YouTube iframe, exact requested label and no exte
 test('cache-bust version and service-worker shell version are audited together',()=>{
   const appVersion=(html.match(/app\.js\?v=([^"']+)/)||[])[1];
   assert.ok(appVersion);assert.match(sw,new RegExp("app\\.js\\?v="+appVersion.replace(/[.*+?^$()|[\]\\]/g,'\\$&')));
-  assert.match(sw,/SHELL_CACHE = CACHE_PREFIX \+ 'v21'/);
+  assert.match(sw,/SHELL_CACHE = CACHE_PREFIX \+ 'v22'/);
 });
 
 

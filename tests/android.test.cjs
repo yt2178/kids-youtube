@@ -145,3 +145,29 @@ test('native channel pin requires exact current parent-list membership',()=>{
   assert.match(source,/whitelist\(true\)/);
   assert.match(fs.readFileSync(path.join(root,'android/app/build.gradle'),'utf8'),/format=native/);
 });
+
+test('native bridge exposes one versioned fresh authorization request without leaking provider fallback',async()=>{
+ const {c,messages,reply}=context();
+ const pending=c.KidsNative.fetchAuthorization();
+ assert.equal(messages.length,1);
+ assert.equal(messages[0].method,'authorization');
+ const data={list:'https://www.youtube.com/watch?v=mVTlbvQ_010\n',version:3,
+ updatedAt:'2026-10-08T16:28:10Z',catalogVersion:1,pinnedChannels:[]};
+ reply({id:messages[0].id,data});
+ assert.deepEqual(JSON.parse(JSON.stringify(await pending)),data);
+ const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+ assert.match(source,/synchronized JSONObject displayAuthorization\(\) throws Exception/);
+ assert.match(source,/whitelist\(true\)/);
+ assert.match(source,/lastAuthorization=doc/);
+ const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+ assert.match(activity,/api\.displayAuthorization\(\)/);
+ assert.match(activity,/Set\.of\("whitelist","authorization","api","clear"\)/);
+});
+test('native WebView is detached before destroy and debug native traces omit arguments and tokens',()=>{
+ const c=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+ assert.match(c,/android\.view\.ViewParent parent=web\.getParent\(\)/);
+ assert.match(c,/removeView\(web\)[\s\S]{0,150}web\.destroy\(\)/);
+ assert.match(c,/debugBridge\(method,id,"start"/);
+ assert.match(c,/debugBridge\(method,id,"end"/);
+ assert.doesNotMatch(c,/debugBridge\(method,(?:argument|input)/);
+});

@@ -88,6 +88,12 @@ let statusTimer = null;
 let approvalMarker = '';
 let authorizationReloadPending = false;
 let authorizationGeneration = 0;
+let loadCycle=0;
+let authorityCheckSerial=0;
+let authorizationCheckInFlight=false;
+let contentRetryBusy=false;
+const pendingChannelRetry=new Set();
+let debugRequestSerial=0;
 let pendingOnlineRefresh = false;
 let catalogRetryTimer = null;
 let catalogRetryAttempts = 0;
@@ -428,11 +434,40 @@ function orderedInstances() {
   });
 }
 function rememberInstance(url) { storageSet(INSTANCE_KEY, {scope:SCOPE, url}); }
-function fetchData(url, timeout = SETTINGS.requestTimeoutMs, signal, format = 'json') {
+async function fetchData(url, timeout = SETTINGS.requestTimeoutMs, signal, format = 'json') {
   catalogMetrics.requests++;
-  return KidsProviders.fetchJSON(fetch,url,{timeout,signal,format});
+  const requestId=++debugRequestSerial,started=Date.now();
+  let kind='other';try{kind=new URL(url).searchParams.get('action')||'other';}catch(_){}
+  debugCatalog('request-start',{requestId,loadCycle,kind,timeoutMs:timeout});
+  try{
+    const result=await KidsProviders.fetchJSON(fetch,url,{timeout,signal,format});
+    debugCatalog('request-end',{requestId,loadCycle,kind,outcome:'ok',ms:Date.now()-started});
+    return result;
+  }catch(e){
+    debugCatalog('request-end',{requestId,loadCycle,kind,outcome:e?.code||e?.message||'FAILED',ms:Date.now()-started});
+    throw e;
+  }
 }
 function fetchJson(url, timeout = SETTINGS.requestTimeoutMs, signal) { return fetchData(url, timeout, signal, 'json'); }
+async function fetchAuthorization(source='initial'){
+  if(NATIVE_MODE && typeof window.KidsNative.fetchAuthorization==='function'){
+    const requestId=++debugRequestSerial,started=Date.now();
+    catalogMetrics.requests++;
+    debugCatalog('request-start',{requestId,loadCycle,kind:'list',source,transport:'native',timeoutMs:15000});
+    try{
+      const doc=await window.KidsNative.fetchAuthorization();
+      if(!doc||typeof doc.list!=='string'||!Number.isSafeInteger(doc.version)
+          ||typeof doc.updatedAt!=='string'||doc.catalogVersion!==1)
+        throw new Error('INVALID_AUTH_RESPONSE');
+      debugCatalog('request-end',{requestId,loadCycle,kind:'list',source,transport:'native',outcome:'ok',ms:Date.now()-started});
+      return doc;
+    }catch(e){
+      debugCatalog('request-end',{requestId,loadCycle,kind:'list',source,transport:'native',outcome:e?.code||e?.message||'failed',ms:Date.now()-started});
+      throw e;
+    }
+  }
+  return fetchJson(PARENT_API+'?action=list');
+}
 
 // This parser runs only on the parent's published list, never on child input.
 function classifyYouTubeLink(input) {
@@ -670,22 +705,67 @@ async function parallelMap(items, worker) {
     while (index < items.length) { const item = items[index++]; await worker(item); }
   }));
 }
-function scheduleCatalogRetry(){
+function scheduleCatalogRetry(reason='partial'){
   if(catalogRetryTimer||catalogRetryAttempts>=3||navigator.onLine===false)return;
-  const delays=[35000,90000,180000],delay=delays[catalogRetryAttempts++];
+  const delay=(reason==='authorization'?[6000,18000,45000]:[35000,90000,180000])[catalogRetryAttempts++];
+  debugCatalog('retry-scheduled',{reason,attempt:catalogRetryAttempts,delayMs:delay});
   catalogRetryTimer=setTimeout(()=>{
     catalogRetryTimer=null;
     if(document.hidden||playback||loading||paginationBusy||navigator.onLine===false){catalogRetryPending=true;return;}
     catalogMetrics.retries++;
-    loadApp({forceCatalog:true});
+    if(reason==='partial'&&approvalMarker&&displayed.size>0)retryCatalogContents();
+    else loadApp({forceCatalog:reason==='partial'});
   },delay);
-  // Tests running with Node timers must not be held open by a browser retry.
   if(catalogRetryTimer&&typeof catalogRetryTimer.unref==='function')catalogRetryTimer.unref();
+}
+async function retryCatalogContents(){
+  if(contentRetryBusy||loading||paginationBusy||document.hidden||navigator.onLine===false||!approvalMarker)return;
+  contentRetryBusy=true;
+  const generation=authorizationGeneration,cycle=loadCycle,serial=++authorityCheckSerial,marker=approvalMarker;
+  const current=()=>generation===authorizationGeneration&&cycle===loadCycle&&serial===authorityCheckSerial;
+  debugCatalog('partial-retry-start',{loadCycle:cycle,pending:pendingChannelRetry.size});
+  try{
+    const remote=await fetchAuthorization('partial-retry');
+    if(!current())return;
+    if(document.hidden){catalogRetryPending=true;return;}
+    if(!remote||typeof remote.list!=='string')throw Error('INVALID_REMOTE_LIST');
+    const next=String(remote.updatedAt||'')+'\0'+remote.list;
+    if(next!==marker){
+      debugCatalog('partial-retry-grants-changed',{loadCycle:cycle});
+      failClosedAuthorization('רשימת ההורה השתנתה. מאמתים מחדש…');
+      await loadApp();return;
+    }
+    const channels=activeConfig.channels.filter(c=>pendingChannelRetry.has(c.id));
+    let failures=0;
+    await parallelMap(channels,async channel=>{
+      const result=await loadChannel(channel,1,true);
+      if(!current())return;
+      if(document.hidden){catalogRetryPending=true;return;}
+      if(result.failed){failures++;return;}
+      pendingChannelRetry.delete(channel.id);
+      const nextLists={...activeLists,[channel.id]:result.complete?result.videos:cleanChannelVideos([...result.videos,...(activeLists[channel.id]||[])],channel)};
+      activeLists=pruneLists(activeConfig,nextLists);
+      saveSnapshot(activeConfig,activeLists);render(activeConfig,activeLists);
+    });
+    if(!current())return;
+    debugCatalog('partial-retry-complete',{loadCycle:cycle,remaining:pendingChannelRetry.size,failures});
+    if(failures||pendingChannelRetry.size)scheduleCatalogRetry('partial');
+    else {catalogRetryAttempts=0;status('');}
+  }catch(e){
+    if(!current())return;
+    debugCatalog('partial-retry-auth-failed',{loadCycle:cycle,error:e?.code||e?.message||'UNKNOWN'});
+    failClosedAuthorization();
+    scheduleCatalogRetry('authorization');
+  }finally{contentRetryBusy=false;}
 }
 async function loadApp({forceCatalog=false}={}) {
   if (loading || paginationBusy || !ui.player.hidden) return;
   clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;
   const startedAt=Date.now();catalogMetrics.startedAt=startedAt;
+  const thisCycle=++loadCycle;
+  ++authorityCheckSerial;
+  pendingChannelRetry.clear();
+  debugCatalog('load-start',{loadCycle:thisCycle,forceCatalog});
   catalogMetrics.requests=0;catalogMetrics.providerCalls=0;catalogMetrics.renderCalls=0;
   catalogMetrics.displayCacheHits=0;catalogMetrics.channelCacheHits=0;
   catalogMetrics.authorizationMs=0;catalogMetrics.metadataMs=0;catalogMetrics.channelsMs=0;catalogMetrics.firstUsefulMs=0;catalogMetrics.completedMs=0;
@@ -709,10 +789,10 @@ async function loadApp({forceCatalog=false}={}) {
   activeLinkRecords = Object.create(null);
   try {
     let raw;
-    const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+    const remote = await fetchAuthorization('load');
     if(!stillAuthorized())return;
     catalogMetrics.authorizationMs=Date.now()-startedAt;
-    debugCatalog('authorization-ok',{ms:catalogMetrics.authorizationMs,version:remote&&remote.version,catalogVersion:remote&&remote.catalogVersion});
+    debugCatalog('authorization-ok',{loadCycle:thisCycle,ms:catalogMetrics.authorizationMs,version:remote&&remote.version,catalogVersion:remote&&remote.catalogVersion});
     if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
     raw = remote.list;
     approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
@@ -791,9 +871,18 @@ async function loadApp({forceCatalog=false}={}) {
     if (config.channels.length) status('טוענים את הסרטונים מהערוצים…', true);
     await parallelMap(config.channels, async channel => {
       const restored=channelProgress.get(channel.id);
-      const result=restored ? {videos:restored.videos,complete:restored.complete,limited:!!restored.continuation,failed:false} : await loadChannel(channel,1,forceCatalog);
+      const prepared=(lists[channel.id]||[]).length;
+      // Prepared, freshly authorized pages are immediately usable. Do not block
+      // startup on slow NewPipe pagination just to complete an optional page.
+      const deferNative=NATIVE_MODE&&!forceCatalog&&!restored&&prepared>0;
+      if(deferNative){
+        pendingChannelRetry.add(channel.id);
+        channelProgress.set(channel.id,{continuation:'__NATIVE_FIRST_PAGE__',pages:0,tokens:new Set(),videos:cleanChannelVideos(lists[channel.id],channel),complete:false});
+      }
+      const result=deferNative ? {videos:lists[channel.id],complete:false,limited:true,failed:false}
+        :restored ? {videos:restored.videos,complete:restored.complete,limited:!!restored.continuation,failed:false} : await loadChannel(channel,1,forceCatalog);
       if(!stillAuthorized())return;
-      if (result.failed){failures++;debugCatalog('channel-page-failed',{channel:channel.id.slice(0,8),cached:(lists[channel.id]||[]).length});}
+      if (result.failed){failures++;pendingChannelRetry.add(channel.id);debugCatalog('channel-page-failed',{loadCycle:thisCycle,channel:channel.id.slice(0,8),cached:(lists[channel.id]||[]).length});}
       if (result.limited) limited++;
       lists[channel.id] = result.complete ? result.videos : cleanChannelVideos([...result.videos, ...(lists[channel.id] || [])], channel);
       if (!saveSnapshot(config, lists)) cacheSaved = false;
@@ -811,51 +900,67 @@ async function loadApp({forceCatalog=false}={}) {
     else if (failures) messages.push('הסרטונים אינם זמינים כרגע. נסו שוב מאוחר יותר.');
     if (limited) messages.push('אפשר ללחוץ על ״עוד סרטונים״ להמשך הרשימה.');
     if (!cacheSaved) messages.push('לא הצלחנו לשמור נתונים זמניים במכשיר. התוכן עדיין זמין כל עוד יש חיבור לאינטרנט.');
-    if(linkFailures||failures){messages.push('המערכת תנסה להשלים את הפרטים שוב באופן אוטומטי.');scheduleCatalogRetry();}
+    if(linkFailures||failures||pendingChannelRetry.size){if(failures||linkFailures)messages.push('המערכת תנסה להשלים את הפרטים שוב באופן אוטומטי.');scheduleCatalogRetry('partial');}
     else {catalogRetryAttempts=0;catalogRetryPending=false;}
     status(messages.join(' '));
   } catch (error) {
     if(!stillAuthorized())return;
-    debugCatalog('load-fatal',{error:String(error&&error.message||'UNKNOWN'),metrics:{...catalogMetrics}});
+    debugCatalog('load-fatal',{loadCycle:thisCycle,phase:catalogMetrics.authorizationMs===0?'authorization':'after-authorization',error:String(error&&error.message||'UNKNOWN'),metrics:{...catalogMetrics}});
     loadError=true;
     activeConfig = {videos:[], channels:[]}; activeLists = Object.create(null);
     displayed = new Map(); ui.grid.replaceChildren(); ui.count.textContent = ''; ui.more.hidden = true;
     activeLinkRecords = Object.create(null);approvalMarker='';
     // Any authority failure clears the local grant snapshot too.
     saveSnapshot({videos:[], channels:[]}, {});
-    status('');scheduleCatalogRetry();
+    status('');scheduleCatalogRetry('authorization');
   } finally {
     catalogMetrics.completedMs=Date.now()-startedAt;
     loading = false; ui.grid.removeAttribute('aria-busy');
     if(stillAuthorized()){
       render(activeConfig, activeLists);
-      if(!loadError)debugCatalog('load-complete',{displayed:displayed.size,linksFailed:linkFailures,channelsFailed:failures,metrics:{...catalogMetrics}});
+      if(!loadError)debugCatalog('load-complete',{loadCycle:thisCycle,displayed:displayed.size,linksFailed:linkFailures,channelsFailed:failures,metrics:{...catalogMetrics}});
     }
     if(pendingOnlineRefresh&&navigator.onLine!==false){pendingOnlineRefresh=false;catalogRetryPending=false;loadApp();}
     else if(catalogRetryPending&&!document.hidden&&!playback&&!paginationBusy&&navigator.onLine!==false){
-      catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});
+      catalogRetryPending=false;catalogMetrics.retries++;
+      if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true});
     }
   }
 }
 
-function failClosedAuthorization(message='לא הצלחנו לאמת כרגע את רשימת ההורה.') {
+function failClosedAuthorization(message='לא הצלחנו לאמת כרגע את רשימת ההורה.',reason='authorization'){
   clearTimeout(catalogRetryTimer);catalogRetryTimer=null;
-  authorizationGeneration++;loadError=true;approvalMarker='';activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
+  authorizationGeneration++;++authorityCheckSerial;loadError=true;approvalMarker='';
+  pendingChannelRetry.clear();catalogRetryPending=false;
+  debugCatalog('authorization-blocked',{loadCycle,reason,generation:authorizationGeneration});
+  activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
   displayed=new Map();ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;saveSnapshot(activeConfig,{});
   status(message);render(activeConfig,activeLists);
 }
-async function checkAuthorizationFreshness() {
-  if(loading||playback||document.hidden||navigator.onLine===false)return;
+async function checkAuthorizationFreshness(source='poll'){
+  if(authorizationCheckInFlight||contentRetryBusy||loading||playback||document.hidden||navigator.onLine===false)return;
+  authorizationCheckInFlight=true;
+  const cycle=loadCycle,serial=++authorityCheckSerial,generation=authorizationGeneration;
+  const current=()=>cycle===loadCycle&&serial===authorityCheckSerial&&generation===authorizationGeneration&&!loading;
+  const started=Date.now();
+  debugCatalog('authorization-check-start',{source,loadCycle:cycle,serial});
   try{
-    const remote=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+    const remote=await fetchAuthorization(source);
+    if(!current()){debugCatalog('authorization-check-stale',{source,loadCycle:cycle,serial,outcome:'success'});return;}
     if(!remote||typeof remote.list!=='string')throw new Error('INVALID_REMOTE_LIST');
     const marker=String(remote.updatedAt||'')+'\0'+remote.list;
+    debugCatalog('authorization-check-end',{source,loadCycle:cycle,serial,outcome:'ok',ms:Date.now()-started,changed:marker!==approvalMarker});
     if(!approvalMarker||marker!==approvalMarker){
-      failClosedAuthorization('רשימת ההורה השתנתה. מאמתים אותה מחדש…');
+      failClosedAuthorization('רשימת ההורה השתנתה. מאמתים אותה מחדש…','grant-change');
       if(paginationBusy){authorizationReloadPending=true;return;}
       await loadApp();
     }
-  }catch(_){failClosedAuthorization();}
+  }catch(e){
+    if(!current()){debugCatalog('authorization-check-stale',{source,loadCycle:cycle,serial,outcome:e?.code||'failed'});return;}
+    debugCatalog('authorization-check-end',{source,loadCycle:cycle,serial,outcome:e?.code||e?.message||'failed',ms:Date.now()-started});
+    failClosedAuthorization(undefined,'fresh-check-failed');
+    scheduleCatalogRetry('authorization');
+  }finally{authorizationCheckInFlight=false;}
 }
 
 function playerMessage(text, busy = false) {
@@ -1056,7 +1161,8 @@ function closePlayer(fromHistory = false) {
   if (target) target.focus({preventScroll:true}); scrollToPosition(returnScrollY);
   if (!fromHistory && history.state && history.state.kidsYoutubePlayer) history.back();
   if(catalogRetryPending&&!document.hidden&&!loading&&!paginationBusy&&navigator.onLine!==false){
-    catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});
+    catalogRetryPending=false;catalogMetrics.retries++;
+    if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true});
   }
 }
 function flushSearch() {
@@ -1151,15 +1257,19 @@ window.addEventListener('offline', () => {failClosedAuthorization('אין חיב
 window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;catalogRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp();});
 document.addEventListener('visibilitychange', () => {
   if(document.hidden||navigator.onLine===false)return;
-  if(catalogRetryPending&&!loading&&!paginationBusy&&!playback){catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});return;}
+  if(catalogRetryPending&&!loading&&!paginationBusy&&!playback){
+    catalogRetryPending=false;catalogMetrics.retries++;
+    if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true});
+    return;
+  }
   if(Date.now()-lastLoad>SETTINGS.refreshOnReturnMs){loadApp();return;}
   if(!PARENT_CATALOG&&!NATIVE_MODE)providers.healthCheck().then(audit);
-  checkAuthorizationFreshness();
+  checkAuthorizationFreshness('foreground');
 });
 if (history.state && history.state.kidsYoutubePlayer) history.replaceState(null, '', location.href);
 loadApp();
 
 if (typeof setInterval === 'function' && !PARENT_CATALOG) {
   if(!NATIVE_MODE)setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
-  setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
+  setInterval(()=>checkAuthorizationFreshness('poll'),SETTINGS.authorizationRefreshMs);
 }

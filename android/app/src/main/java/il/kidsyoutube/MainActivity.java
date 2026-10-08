@@ -48,6 +48,13 @@ public final class MainActivity extends Activity {
     private Runnable playerTimeout;
     private boolean destroyed;
     private long startupStartedAt;
+    private void debugBridge(String method,String id,String phase,long started,String outcome){
+        if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)==0)return;
+        android.util.Log.d("KidsCatalog","native-request "+phase+
+                " operation="+method+" requestId="+id+
+                " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-started)+
+                " result="+outcome);
+    }
     private void debugStartup(String stage){
         if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)==0)return;
         android.util.Log.d("KidsStartup",stage+" elapsedMs="+
@@ -211,21 +218,28 @@ public final class MainActivity extends Activity {
                 // The title is display-only. NativeApi independently validates the id.
                 openPlayer(video,videoTitle);respond(reply,id,Boolean.TRUE,null);return;
             }
-            if(!Set.of("whitelist","api","clear").contains(method)){
+            if(!Set.of("whitelist","authorization","api","clear").contains(method)){
                 respond(reply,id,null,"INVALID_REQUEST");return;
             }
             RequestScope scope=new RequestScope(14000);
             String argument=data.optString("argument","");
             Task task=new Task(id,scope,()->{
                 scope.enter();
+                final long started=android.os.SystemClock.elapsedRealtime();
+                debugBridge(method,id,"start",started,"pending");
                 try {
                     Object result;
                     if(method.equals("whitelist"))result=api.displayWhitelist();
+                    else if(method.equals("authorization"))result=api.displayAuthorization();
                     else if(method.equals("clear")){api.clear();result=Boolean.TRUE;}
                     else result=api.request(argument);
-                    scope.check();respond(reply,id,result,null);
-                }catch(Exception e){if(!scope.cancelled)respond(reply,id,null,NativeApi.errorCode(e));}
-                finally{scope.close();}
+                    scope.check();debugBridge(method,id,"end",started,"ok");
+                    respond(reply,id,result,null);
+                }catch(Exception e){
+                    String reason=scope.cancelled?"CANCELLED":NativeApi.errorCode(e);
+                    debugBridge(method,id,"end",started,reason);
+                    if(!scope.cancelled)respond(reply,id,null,reason);
+                }finally{scope.close();}
                 return null;
             });
             tasks.put(id,task);
@@ -420,6 +434,9 @@ public final class MainActivity extends Activity {
         for(Task task:tasks.values())task.abort();tasks.clear();workers.shutdownNow();api.cancelAll();
         if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
             WebViewCompat.removeWebMessageListener(web,"KidsAndroid");
+        // Chromium requires detaching a WebView from its parent before destroy().
+        android.view.ViewParent parent=web.getParent();
+        if(parent instanceof android.view.ViewGroup)((android.view.ViewGroup)parent).removeView(web);
         web.destroy();super.onDestroy();
     }
 }

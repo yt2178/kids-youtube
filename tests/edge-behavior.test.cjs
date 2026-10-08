@@ -305,3 +305,15 @@ test('cold catalog read prepares one approved empty channel from bounded feed an
   const after=await f.request('catalog',{method:'GET'});
   assert.equal(after.data.entries.length,0);
 });
+
+test('native list and browser list share the same version, marker and approval text',async()=>{
+ const f=await createFixture();
+ const native=await f.request('list',{method:'GET',query:{format:'native'}});
+ const browser=await f.request('list',{method:'GET'});
+ assert.equal(native.status,200);
+ assert.equal(native.data.list,browser.data.list);
+ assert.equal(native.data.version,browser.data.version);
+ assert.equal(native.data.updatedAt,browser.data.updatedAt);
+ assert.equal(native.data.catalogVersion,1);
+ assert.ok(Array.isArray(native.data.pinnedChannels));
+});

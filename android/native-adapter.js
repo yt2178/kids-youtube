@@ -64,6 +64,7 @@
   }
   window.KidsNative = {
     createManager,
+    fetchAuthorization:()=>call('authorization',null,undefined,15000),
     openPlayer:(id,title)=>call('play',{id,title:typeof title==='string'?title.slice(0,200):''},undefined,30000).catch(()=>{}),
     call
   };

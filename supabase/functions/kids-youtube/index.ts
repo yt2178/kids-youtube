@@ -467,7 +467,7 @@ Deno.serve(async(req)=>{
             pins.push({url:row.approval_url,id:row.item_id});
           }
         }catch{}
-        return json({list:s.list_text,version:s.version,pinnedChannels:pins},200,origin);
+        return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,pinnedChannels:pins},200,origin);
       }
       return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,setupRequired:!s.password_hash},200,origin);
     }
