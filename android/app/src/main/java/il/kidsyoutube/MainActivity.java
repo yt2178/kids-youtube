@@ -219,7 +219,7 @@ public final class MainActivity extends Activity {
                 // The title is display-only. NativeApi independently validates the id.
                 openPlayer(video,videoTitle);respond(reply,id,Boolean.TRUE,null);return;
             }
-            if(!Set.of("whitelist","authorization","api","clear").contains(method)){
+            if(!Set.of("whitelist","authorization","catalog","api","clear").contains(method)){
                 respond(reply,id,null,"INVALID_REQUEST");return;
             }
             RequestScope scope=new RequestScope(14000);
@@ -232,6 +232,7 @@ public final class MainActivity extends Activity {
                     Object result;
                     if(method.equals("whitelist"))result=api.displayWhitelist();
                     else if(method.equals("authorization"))result=api.displayAuthorization();
+                    else if(method.equals("catalog"))result=api.sharedCatalog(data.optJSONObject("argument"));
                     else if(method.equals("clear")){api.clear();result=Boolean.TRUE;}
                     else result=api.request(argument);
                     scope.check();debugBridge(method,id,"end",started,"ok");
