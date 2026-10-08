@@ -370,7 +370,13 @@ async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|n
   if(next!==null&&(!same||saved?.continuation!==next||saved?.complete||saved?.pages_loaded>=8))
     throw Error("INVALID_CONTINUATION");
   const path="/api/v1/channels/"+id+"/videos"+(next?"?continuation="+encodeURIComponent(next):"");
-  const raw=(await providerData(path,deadline)) || (!next?await youtubeFeedPage(id,deadline):null);
+  // Reserve a short, bounded window for the official RSS fallback and DB
+  // commit. Trying all Invidious hosts to the outer deadline used to leave
+  // no time to save even when another source succeeded.
+  const providerDeadline=Math.min(deadline-4500,Date.now()+5400);
+  const providerResult=await providerData(path,providerDeadline);
+  const raw=providerResult&&Array.isArray(providerResult.videos)
+    ? providerResult : (!next?await youtubeFeedPage(id,deadline):null);
   if(!raw||!Array.isArray(raw.videos))return {prepared:false,reason:"PROVIDER_UNAVAILABLE"};
   const fresh=raw.videos.slice(0,PAGE_MAX_ITEMS).map((v:any)=>safePreparedVideo(v,id)).filter(Boolean);
   const previous=same&&next ? (Array.isArray(saved.page)?saved.page:[]) : [];
@@ -379,7 +385,7 @@ async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|n
     if(!v||seen.has(v.id))continue;seen.add(v.id);page.push(v);if(page.length>=8*PAGE_MAX_ITEMS)break;
   }
   const continuation=typeof raw.continuation==="string"&&raw.continuation.length<=20000?raw.continuation:null;
-  const info=await providerData("/api/v1/channels/"+id,deadline);
+  const info=raw.feedFallback||deadline-Date.now()<1000?null:await providerData("/api/v1/channels/"+id,Math.min(deadline-400,Date.now()+1300));
   const thumbnail=safeThumbnail(Array.isArray(info?.authorThumbnails)?info.authorThumbnails.find((x:any)=>safeThumbnail(x?.url))?.url:"");
   const row={approval_url:approvalUrl,kind:"channel",item_id:id,title:safeNote(info?.author||saved?.title||"ערוץ YouTube"),
     thumbnail:thumbnail||safeThumbnail(saved?.thumbnail||""),published:0,channel_id:id,page,continuation,
