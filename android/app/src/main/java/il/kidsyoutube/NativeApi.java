@@ -26,8 +26,19 @@ final class NativeApi {
     private final Map<String,Cache> cache=new ConcurrentHashMap<>();
     private final Map<String,Cursor> cursors=new ConcurrentHashMap<>();
     private volatile long cooldownUntil;
+    private volatile boolean extractorReady;
     NativeApi(Context context) {
+        // Do not initialize NewPipe on Activity.onCreate's UI thread.
+    }
+    private synchronized void ensureExtractor() {
+        if(extractorReady)return;
+        long started=android.os.SystemClock.elapsedRealtime();
         NewPipe.init(downloader);
+        extractorReady=true;
+        if((android.os.Build.TYPE.equals("userdebug")||android.os.Build.TYPE.equals("eng"))
+                || il.kidsyoutube.BuildConfig.DEBUG)
+            android.util.Log.d("KidsStartup","newpipe-init-worker-ms="+
+                    (android.os.SystemClock.elapsedRealtime()-started));
     }
     private static final class Alias {
         final String id;final long expires;
@@ -106,6 +117,7 @@ final class NativeApi {
     }
     Object request(String path) throws Exception {
         whitelist(false);
+        ensureExtractor();
         if(path==null || path.length()>22000)throw new IOException("INVALID_REQUEST");
         Cache hit=cache.get(path);if(valid(hit))return hit.data;
         try {
@@ -226,6 +238,7 @@ final class NativeApi {
     Playback playback(String id) throws Exception {
         // Every playback starts from a fresh authoritative parent list.
         whitelist(true);
+        ensureExtractor();
         try {
             StreamExtractor extractor=extractVideo(id);
             String author=authorId(extractor.getUploaderUrl());
