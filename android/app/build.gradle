@@ -3,7 +3,7 @@ def kidsStaging = project.findProperty('kidsStaging')?.toString() == 'true'
 def stagingBackend = project.findProperty('kidsBackendUrl')?.toString() ?: ''
 def productionBackend = 'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube'
 if(kidsStaging){
-    if(!(stagingBackend ==~ /^https:\/\/[a-z0-9-]+\.supabase\.co\/functions\/v1\/kids-youtube$/)
+    if(!(stagingBackend ==~ /^https:\/\/[a-z0-9-]+\.supabase\.co\/functions\/v1\/kids-youtube(?:-staging)?$/)
             || stagingBackend == productionBackend)
         throw new GradleException('Staging requires a distinct, validated Supabase URL (-PkidsBackendUrl). Production is forbidden.')
 }
