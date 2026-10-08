@@ -135,6 +135,9 @@ test('all instances failing preserve the previous approved channel list',async()
   await app(config,()=>json({videos:[row(2)],continuation:null}),store);
   for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
   const a=await app(config,fail,store);
+  // Warm startup can avoid contacting the unavailable provider altogether.
+  assert.equal(a.run('displayed.size'),2);
+  await a.run('loadApp({forceCatalog:true})');
   assert.equal(a.run('displayed.size'),2);assert.match(a.elements['status-text'].textContent,/התוכן שכבר נטען עדיין מוצג/);
 });
 test('offline whitelist fails closed instead of showing stale approvals',async()=>{
@@ -163,7 +166,11 @@ test('new maxVideos also caps older cached data during an outage',async()=>{
 test('successful empty channel response removes obsolete cached videos',async()=>{
   const store=new Map();await app({videos:[],channels:[{id:A}]},()=>json({videos:[row(1)],continuation:null}),store);
   for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
-  const a=await app({videos:[],channels:[{id:A}]},()=>json({videos:[],continuation:null}),store);assert.equal(a.run('displayed.size'),0);
+  const a=await app({videos:[],channels:[{id:A}]},()=>json({videos:[],continuation:null}),store);
+  assert.equal(a.run('displayed.size'),1,'warm list remains while channel cache is fresh');
+  await a.run('loadApp({forceCatalog:true})');
+  assert.equal(a.run('displayed.size'),0,'fresh empty page removes obsolete video');
+
 });
 test('invalid current whitelist fails closed rather than reviving old cache',async()=>{
   const store=new Map();await app({videos:[{id:id(1)}],channels:[]},undefined,store);
@@ -818,7 +825,8 @@ test('an expired channel cursor is discarded but cached content remains only aft
   for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
   const next=await app(config,()=>json({videos:[row(2)],continuation:null}),store);
   assert.ok(next.calls.length>1,'expired cursor forces a fresh first-page request');
-  assert.equal(next.run('displayed.size'),2);
+  assert.equal(next.run('displayed.size'),1,'a fresh complete channel page replaces old content');
+  assert.equal(next.run(`displayed.has('${id(2)}')`),true);
   const removed=await app(empty,()=>{throw Error('provider should never authorize revoked content')},store);
   assert.equal(removed.run('displayed.size'),0);
 });
