@@ -282,16 +282,18 @@ function safePreparedVideo(video:any,channelId:string){
   const id=String(video?.videoId||"");
   if(!/^[A-Za-z0-9_-]{11}$/.test(id))return null;
   const author=String(video?.authorId||"");
-  if(author && author!==channelId)return null;
+  if(author!==channelId)return null;
   const thumbnail="https://img.youtube.com/vi/"+id+"/hqdefault.jpg";
   return {id,videoId:id,title:safeNote(video.title)||"סרטון YouTube",author:safeNote(video.author),authorId:channelId,
     published:Number.isSafeInteger(video.published)&&video.published>0?video.published:0,thumbnail};
 }
-async function providerData(path:string){
+async function providerData(path:string,deadline=Date.now()+PREPARE_TIMEOUT_MS){
   for(const host of PROVIDER_ORIGINS){
     try{
+      const remaining=Math.min(PROVIDER_TIMEOUT_MS,deadline-Date.now());
+      if(remaining<100)return null;
       const target=providerTarget(host+path);
-      const data=await timed(PROVIDER_TIMEOUT_MS,async signal=>{
+      const data=await timed(remaining,async signal=>{
         const r=await fetch(target,{signal,redirect:"manual",headers:{"Accept":"application/json"}});
         if(!r.ok||oversized(r,MAX_PROVIDER_BYTES))throw Error("PROVIDER_DOWN");
         return JSON.parse(await readBounded(r.body,MAX_PROVIDER_BYTES));
@@ -301,20 +303,21 @@ async function providerData(path:string){
   }
   return null;
 }
-async function stableChannelId(url:string){
+async function stableChannelId(url:string,deadline=Date.now()+PREPARE_TIMEOUT_MS){
   const match=url.match(/^https:\/\/www\.youtube\.com\/channel\/(UC[A-Za-z0-9_-]{22})$/);
   if(match)return match[1];
-  const data=await providerData("/api/v1/resolveurl?url="+encodeURIComponent(url));
+  const data=await providerData("/api/v1/resolveurl?url="+encodeURIComponent(url),deadline);
   const id=data?.ucid||data?.browseId||"";
   return /^UC[A-Za-z0-9_-]{22}$/.test(id)?id:"";
 }
 async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|null){
+  const deadline=Date.now()+PREPARE_TIMEOUT_MS;
   const current=await state();
   if(!approvedCatalogUrls(current.list_text).has(approvalUrl))throw Error("NOT_APPROVED");
   const now=new Date().toISOString(),videoId=new URL(approvalUrl).searchParams.get("v");
   if(videoId){
     const m=await metadata(approvalUrl);
-    const extra=await providerData("/api/v1/videos/"+videoId);
+    const extra=await providerData("/api/v1/videos/"+videoId,deadline);
     const row={approval_url:approvalUrl,kind:"video",item_id:videoId,
       title:safeNote(extra?.title||m.title)||"סרטון YouTube",
       thumbnail:m.thumbnail,published:Number.isSafeInteger(extra?.published)?extra.published:0,
@@ -323,7 +326,7 @@ async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|n
     if(!approvedCatalogUrls((await state()).list_text).has(approvalUrl))return {prepared:false,reason:"REMOVED"};
     await saveCatalog(row);return {prepared:true,kind:"video"};
   }
-  const id=await stableChannelId(approvalUrl);
+  const id=await stableChannelId(approvalUrl,deadline);
   if(!id)return {prepared:false,reason:"CHANNEL_UNRESOLVED"};
   const saved=(await catalogRows(new Set([approvalUrl])))[0];
   const next=requestedContinuation===undefined?null:requestedContinuation;
@@ -331,7 +334,7 @@ async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|n
   if(next!==null&&(!same||saved?.continuation!==next||saved?.complete||saved?.pages_loaded>=8))
     throw Error("INVALID_CONTINUATION");
   const path="/api/v1/channels/"+id+"/videos"+(next?"?continuation="+encodeURIComponent(next):"");
-  const raw=await providerData(path);
+  const raw=await providerData(path,deadline);
   if(!raw||!Array.isArray(raw.videos))return {prepared:false,reason:"PROVIDER_UNAVAILABLE"};
   const fresh=raw.videos.slice(0,PAGE_MAX_ITEMS).map((v:any)=>safePreparedVideo(v,id)).filter(Boolean);
   const previous=same&&next ? (Array.isArray(saved.page)?saved.page:[]) : [];
@@ -340,7 +343,7 @@ async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|n
     if(!v||seen.has(v.id))continue;seen.add(v.id);page.push(v);if(page.length>=8*PAGE_MAX_ITEMS)break;
   }
   const continuation=typeof raw.continuation==="string"&&raw.continuation.length<=20000?raw.continuation:null;
-  const info=await providerData("/api/v1/channels/"+id);
+  const info=await providerData("/api/v1/channels/"+id,deadline);
   const thumbnail=safeThumbnail(Array.isArray(info?.authorThumbnails)?info.authorThumbnails.find((x:any)=>safeThumbnail(x?.url))?.url:"");
   const row={approval_url:approvalUrl,kind:"channel",item_id:id,title:safeNote(info?.author||saved?.title||"ערוץ YouTube"),
     thumbnail:thumbnail||safeThumbnail(saved?.thumbnail||""),published:0,channel_id:id,page,continuation,
