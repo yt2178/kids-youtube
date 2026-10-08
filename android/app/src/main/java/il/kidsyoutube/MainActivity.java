@@ -40,6 +40,7 @@ public final class MainActivity extends Activity {
     private Button retry;
     private PlayerView playerView;
     private ExoPlayer player;
+    private long mediaOwnerGeneration;
     private Task playTask;
     private long playerGeneration;
     private NativeApi.Playback active;
@@ -260,17 +261,29 @@ public final class MainActivity extends Activity {
     }
     private void logPlayback(long generation,String stage,Throwable failure){
         if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)==0)return;
+        Throwable root=failure;
+        for(int depth=0;root!=null&&root.getCause()!=null&&depth<12;depth++)root=root.getCause();
+        // Never log exception messages: HTTP failures can embed signed media URLs.
         String detail=failure==null?"":(" type="+failure.getClass().getSimpleName()+
-            " cause="+(failure.getCause()==null?"none":failure.getCause().getClass().getSimpleName())+
+            " root="+root.getClass().getSimpleName()+
             " category="+NativeApi.errorCode(failure));
         android.util.Log.d("KidsPlayback","request="+generation+" stage="+stage+detail);
+    }
+    private static String media3State(int state){
+        switch(state){
+            case Player.STATE_IDLE:return "IDLE";
+            case Player.STATE_BUFFERING:return "BUFFERING";
+            case Player.STATE_READY:return "READY";
+            case Player.STATE_ENDED:return "ENDED";
+            default:return "UNKNOWN";
+        }
     }
     private void openPlayer(String id,String displayTitle) {
         android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
         if(keyboard!=null)keyboard.hideSoftInputFromWindow(web.getWindowToken(),0);
         long generation=++playerGeneration;
         if(playTask!=null)playTask.abort();
-        stopMedia();
+        stopMedia("new-request");
         String initialTitle=displayTitle!=null&&!displayTitle.trim().isEmpty()
             ? displayTitle.trim().substring(0,Math.min(200,displayTitle.trim().length()))
             : "טוענים את פרטי הסרטון…";
@@ -285,8 +298,10 @@ public final class MainActivity extends Activity {
             scope.enter();
             try {
                 logPlayback(generation,"fresh-auth-and-extraction-start",null);
-                NativeApi.Playback result=api.playback(id);scope.check();
-                logPlayback(generation,"extraction-success sources="+result.sources.size(),null);
+                long extractionStarted=android.os.SystemClock.elapsedRealtime();
+                NativeApi.Playback result=api.playback(id,generation);scope.check();
+                logPlayback(generation,"extraction-success sources="+result.sources.size()+
+                    " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-extractionStarted),null);
                 handler.post(()->{
                     if(destroyed || generation!=playerGeneration || scope.cancelled)return;
                     active=result;
@@ -349,7 +364,7 @@ public final class MainActivity extends Activity {
     }
     private void trySource(long generation) {
         if(destroyed || generation!=playerGeneration || active==null)return;
-        stopMedia();
+        stopMedia("switch-source");
         if(sourceIndex>=active.sources.size()){unavailable();return;}
         showLoading(true);showMessage(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
         NativeApi.Source source=active.sources.get(sourceIndex++);
@@ -361,7 +376,9 @@ public final class MainActivity extends Activity {
         MediaSource video=factory.createMediaSource(MediaItem.fromUri(source.video));
         MediaSource media=source.audio==null?video:new MergingMediaSource(video,
                 factory.createMediaSource(MediaItem.fromUri(source.audio)));
-        ExoPlayer attempt=new ExoPlayer.Builder(this).build();player=attempt;
+        ExoPlayer attempt=new ExoPlayer.Builder(this).build();player=attempt;mediaOwnerGeneration=generation;
+        final int playingSourceIndex=sourceIndex;
+        final long mediaStarted=android.os.SystemClock.elapsedRealtime();
         attempt.setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true);
         playerView.setPlayer(attempt);
@@ -379,8 +396,19 @@ public final class MainActivity extends Activity {
                 }else trySource(generation);
             }
             @Override public void onPlayerError(PlaybackException error){advance(error);}
+            @Override public void onIsPlayingChanged(boolean isPlaying){
+                if(generation!=playerGeneration || player!=attempt || failed)return;
+                logPlayback(generation,"media3-isPlaying-"+isPlaying+" source="+playingSourceIndex,null);
+            }
+            @Override public void onRenderedFirstFrame(){
+                if(generation!=playerGeneration || player!=attempt || failed)return;
+                logPlayback(generation,"media3-first-frame source="+playingSourceIndex+
+                    " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-mediaStarted),null);
+            }
             @Override public void onPlaybackStateChanged(int state){
                 if(generation!=playerGeneration || player!=attempt || failed)return;
+                logPlayback(generation,"media3-state-"+media3State(state)+" source="+playingSourceIndex+
+                    " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-mediaStarted),null);
                 if(state==Player.STATE_READY){
                     ready=true;cancelPlayerTimeout();showLoading(false);showMessage("");
                 }else if(state==Player.STATE_ENDED){
@@ -403,13 +431,17 @@ public final class MainActivity extends Activity {
         // No playlist, next-video chain, related videos, comments, share or web player.
     }
     private void cancelPlayerTimeout(){if(playerTimeout!=null){handler.removeCallbacks(playerTimeout);playerTimeout=null;}}
-    private void stopMedia(){
+    private void stopMedia(){stopMedia("unspecified");}
+    private void stopMedia(String reason){
         cancelPlayerTimeout();
-        if(player!=null){playerView.setPlayer(null);player.stop();player.release();player=null;}
+        if(player!=null){
+            logPlayback(mediaOwnerGeneration,"player-release reason="+reason,null);
+            playerView.setPlayer(null);player.stop();player.release();player=null;
+        }
     }
     private void unavailable(){unavailable("VIDEO_UNAVAILABLE");}
     private void unavailable(String code){
-        stopMedia();showLoading(false);
+        stopMedia("unavailable-"+code);showLoading(false);
         String reason="לא הצלחנו להפעיל את הסרטון. אפשר לנסות שוב.";
         if("NOT_APPROVED".equals(code))reason="הסרטון כבר אינו מאושר לצפייה.";
         else if("NO_SUPPORTED_STREAM".equals(code))reason="לא נמצא מקור וידאו וקול מתאים לסרטון הזה.";
@@ -421,12 +453,12 @@ public final class MainActivity extends Activity {
     }
     private void closePlayer(){
         ++playerGeneration;if(playTask!=null){playTask.abort();playTask=null;}
-        stopMedia();showLoading(false);active=null;overlay.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);
+        stopMedia("close-player");showLoading(false);active=null;overlay.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     @Override public void onBackPressed(){if(active!=null)closePlayer();else super.onBackPressed();}
     @Override protected void onStop(){
-        if(active!=null)closePlayer();
+        if(active!=null){logPlayback(playerGeneration,"activity-onStop",null);closePlayer();}
         super.onStop();
     }
     @Override protected void onDestroy(){

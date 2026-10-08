@@ -171,3 +171,22 @@ test('native WebView is detached before destroy and debug native traces omit arg
  assert.match(c,/debugBridge\(method,id,"end"/);
  assert.doesNotMatch(c,/debugBridge\(method,(?:argument|input)/);
 });
+
+test('debug Media3 diagnostics record states, playing, first frame and release reasons without media URLs',()=>{
+  const main=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  const native=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  assert.match(main,/FLAG_DEBUGGABLE/);
+  assert.match(main,/media3-state-/);
+  assert.match(main,/onIsPlayingChanged\(boolean isPlaying\)/);
+  assert.match(main,/media3-isPlaying-/);
+  assert.match(main,/onRenderedFirstFrame\(\)/);
+  assert.match(main,/media3-first-frame/);
+  assert.match(main,/player-release reason=/);
+  assert.match(main,/root\.getClass\(\)\.getSimpleName\(\)/);
+  assert.match(main,/Never log exception messages/);
+  assert.match(native,/auth-before-extraction-ok/);
+  assert.match(native,/auth-after-extraction-ok/);
+  assert.match(main,/api\.playback\(id,generation\)/);
+  const playback=native.slice(native.indexOf('Playback playback(String id,long requestId)'));
+  assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+});
