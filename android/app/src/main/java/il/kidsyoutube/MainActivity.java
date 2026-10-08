@@ -240,6 +240,11 @@ public final class MainActivity extends Activity {
                 }catch(Exception e){
                     String reason=scope.cancelled?"CANCELLED":NativeApi.errorCode(e);
                     debugBridge(method,id,"end",started,reason);
+                    // Debug type-only diagnostics: exception messages may contain signed media URLs.
+                    if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0)
+                        android.util.Log.d("KidsCatalog","native-failure operation="+method+
+                            " type="+e.getClass().getSimpleName()+
+                            " root="+NativeApi.safeRootClass(e)+" category="+reason);
                     if(!scope.cancelled)respond(reply,id,null,reason);
                 }finally{scope.close();}
                 return null;
