@@ -25,10 +25,11 @@ tasks.register('prepareKidsAssets') {
         app = once(app,'''function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
 function parentToken(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
 async function providerFetch(input,options={}) {
-  if(!PARENT_CATALOG)return fetch(input,options);
+  if(!PARENT_CATALOG){catalogMetrics.providerCalls++;return fetch(input,options);}
   let target;try{target=new URL(String(input),location.href);}catch(_){throw new Error('INVALID_PARENT_PROVIDER');}
   if(!INVIDIOUS_INSTANCES.includes(target.origin))throw new Error('INVALID_PARENT_PROVIDER');
   const value=parentToken(),headers={...(options.headers||{}),...(value?{Authorization:'Bearer '+value}:{})};
+  catalogMetrics.providerCalls++;
   const response=await fetch(PARENT_API+'?action=provider&target='+encodeURIComponent(target.href),{...options,headers});
   if(response.status===401){
     try{window.parent.postMessage({type:'kids-parent-auth-expired'},location.origin);}catch(_){}
