@@ -61,9 +61,9 @@ public final class NativeAuthorizationTransportTest {
                 }catch(ExecutionException expected){
                     assertTrue(String.valueOf(expected.getCause()).contains("AUTH_SUPERSEDED"));
                 }
-                assertEquals(2,api.lastAuthorization.getInt("version"));
-                assertTrue(api.policy.videos.contains("AAAAAAAAAAA"));
-                assertFalse(api.policy.videos.contains("mVTlbvQ_010"));
+                String latest=api.whitelist(false);
+                assertTrue(latest.contains("AAAAAAAAAAA"));
+                assertFalse(latest.contains("mVTlbvQ_010"));
             } finally {
                 releaseFirst.countDown();
                 workers.shutdownNow();
@@ -81,8 +81,11 @@ public final class NativeAuthorizationTransportTest {
             assertTrue(api.whitelist(true).contains("mVTlbvQ_010"));
             try{api.displayAuthorization();fail("must fail closed");}
             catch(IOException expected){assertTrue(expected.getMessage().contains("WHITELIST_UNAVAILABLE"));}
-            assertNull("stale lastAuthorization cannot authorize shared catalog",api.lastAuthorization);
-            assertEquals(0,api.checkedAt);
+            try{
+                api.sharedCatalog(new org.json.JSONObject().put("version",1)
+                    .put("updatedAt","2026-10-09T00:00:00Z"));
+                fail("cached authorization must not grant catalog access after fresh failure");
+            }catch(IOException expected){assertTrue(expected.getMessage().contains("CATALOG_AUTH_CHANGED"));}
         }
     }
 
