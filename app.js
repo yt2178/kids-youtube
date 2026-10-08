@@ -175,6 +175,7 @@ function readSnapshot() {
       if (!Number.isFinite(stamp) || stamp > Date.now() || Date.now()-stamp > 7*24*60*60*1000) delete snapshot.channelLists[c.id];
     }
     snapshot.channelLists = pruneLists(snapshot.config, snapshot.channelLists);
+    snapshot.channelProgress = snapshot.channelProgress && typeof snapshot.channelProgress==='object' ? snapshot.channelProgress : {};
     snapshot.linkRecords = snapshot.linkRecords && typeof snapshot.linkRecords === 'object' ? snapshot.linkRecords : {};
     return snapshot;
   } catch (_) { return null; }
@@ -205,7 +206,29 @@ function mergeVideos(config, lists) {
   return result;
 }
 function saveSnapshot(config, lists) {
-  return storageSet(CACHE_KEY, {version:2, scope:SCOPE, savedAt:Date.now(), config, channelLists:pruneLists(config, lists), channelDates:Object.fromEntries(config.channels.map(c=>[c.id,channelDates[c.id] || 0])), linkRecords:activeLinkRecords});
+  const progress=Object.create(null);
+  for(const channel of config.channels){
+    const p=channelProgress.get(channel.id);
+    if(!p)continue;
+    progress[channel.id]={pages:p.pages,complete:!!p.complete,continuation:p.continuation,tokens:[...p.tokens].slice(-SETTINGS.maxPagesPerChannel)};
+  }
+  return storageSet(CACHE_KEY, {version:2, scope:SCOPE, savedAt:Date.now(), config, channelLists:pruneLists(config, lists), channelDates:Object.fromEntries(config.channels.map(c=>[c.id,channelDates[c.id] || 0])), channelProgress:progress,linkRecords:activeLinkRecords});
+}
+function restoreChannelProgress(config,lists,previous){
+  if(!previous)return 0;
+  let restored=0;
+  for(const channel of config.channels){
+    const p=previous.channelProgress?.[channel.id],stamp=previous.channelDates?.[channel.id];
+    if(!p||!Number.isFinite(stamp)||stamp>Date.now()||Date.now()-stamp>SETTINGS.channelTTL)continue;
+    if(!Number.isSafeInteger(p.pages)||p.pages<1||p.pages>SETTINGS.maxPagesPerChannel)continue;
+    if(typeof p.complete!=='boolean'||(p.continuation!==null&&(typeof p.continuation!=='string'||p.continuation.length>20000)))continue;
+    if(!Array.isArray(p.tokens)||p.tokens.length>SETTINGS.maxPagesPerChannel||p.tokens.some(t=>typeof t!=='string'||t.length>20000))continue;
+    const videos=cleanChannelVideos(lists[channel.id],channel);
+    if(!videos.length||(!p.complete&&!p.continuation))continue;
+    channelProgress.set(channel.id,{continuation:p.continuation,pages:p.pages,tokens:new Set(p.tokens),videos,complete:p.complete});
+    restored++;
+  }
+  return restored;
 }
 function status(text, busy = false) {
   clearTimeout(statusTimer);statusTimer=null;
@@ -680,11 +703,14 @@ async function loadApp() {
       render(config,lists);
     }
     catalogMetrics.metadataMs=Date.now()-metadataStarted;
+    const restoredChannels=restoreChannelProgress(config,lists,previous);
+    catalogMetrics.channelCacheHits+=restoredChannels;
     const channelsStarted=Date.now();
     let finished = 0, failures = 0, limited = 0;
     if (config.channels.length) status('טוענים את הסרטונים מהערוצים…', true);
     await parallelMap(config.channels, async channel => {
-      const result = await loadChannel(channel);
+      const restored=channelProgress.get(channel.id);
+      const result=restored ? {videos:restored.videos,complete:restored.complete,limited:!!restored.continuation,failed:false} : await loadChannel(channel);
       if(!stillAuthorized())return;
       if (result.failed) failures++;
       if (result.limited) limited++;
