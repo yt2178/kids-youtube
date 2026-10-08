@@ -734,7 +734,7 @@ async function loadApp({forceCatalog=false}={}) {
     if (limited) messages.push('אפשר ללחוץ על ״עוד סרטונים״ להמשך הרשימה.');
     if (!cacheSaved) messages.push('לא הצלחנו לשמור נתונים זמניים במכשיר. התוכן עדיין זמין כל עוד יש חיבור לאינטרנט.');
     if(linkFailures||failures){messages.push('המערכת תנסה להשלים את הפרטים שוב באופן אוטומטי.');scheduleCatalogRetry();}
-    else catalogRetryAttempts=0;
+    else {catalogRetryAttempts=0;catalogRetryPending=false;}
     status(messages.join(' '));
   } catch (_) {
     if(!stillAuthorized())return;
@@ -973,6 +973,9 @@ function closePlayer(fromHistory = false) {
   const target=returnFocus && returnFocus.isConnected ? returnFocus : [...ui.grid.children].find(card=>card.dataset.videoId===returnVideoId);
   if (target) target.focus({preventScroll:true}); scrollToPosition(returnScrollY);
   if (!fromHistory && history.state && history.state.kidsYoutubePlayer) history.back();
+  if(catalogRetryPending&&!document.hidden&&!loading&&!paginationBusy&&navigator.onLine!==false){
+    catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});
+  }
 }
 function flushSearch() {
   if (searchTimer) {clearTimeout(searchTimer);searchTimer=null;searchQuery=ui.search.value.slice(0,100);visibleCount=SETTINGS.cardsPerPage;render(activeConfig,activeLists);}
