@@ -3,7 +3,7 @@
 const API='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 const PARENT_REQUEST_TIMEOUT_MS=12000, CHANNEL_IMAGE_TIMEOUT_MS=8000;
 const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
-const ui=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));let parentLink=null,setupRequired=false,currentList='',currentVersion=null,manualVersion=null,pendingRemove=null,channelImageTimer=null,channelImageDeadline=null,previewGeneration=0,sessionEpoch=0,listSequence=0;const pendingRequests=new Set();
+const ui=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));let parentLink=null,setupRequired=false,currentList='',currentVersion=null,manualVersion=null,pendingRemove=null,channelImageTimer=null,channelImageDeadline=null,previewGeneration=0,sessionEpoch=0,listSequence=0;let catalogSupported=false,catalogBackfillStarted=false;const pendingRequests=new Set();
 const TRUSTED_FRAME=window.top===window;
 function token(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
 function storeToken(value,remember){try{localStorage.removeItem('kidsParentToken');sessionStorage.removeItem('kidsParentToken');(remember?localStorage:sessionStorage).setItem('kidsParentToken',value);}catch(_){}}
@@ -35,7 +35,29 @@ async function api(action,options={}){
 }
 function entries(raw){const out=[];for(const line of String(raw||'').replace(/^\uFEFF/,'').split(/\r?\n/)){const v=line.trim();if(!v||v.startsWith('//'))continue;const parts=v.split(/\s+\/\//,2);try{const link=KidsParentLinks.classify(parts[0]);out.push({...link,note:(parts[1]||'').trim()});}catch(_){out.push({url:parts[0],kind:'unknown',note:(parts[1]||'').trim()});}}return out;}
 function renderList(raw,version){currentList=String(raw||'');if(Number.isSafeInteger(version))currentVersion=version;if(ui['manual-editor'].hidden)ui['approved-text'].value=currentList;ui['approved-cards'].replaceChildren();const list=entries(currentList);if(!list.length){const p=document.createElement('p');p.textContent='אין עדיין קישורים מאושרים.';ui['approved-cards'].append(p);return;}for(const item of list){const box=document.createElement('article');box.className='entry';const title=document.createElement('p');title.className='entry-title';title.textContent=item.note||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube');const link=document.createElement('p');link.className='entry-link';link.textContent=item.url;const remove=document.createElement('button');remove.type='button';remove.className='remove';remove.textContent='הסר';remove.addEventListener('click',()=>askRemove(item));box.append(title,link,remove);ui['approved-cards'].append(box);}}
-function showParent(list){ui.auth.hidden=true;ui['parent-area'].hidden=false;renderList(list||'');setParentView(false);}
+async function backfillApprovedCatalog(){
+  if(!catalogSupported||catalogBackfillStarted||!token())return;
+  catalogBackfillStarted=true;
+  const epoch=sessionEpoch;
+  // No Edge Function work is left running after its response. At most two
+  // synchronous preparation requests per parent visit; no cron or polling.
+  for(let i=0;i<2&&epoch===sessionEpoch&&!document.hidden;i++){
+    try{
+      const data=await api('catalog');
+      if(epoch!==sessionEpoch||!Array.isArray(data.entries))return;
+      const byUrl=new Map(data.entries.filter(x=>x&&typeof x.approval_url==='string').map(x=>[x.approval_url,x]));
+      const item=entries(currentList).find(e=>{
+        const row=byUrl.get(e.url);
+        return !row||(!row.complete&&row.continuation&&Number(row.pages_loaded)<8);
+      });
+      if(!item)return;
+      const row=byUrl.get(item.url);
+      const continuation=row&&!row.complete&&row.continuation&&Date.now()-Date.parse(row.checked_at)<4*60*1000?row.continuation:null;
+      await api('prepare',{method:'POST',auth:true,body:{link:item.url,continuation}});
+    }catch{return;} // Aborted/auth-expired/provider failure is not a grant.
+  }
+}
+function showParent(list){ui.auth.hidden=true;ui['parent-area'].hidden=false;renderList(list||'');setParentView(false);if(catalogSupported)Promise.resolve().then(backfillApprovedCatalog);}
 function setParentView(catalog){
   // A late metadata response must not recreate a hidden preview behind the catalog.
   if(catalog&&ui.inspect.disabled)resetPreview();
@@ -53,7 +75,7 @@ function setParentView(catalog){
       startFrame(ui['youtube-player-shell'],ui['youtube-player'],ui['youtube-player-loading'],'https://www.youtube.com/embed/'+encodeURIComponent(parentLink.id)+'?playsinline=1&rel=0');
   }
 }
-async function loadList(){const seq=++listSequence,epoch=sessionEpoch;const d=await api('list');if(seq!==listSequence||epoch!==sessionEpoch)return null;setupRequired=!!d.setupRequired;renderList(d.list,d.version);return d;}
+async function loadList(){const seq=++listSequence,epoch=sessionEpoch;const d=await api('list');if(seq!==listSequence||epoch!==sessionEpoch)return null;setupRequired=!!d.setupRequired;catalogSupported=d.catalogVersion===1;renderList(d.list,d.version);return d;}
 async function boot(){const epoch=sessionEpoch;const bootSpinner=setTimeout(()=>{ui['auth-spinner'].hidden=false;},180);try{const d=await loadList();if(epoch!==sessionEpoch||!d)return;if(token()){try{const s=await api('status',{method:'POST',auth:true});if(epoch!==sessionEpoch)return;if(s.authenticated){showParent(d.list);return;}}catch(_){}if(epoch!==sessionEpoch)return;clearToken();}ui['auth-title'].textContent=setupRequired?'הגדרת סיסמה':'כניסת הורה';ui['auth-help'].textContent=setupRequired?'בחרו עכשיו סיסמה. מהכניסה הבאה האתר יזכור את ההורה במכשיר אם תסמנו ״זכור אותי״.':'הזינו את הסיסמה המשפחתית.';}catch(_){ui['auth-status'].textContent='לא הצלחנו להתחבר כרגע. נסו שוב.';}finally{clearTimeout(bootSpinner);ui['auth-spinner'].hidden=true;}}
 ui.login.addEventListener('click',async()=>{if(ui.login.disabled)return;const epoch=sessionEpoch;setBusy(ui.login,true);ui['auth-status'].textContent='';try{const password=ui.password.value;if(password.length<4){ui['auth-status'].textContent='הסיסמה צריכה להכיל לפחות 4 תווים.';return;}const d=await api(setupRequired?'setup':'login',{method:'POST',body:{password,remember:ui.remember.checked}});if(epoch!==sessionEpoch)return;storeToken(d.token,ui.remember.checked);const list=await loadList();if(epoch!==sessionEpoch||!list)return;ui.password.value='';showParent(list.list);}catch(e){ui['auth-status'].textContent=e.message==='WRONG_PASSWORD'?'סיסמה שגויה.':'הכניסה לא הצליחה. נסו שוב.';}finally{setBusy(ui.login,false);}});
 function resetPreview(){previewGeneration++;clearTimeout(channelImageTimer);clearTimeout(channelImageDeadline);channelImageTimer=null;channelImageDeadline=null;parentLink=null;ui.status.classList.remove('exists');ui.save.textContent='הוסף לרשימה';ui.save.disabled=false;ui.preview.hidden=true;ui['youtube-player-shell'].hidden=true;ui['youtube-player-loading'].hidden=true;ui['youtube-player'].removeAttribute('src');ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=true;ui['channel-image'].removeAttribute('src');ui['channel-symbol'].hidden=true;}
