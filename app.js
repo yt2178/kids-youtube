@@ -512,7 +512,7 @@ function sharedCatalogSnapshot(entries, response){
       continue;
     }
     if(!CHANNEL_ID.test(row.item_id))continue;
-    records[entry.url]={kind:'channel',id:row.item_id,name:title,thumbnail:safeChannelImage(row.thumbnail),verifiedAt:checked};
+    records[entry.url]={kind:'channel',id:row.item_id,name:title,thumbnail:safeChannelImage(row.thumbnail),verifiedAt:checked,serverPinned:true};
     const rows=Array.isArray(row.page)?row.page:[];
     if(rows.length>SETTINGS.maxVideosWithoutLimit*2)continue;
     lists[row.item_id]=cleanChannelVideos(rows.map(v=>({
@@ -563,12 +563,18 @@ async function resolveLink(entry, savedRecord) {
   // An @handle must still resolve freshly: a saved mapping is display metadata,
   // never a grant. A canonical ID, however, is already the parent's grant.
   if (!id) {
-    const data = await providers.request('/api/v1/resolveurl?url=' + encodeURIComponent(entry.url),{force:true,ttl:SETTINGS.metadataTTL,validate:data => !!data && CHANNEL_ID.test(data.ucid || data.browseId)});
-    id = data.ucid || data.browseId;
+    // Only the current server catalog (never device cache) may pin a legacy
+    // handle to a UC id, after checking the approval-list version.
+    if(savedRecord?.serverPinned===true && savedRecord.kind==='channel' && CHANNEL_ID.test(savedRecord.id))id=savedRecord.id;
+    else {
+      const data = await providers.request('/api/v1/resolveurl?url=' + encodeURIComponent(entry.url),{force:true,ttl:SETTINGS.metadataTTL,validate:data => !!data && CHANNEL_ID.test(data.ucid || data.browseId)});
+      id = data.ucid || data.browseId;
+    }
   }
   const verifiedDisplay = savedRecord && savedRecord.kind===entry.kind && savedRecord.id===id;
-  const freshMetadata=verifiedDisplay && Number.isFinite(savedRecord.verifiedAt)
-    && savedRecord.verifiedAt<=Date.now() && Date.now()-savedRecord.verifiedAt<24*60*60*1000;
+  const freshMetadata=verifiedDisplay && (savedRecord.serverPinned===true ||
+    (Number.isFinite(savedRecord.verifiedAt)&&savedRecord.verifiedAt<=Date.now()
+    && Date.now()-savedRecord.verifiedAt<24*60*60*1000));
   if (entry.kind === 'video') {
     if(freshMetadata && savedRecord.title && savedRecord.title!=='סרטון מאושר')
       return {kind:'video',...normalizeVideo(savedRecord),verifiedAt:savedRecord.verifiedAt};
@@ -732,11 +738,14 @@ async function loadApp({forceCatalog=false}={}) {
         else {
           ({entries, invalidLines} = parseLinkList(raw));
           for (const entry of entries) {
-            // A direct ID is the parent's exact grant and cached metadata may only
-            // decorate that same ID. A handle/legacy alias must be resolved again
-            // before it grants anything to the visible catalog.
-            if (!entry.id) continue;
-            const record = cachedLinkRecord(entry, {...(previous?.linkRecords||{}),...shared.records});
+            // A canonical ID comes directly from the freshly validated parent list.
+            // Legacy @handles may use ONLY the same-URL mapping returned by the
+            // server catalog alongside matching approval version and timestamp.
+            // Never authorize an alias from localStorage or a stale response.
+            const displaySource=entry.id
+              ? {...(previous?.linkRecords||{}),...shared.records}
+              : shared.records;
+            const record=cachedLinkRecord(entry,displaySource);
             if (record) activeLinkRecords[entry.url] = record;
           }
           config = configFromLinkRecords(entries, activeLinkRecords);
@@ -754,7 +763,11 @@ async function loadApp({forceCatalog=false}={}) {
       status('מזהים את הסרטונים והערוצים…', true);
       let resolvedCount=0;
       await parallelMap(entries.filter((entry,index) => entry.kind === 'channel' || index < SETTINGS.cardsPerPage), async entry => {
-        try { const record=await resolveLink(entry,shared.records[entry.url]||previous?.linkRecords?.[entry.url]);if(!stillAuthorized())return;activeLinkRecords[entry.url]=record; }
+        try {
+          const record=await resolveLink(entry,shared.records[entry.url]||previous?.linkRecords?.[entry.url]);
+          if(!stillAuthorized())return;
+          activeLinkRecords[entry.url]=record;
+        }
         catch (error) { if(!stillAuthorized())return;linkFailures++;debugCatalog('metadata-failed',{kind:entry.kind,hasId:!!entry.id,error:String(error&&error.message||'UNKNOWN')}); }
         if(!stillAuthorized())return;
         // Render the first useful result and then batches, not each late title.
