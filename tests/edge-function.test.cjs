@@ -15,7 +15,7 @@ test('parent provider proxy is authenticated and restricted to exact configured 
 
 test('provider upstream failures return bounded JSON instead of surfacing cross-origin browser errors',()=>{
   assert.match(source,/providerFailure\("UPSTREAM_UNAVAILABLE"/);
-  assert.match(source,/MAX_PROVIDER_BYTES = 2000000/);assert.match(source,/text\.length>MAX_PROVIDER_BYTES/);
+  assert.match(source,/MAX_PROVIDER_BYTES = 2000000/);assert.match(source,/readBounded\(r\.body,MAX_PROVIDER_BYTES\)/);
   assert.match(source,/try\{JSON\.parse\(text\);\}catch\{return providerFailure\("UPSTREAM_INVALID"/);
   assert.match(source,/r\.status>=300&&r\.status<400/);
 });
@@ -51,4 +51,21 @@ test('YouTube metadata redirects are followed only inside exact allowed YouTube 
   assert.match(source,/function safeYoutubePage/);assert.match(source,/!YOUTUBE_PAGE_HOSTS\.has\(h\)/);
   assert.match(source,/for\(let redirects=0;redirects<=3;redirects\+\+\)/);
   assert.match(source,/current=safeYoutubePage\(location,current\.href\)/);
+});
+
+
+test('external and request bodies are streaming-bounded even without Content-Length',()=>{
+  assert.match(source,/async function readBounded\(stream:ReadableStream<Uint8Array>\|null,max:number\)/);
+  assert.match(source,/total>max/);assert.match(source,/reader\.cancel\("TOO_LARGE"\)/);
+  assert.match(source,/readBounded\(r\.body,MAX_PROVIDER_BYTES\)/);
+  assert.match(source,/readBounded\(r\.body,MAX_YOUTUBE_HTML_BYTES\)/);
+  assert.match(source,/readBounded\(req\.body,MAX_BODY_BYTES\)/);assert.match(source,/catch\{return json\(\{error:"TOO_LARGE"\},413,origin\);\}/);
+});
+
+test('stream abort stays a timeout and malformed mutations return explicit client errors',()=>{
+  assert.match(source,/catch\(e\)\{if\(signal\.aborted\)throw e;/);
+  assert.match(source,/if\(body===null\|\|typeof body!=="object"\|\|Array\.isArray\(body\)\)/);
+  assert.match(source,/op!=="add"&&op!=="remove"/);
+  assert.match(source,/return json\(\{error:"INVALID_OPERATION"\},400,origin\)/);
+  assert.match(source,/return json\(\{error:"INVALID_LINK"\},400,origin\)/);
 });
