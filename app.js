@@ -449,6 +449,25 @@ async function fetchData(url, timeout = SETTINGS.requestTimeoutMs, signal, forma
   }
 }
 function fetchJson(url, timeout = SETTINGS.requestTimeoutMs, signal) { return fetchData(url, timeout, signal, 'json'); }
+async function fetchAuthorization(source='initial'){
+  if(NATIVE_MODE && typeof window.KidsNative.fetchAuthorization==='function'){
+    const requestId=++debugRequestSerial,started=Date.now();
+    catalogMetrics.requests++;
+    debugCatalog('request-start',{requestId,loadCycle,kind:'list',source,transport:'native',timeoutMs:15000});
+    try{
+      const doc=await window.KidsNative.fetchAuthorization();
+      if(!doc||typeof doc.list!=='string'||!Number.isSafeInteger(doc.version)
+          ||typeof doc.updatedAt!=='string'||doc.catalogVersion!==1)
+        throw new Error('INVALID_AUTH_RESPONSE');
+      debugCatalog('request-end',{requestId,loadCycle,kind:'list',source,transport:'native',outcome:'ok',ms:Date.now()-started});
+      return doc;
+    }catch(e){
+      debugCatalog('request-end',{requestId,loadCycle,kind:'list',source,transport:'native',outcome:e?.code||e?.message||'failed',ms:Date.now()-started});
+      throw e;
+    }
+  }
+  return fetchJson(PARENT_API+'?action=list');
+}
 
 // This parser runs only on the parent's published list, never on child input.
 function classifyYouTubeLink(input) {
@@ -706,7 +725,7 @@ async function retryCatalogContents(){
   const current=()=>generation===authorizationGeneration&&cycle===loadCycle&&serial===authorityCheckSerial;
   debugCatalog('partial-retry-start',{loadCycle:cycle,pending:pendingChannelRetry.size});
   try{
-    const remote=await fetchJson(PARENT_API+'?action=list');
+    const remote=await fetchAuthorization('partial-retry');
     if(!current())return;
     if(document.hidden){catalogRetryPending=true;return;}
     if(!remote||typeof remote.list!=='string')throw Error('INVALID_REMOTE_LIST');
@@ -770,7 +789,7 @@ async function loadApp({forceCatalog=false}={}) {
   activeLinkRecords = Object.create(null);
   try {
     let raw;
-    const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+    const remote = await fetchAuthorization('load');
     if(!stillAuthorized())return;
     catalogMetrics.authorizationMs=Date.now()-startedAt;
     debugCatalog('authorization-ok',{loadCycle:thisCycle,ms:catalogMetrics.authorizationMs,version:remote&&remote.version,catalogVersion:remote&&remote.catalogVersion});
@@ -926,7 +945,7 @@ async function checkAuthorizationFreshness(source='poll'){
   const started=Date.now();
   debugCatalog('authorization-check-start',{source,loadCycle:cycle,serial});
   try{
-    const remote=await fetchJson(PARENT_API+'?action=list');
+    const remote=await fetchAuthorization(source);
     if(!current()){debugCatalog('authorization-check-stale',{source,loadCycle:cycle,serial,outcome:'success'});return;}
     if(!remote||typeof remote.list!=='string')throw new Error('INVALID_REMOTE_LIST');
     const marker=String(remote.updatedAt||'')+'\0'+remote.list;
