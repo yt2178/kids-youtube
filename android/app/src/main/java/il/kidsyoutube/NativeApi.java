@@ -258,8 +258,15 @@ final class NativeApi {
         Playback(String id,String title,List<Source> sources){this.id=id;this.title=title;this.sources=sources;}
     }
     Playback playback(String id) throws Exception {
+        return playback(id,-1);
+    }
+    private void debugPlaybackAuthorization(long requestId,String stage) {
+        if(debugBuild)android.util.Log.d("KidsPlayback","request="+requestId+" stage="+stage);
+    }
+    Playback playback(String id,long requestId) throws Exception {
         // Every playback starts from a fresh authoritative parent list.
         whitelist(true);
+        debugPlaybackAuthorization(requestId,"auth-before-extraction-ok");
         ensureExtractor();
         try {
             StreamExtractor extractor=extractVideo(id);
@@ -301,6 +308,7 @@ final class NativeApi {
             // revoke access while network extraction is still in progress.
             whitelist(true);
             if(!policy.allows(id,author,approvedChannels()))throw new IOException("NOT_APPROVED");
+            debugPlaybackAuthorization(requestId,"auth-after-extraction-ok");
             return new Playback(id,clean(extractor.getName()),sources);
         }catch(Exception e){recordFailure(e);throw e;}
     }
