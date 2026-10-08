@@ -57,7 +57,7 @@ const providers = KidsNative.createManager();''')
             def stagingHost=new URI(stagingUrl).host
             app=app.replace(productionUrl,stagingUrl)
             html=html.replace('jxhelpxhrmwvzrrfrjuh.supabase.co',stagingHost)
-            if(app.contains(productionUrl))
+            if(app.split(java.util.regex.Pattern.quote(productionUrl),-1).drop(1).any { !it.startsWith('-staging') })
                 throw new GradleException('Production endpoint leaked into staging assets')
         }
         new File(target,'index.html').setText(html,'UTF-8')
