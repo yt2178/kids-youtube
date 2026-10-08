@@ -98,10 +98,10 @@ jobs:
           cd family
           sha256sum *.apk *.zip > SHA256SUMS.txt
       - name: Build isolated staging app and website if staging backend is configured
-        if: vars.KIDS_YOUTUBE_STAGING_URL != ''
+        if: github.event_name == 'pull_request'
         shell: bash
         env:
-          STAGING_BACKEND_URL: ${{ vars.KIDS_YOUTUBE_STAGING_URL }}
+          STAGING_BACKEND_URL: https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube-staging
           KIDS_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
