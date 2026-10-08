@@ -32,6 +32,26 @@ jobs:
           test "$code" = "200"
           grep -qi '^access-control-allow-origin: https://appassets.androidplatform.net' "$headers"
           node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(typeof j.list!=='string')process.exit(1)" "$body"
+      - name: Probe official YouTube channel feed from CI runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(mktemp)"
+          curl --location --silent --show-error --max-time 15 \
+            -H 'Accept: application/atom+xml, application/xml' \
+            --output "$body" \
+            --write-out 'Official RSS HTTP=%{http_code} total_seconds=%{time_total} bytes=%{size_download}\n' \
+            'https://www.youtube.com/feeds/videos.xml?channel_id=UCV6xoqUxJzkWwCbDmEwMSYw' || true
+          python3 - "$body" <<'PY'
+          import sys,xml.etree.ElementTree as ET
+          try:
+              root=ET.parse(sys.argv[1]).getroot()
+              channel=root.find('{http://www.youtube.com/xml/schemas/2015}channelId')
+              entries=root.findall('{http://www.w3.org/2005/Atom}entry')
+              print('Official RSS parsed: channelId=',channel.text if channel is not None else 'missing','entries=',len(entries))
+          except Exception as exc:
+              print('Official RSS unavailable to CI runner:',type(exc).__name__)
+          PY
       - name: Verify live server catalog and pinned Meir channel
         shell: bash
         run: |
