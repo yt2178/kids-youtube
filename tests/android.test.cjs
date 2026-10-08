@@ -227,3 +227,35 @@ test('Android double fresh playback validation is unchanged after catalog transp
  assert.match(playback,/auth-before-extraction-ok/);
  assert.match(playback,/auth-after-extraction-ok/);
 });
+
+test('packaged native UI contains retry control and both loading spinners with reliable terminal-state handling',()=>{
+  const {prepare}=require('../android/prepare-assets.cjs'),out=fs.mkdtempSync(path.join(os.tmpdir(),'kids-loading-package-'));
+  try {
+    prepare(out);
+    const html=fs.readFileSync(path.join(out,'index.html'),'utf8');
+    const app=fs.readFileSync(path.join(out,'app.js'),'utf8');
+    const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+    assert.match(html,/id="spinner"/);
+    assert.match(html,/id="status-retry"/);
+    assert.match(html,/id="player-spinner"/);
+    assert.match(app,/ui\.spinner\.hidden = true/);
+    assert.match(app,/ui\.spinner\.hidden=false/);
+    assert.match(app,/ui\['status-retry'\]\.hidden=!loadError/);
+    assert.match(activity,/loading=new ProgressBar\(this\)/);
+    assert.match(activity,/showLoading\(true\)/);
+    assert.match(activity,/showLoading\(false\)/);
+    assert.match(activity,/STATE_READY[\s\S]{0,300}showLoading\(false\)/);
+    assert.match(activity,/private void unavailable\(String code\)\{[\s\S]{0,150}showLoading\(false\)/);
+  }finally{fs.rmSync(out,{recursive:true,force:true});}
+});
+
+test('native authorization distinguishes generic list failure from video availability without leaking a grant',()=>{
+  const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  assert.match(source,/new IOException\("WHITELIST_UNAVAILABLE"\)/);
+  assert.match(source,/text\.contains\("WHITELIST_UNAVAILABLE"\)/);
+  assert.match(source,/return "NETWORK_ERROR"/);
+  assert.match(source,/return "VIDEO_UNAVAILABLE"/);
+  assert.match(activity,/reason=scope\.cancelled\?"CANCELLED":NativeApi\.errorCode\(e\)/);
+  assert.match(source,/synchronized JSONObject displayAuthorization\(\) throws Exception[\s\S]*?whitelist\(true\)/);
+});
