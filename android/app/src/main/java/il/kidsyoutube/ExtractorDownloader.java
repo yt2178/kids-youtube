@@ -22,7 +22,7 @@ final class ExtractorDownloader extends Downloader {
         client=builder.build();
     }
     // No hostname, IP, URL, cookies, credentials, or signed media URI is logged.
-    private static final class NetworkTrace extends EventListener {
+    private static final class NetworkTrace extends okhttp3.EventListener {
         private static final java.util.concurrent.atomic.AtomicLong NEXT=
                 new java.util.concurrent.atomic.AtomicLong();
         private final long id=NEXT.incrementAndGet();
