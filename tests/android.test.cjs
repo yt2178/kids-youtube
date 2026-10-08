@@ -156,7 +156,9 @@ test('native bridge exposes one versioned fresh authorization request without le
  reply({id:messages[0].id,data});
  assert.deepEqual(JSON.parse(JSON.stringify(await pending)),data);
  const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
- assert.match(source,/synchronized JSONObject displayAuthorization\(\) throws Exception/);
+ assert.match(source,/JSONObject displayAuthorization\(\) throws Exception/);
+ assert.doesNotMatch(source,/synchronized JSONObject displayAuthorization/);
+ assert.match(source,/synchronized\(this\)\{[\s\S]*lastAuthorization/);
  assert.match(source,/whitelist\(true\)/);
  assert.match(source,/lastAuthorization=doc/);
  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
@@ -257,7 +259,9 @@ test('native authorization distinguishes generic list failure from video availab
   assert.match(source,/return "NETWORK_ERROR"/);
   assert.match(source,/return "VIDEO_UNAVAILABLE"/);
   assert.match(activity,/reason=scope\.cancelled\?"CANCELLED":NativeApi\.errorCode\(e\)/);
-  assert.match(source,/synchronized JSONObject displayAuthorization\(\) throws Exception[\s\S]*?whitelist\(true\)/);
+  assert.match(source,/JSONObject displayAuthorization\(\) throws Exception[\s\S]*?whitelist\(true\)/);
+  assert.match(source,/AUTH_SUPERSEDED/);
+  assert.match(source,/authorizationGeneration\.incrementAndGet\(\)/);
 });
 
 test('one JS authorization trace survives the real JavaScript-to-native message bridge',async()=>{
