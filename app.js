@@ -456,7 +456,7 @@ async function fetchAuthorization(source='initial'){
     catalogMetrics.requests++;
     debugCatalog('request-start',{requestId,loadCycle,kind:'list',source,transport:'native',timeoutMs:15000});
     try{
-      const doc=await window.KidsNative.fetchAuthorization();
+      const doc=await window.KidsNative.fetchAuthorization({loadCycle,requestId,source});
       if(!doc||typeof doc.list!=='string'||!Number.isSafeInteger(doc.version)
           ||typeof doc.updatedAt!=='string'||doc.catalogVersion!==1)
         throw new Error('INVALID_AUTH_RESPONSE');

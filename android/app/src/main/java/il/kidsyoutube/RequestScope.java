@@ -11,8 +11,21 @@ final class RequestScope implements AutoCloseable {
     static final ThreadLocal<RequestScope> CURRENT = new ThreadLocal<>();
     private final Set<Call> calls = ConcurrentHashMap.newKeySet();
     final long deadline;
+    final long queuedAtMs=android.os.SystemClock.elapsedRealtime();
+    final String bridgeId;
+    final long loadCycle,jsRequestId;
     volatile boolean cancelled;
-    RequestScope(long timeoutMs) {deadline=System.currentTimeMillis()+timeoutMs;}
+    RequestScope(long timeoutMs){this(timeoutMs,"-",0,0);}
+    RequestScope(long timeoutMs,String bridgeId,long loadCycle,long jsRequestId){
+        deadline=System.currentTimeMillis()+timeoutMs;
+        this.bridgeId=bridgeId;
+        this.loadCycle=loadCycle;
+        this.jsRequestId=jsRequestId;
+    }
+    String trace(){return " bridgeId="+bridgeId+" loadCycle="+loadCycle+" jsRequestId="+jsRequestId;}
+    void phase(String name,long ms){
+        android.util.Log.d("KidsCatalog","native-phase"+trace()+" phase="+name+" durationMs="+ms);
+    }
     void enter() {CURRENT.set(this);}
     void check() throws InterruptedIOException {
         if (cancelled || Thread.currentThread().isInterrupted() || System.currentTimeMillis()>=deadline)

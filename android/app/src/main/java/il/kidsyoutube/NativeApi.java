@@ -132,6 +132,16 @@ final class NativeApi {
         }finally{if(scope!=null)scope.remove(call);}
     }
 
+    JSONObject tracedDisplayAuthorization() throws Exception {
+        RequestScope scope=RequestScope.CURRENT.get();
+        long started=android.os.SystemClock.elapsedRealtime();
+        synchronized(this){
+            if(debugBuild&&scope!=null)
+                scope.phase("authorization-lock-wait",
+                    android.os.SystemClock.elapsedRealtime()-started);
+            return displayAuthorization();
+        }
+    }
     synchronized JSONObject displayAuthorization() throws Exception {
         // One native transport is authoritative for the WebView and the playback
         // bridge. Never return a previous document after a failed fresh request.

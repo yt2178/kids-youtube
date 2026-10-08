@@ -30,13 +30,18 @@ final class ExtractorDownloader extends Downloader {
         private final long id=NEXT.incrementAndGet();
         private final long started=android.os.SystemClock.elapsedRealtime();
         private final String kind;
+        private final String trace;
         NetworkTrace(Call call){
             String tag=call.request().tag(String.class);
             kind="authorization".equals(tag)?"authorization":
                 "catalog".equals(tag)?"catalog":"extractor";
+            // OkHttp's event listener is constructed when newCall() runs on
+            // the worker, so it can inherit the same verified bridge scope.
+            RequestScope scope=RequestScope.CURRENT.get();
+            trace=scope==null?" bridgeId=- loadCycle=0 jsRequestId=0":scope.trace();
         }
         private void mark(String phase){
-            android.util.Log.d("KidsNetwork","id="+id+" kind="+kind+" phase="+phase+
+            android.util.Log.d("KidsNetwork","id="+id+" kind="+kind+trace+" phase="+phase+
                     " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-started));
         }
         @Override public void callStart(Call call){mark("call-start");}
