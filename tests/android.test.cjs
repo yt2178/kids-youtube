@@ -161,7 +161,7 @@ test('native bridge exposes one versioned fresh authorization request without le
  assert.match(source,/lastAuthorization=doc/);
  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
  assert.match(activity,/api\.displayAuthorization\(\)/);
- assert.match(activity,/Set\.of\("whitelist","authorization","api","clear"\)/);
+ assert.match(activity,/Set\.of\("whitelist","authorization","catalog","api","clear"\)/);
 });
 test('native WebView is detached before destroy and debug native traces omit arguments and tokens',()=>{
  const c=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
