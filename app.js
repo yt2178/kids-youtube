@@ -87,6 +87,8 @@ let loadError = false;
 let statusTimer = null;
 let approvalMarker = '';
 let authorizationReloadPending = false;
+let authorizationGeneration = 0;
+let pendingOnlineRefresh = false;
 const savedView = storageGet(VIEW_KEY);
 let viewStyle = savedView === 'list' ? 'list' : 'grid';
 function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
@@ -574,6 +576,8 @@ async function loadApp() {
   loadError=false;
   channelProgress.clear(); verifiedChannelVideos.clear();
   loading = true; lastLoad = Date.now();
+  const generation=authorizationGeneration;
+  const stillAuthorized=()=>generation===authorizationGeneration;
   ui.grid.setAttribute('aria-busy','true');
   // Never keep previously approved cards visible while authority is being revalidated.
   activeConfig={videos:[],channels:[]};activeLists=Object.create(null);displayed=new Map();
@@ -590,6 +594,7 @@ async function loadApp() {
   try {
     let raw;
     const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+    if(!stillAuthorized())return;
     if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
     raw = remote.list;
     approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
@@ -619,8 +624,9 @@ async function loadApp() {
     if (entries && entries.length) {
       status('מזהים את הסרטונים והערוצים…', true);
       await parallelMap(entries.filter((entry,index) => entry.kind === 'channel' || index < SETTINGS.cardsPerPage), async entry => {
-        try { activeLinkRecords[entry.url] = await resolveLink(entry); }
-        catch (_) { linkFailures++; }
+        try { const record=await resolveLink(entry);if(!stillAuthorized())return;activeLinkRecords[entry.url]=record; }
+        catch (_) { if(!stillAuthorized())return;linkFailures++; }
+        if(!stillAuthorized())return;
         config = configFromLinkRecords(entries, activeLinkRecords);
         lists = pruneLists(config, lists);
         if (!saveSnapshot(config, lists)) cacheSaved = false;
@@ -631,6 +637,7 @@ async function loadApp() {
     if (config.channels.length) status('טוענים את הסרטונים מהערוצים…', true);
     await parallelMap(config.channels, async channel => {
       const result = await loadChannel(channel);
+      if(!stillAuthorized())return;
       if (result.failed) failures++;
       if (result.limited) limited++;
       lists[channel.id] = result.complete ? result.videos : cleanChannelVideos([...result.videos, ...(lists[channel.id] || [])], channel);
@@ -638,6 +645,7 @@ async function loadApp() {
       render(config, lists);
       status('טוענים את הסרטונים מהערוצים… ' + (++finished) + ' מתוך ' + config.channels.length, true);
     });
+    if(!stillAuthorized())return;
     if (!saveSnapshot(config, lists)) cacheSaved = false;
     const messages = [];
     if (invalidLines.length) messages.push('חלק מהקישורים ברשימה זקוקים לבדיקה של ההורה.');
@@ -649,6 +657,7 @@ async function loadApp() {
     if (!cacheSaved) messages.push('לא הצלחנו לשמור נתונים זמניים במכשיר. התוכן עדיין זמין כל עוד יש חיבור לאינטרנט.');
     status(messages.join(' '));
   } catch (_) {
+    if(!stillAuthorized())return;
     loadError=true;
     activeConfig = {videos:[], channels:[]}; activeLists = Object.create(null);
     displayed = new Map(); ui.grid.replaceChildren(); ui.count.textContent = ''; ui.more.hidden = true;
@@ -658,12 +667,13 @@ async function loadApp() {
     status('');
   } finally {
     loading = false; ui.grid.removeAttribute('aria-busy');
-    render(activeConfig, activeLists);
+    if(stillAuthorized())render(activeConfig, activeLists);
+    if(pendingOnlineRefresh&&navigator.onLine!==false){pendingOnlineRefresh=false;loadApp();}
   }
 }
 
 function failClosedAuthorization(message='לא הצלחנו לאמת כרגע את רשימת ההורה.') {
-  loadError=true;approvalMarker='';activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
+  authorizationGeneration++;loadError=true;approvalMarker='';activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
   displayed=new Map();ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;saveSnapshot(activeConfig,{});
   status(message);render(activeConfig,activeLists);
 }
@@ -968,7 +978,7 @@ ui.install.addEventListener('click', async () => {
 });
 window.addEventListener('appinstalled', () => { installPrompt = null; ui.install.hidden = true; });
 window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
-window.addEventListener('online', () => {providers.resetHealth();loadApp();});
+window.addEventListener('online', () => {providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp();});
 document.addEventListener('visibilitychange', () => {
   if(document.hidden||navigator.onLine===false)return;
   if(Date.now()-lastLoad>SETTINGS.refreshOnReturnMs){loadApp();return;}
