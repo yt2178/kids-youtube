@@ -1,13 +1,26 @@
 plugins { id 'com.android.application' }
+def kidsStaging = project.findProperty('kidsStaging')?.toString() == 'true'
+def stagingBackend = project.findProperty('kidsBackendUrl')?.toString() ?: ''
+def productionBackend = 'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube'
+if(kidsStaging){
+    if(!(stagingBackend ==~ /^https:\/\/[a-z0-9-]+\.supabase\.co\/functions\/v1\/kids-youtube$/)
+            || stagingBackend == productionBackend)
+        throw new GradleException('Staging requires a distinct, validated Supabase URL (-PkidsBackendUrl). Production is forbidden.')
+}
+def kidsBackend = kidsStaging ? stagingBackend : productionBackend
 android {
     namespace 'il.kidsyoutube'
     compileSdk 36
     defaultConfig {
-        applicationId 'il.kidsyoutube'
+        applicationId kidsStaging ? 'il.kidsyoutube.staging' : 'il.kidsyoutube'
         minSdk 23
         targetSdk 35
         versionCode 3
         versionName '0.3-beta'
+        resValue 'string','kids_list_url',kidsBackend+'?action=list&format=text'
+        resValue 'string','kids_backend_url',kidsBackend
+        resValue 'string','kids_app_label',kidsStaging ? 'סרטונים לילדים — בדיקה' : 'סרטונים לילדים'
+        manifestPlaceholders = [kidsDeepLinkScheme: kidsStaging ? 'kidsyoutube-staging' : 'kidsyoutube']
         def candidateSha=System.getenv('KIDS_BUILD_SHA') ?: 'local'
         resValue 'string','kids_build_sha',(candidateSha ==~ /[a-f0-9]{40}/ ? candidateSha : 'local')
     }
