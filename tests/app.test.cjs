@@ -56,7 +56,18 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.listFetch?options.listFetch({url:target,opts,calls,raw}):options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return options.catalogFetch?options.catalogFetch({url:target,opts,calls}):json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
-  if(options.nativeMode)context.KidsNative={...(options.nativeFetchAuthorization?{fetchAuthorization:options.nativeFetchAuthorization}:{}),...(options.nativeFetchCatalog?{fetchCatalog:options.nativeFetchCatalog}:{})};
+  if(options.nativeMode){
+    // Native Android returns the catalog with the authoritative whitelist;
+    // the browser-only catalogFetch fixture is never used for this path.
+    const nativeGrant=options.nativeFetchAuthorization||
+      (!options.listFetch&&options.sharedCatalog?async()=>({
+        list:typeof config==='string'?config:JSON.stringify(config),
+        version:options.sharedCatalog.version,updatedAt:options.sharedCatalog.updatedAt,
+        catalogVersion:1,preparedCatalog:options.sharedCatalog
+      }):undefined);
+    context.KidsNative={...(nativeGrant?{fetchAuthorization:nativeGrant}:{}),
+      ...(options.nativeFetchCatalog?{fetchCatalog:options.nativeFetchCatalog}:{})};
+  }
   if(options.parentWindow){
     const here=new URL(options.href||'https://example.test/kids-youtube/');
     context.parent={location:{origin:here.origin,pathname:new URL('./parents.html',here).pathname},...options.parentWindow};
@@ -1033,7 +1044,8 @@ test('poll and partial-channel retry cannot issue competing list checks',async()
  const retry=a.run('retryCatalogContents()');
  await until(()=>typeof finish==='function');
  await a.run("checkAuthorizationFreshness('poll')");
- assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,before+1);
+ assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,before,
+   'Android must not send a competing WebView authority request');
  finish(json({videos:[row(2,C)],continuation:null}));
  await retry;
  assert.equal(a.run('displayed.size'),2);
