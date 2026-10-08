@@ -439,8 +439,10 @@ function parseLinkList(text) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('//')) return;
     const input = trimmed.split(/\s+\/\//,1)[0].trim();
+    const note = trimmed.split(/\s+\/\//,2)[1];
     try {
       const entry = classifyYouTubeLink(input);
+      entry.label = typeof note==='string' ? note.trim().slice(0,300) : '';
       if (!entries.has(entry.url)) entries.set(entry.url, entry);
     } catch (_) { invalidLines.push(index + 1); }
   });
@@ -460,7 +462,7 @@ function cachedLinkRecord(entry, records) {
   if (old && old.kind === entry.kind && (entry.kind === 'video' ? VIDEO_ID : CHANNEL_ID).test(old.id) && (!entry.id || old.id === entry.id)) {
     return {kind:old.kind, id:old.id, title:cleanTitle(old.title), name:typeof old.name === 'string' ? old.name.slice(0,300) : '', author:typeof old.author === 'string' ? old.author.slice(0,300) : '', authorId:CHANNEL_ID.test(old.authorId) ? old.authorId : '', published:Number.isFinite(old.published) ? old.published : 0, thumbnail:safeChannelImage(old.thumbnail)};
   }
-  return entry.id ? {kind:entry.kind, id:entry.id, title:'סרטון מאושר', name:'ערוץ מאושר', author:''} : null;
+  return entry.id ? {kind:entry.kind, id:entry.id, title:entry.kind==='video' ? cleanTitle(entry.label||'סרטון מאושר') : 'סרטון מאושר', name:entry.kind==='channel' ? cleanTitle(entry.label||'ערוץ מאושר') : 'ערוץ מאושר', author:''} : null;
 }
 function configFromLinkRecords(entries, records) {
   const videos = [], channels = [];
@@ -479,16 +481,23 @@ function getVideoMetadata(id, signal, force = false) {
 function getChannelMetadata(id) {
   return providers.request('/api/v1/channels/' + id,{ttl:12*60*60*1000,validate:data => !!data && data.authorId === id && typeof data.author === 'string' && !!data.author.trim()});
 }
-async function resolveLink(entry) {
+async function resolveLink(entry, savedRecord) {
   let id = entry.id;
+  // An @handle must still resolve freshly: a saved mapping is display metadata,
+  // never a grant. A canonical ID, however, is already the parent's grant.
   if (!id) {
     const data = await providers.request('/api/v1/resolveurl?url=' + encodeURIComponent(entry.url),{force:true,ttl:SETTINGS.metadataTTL,validate:data => !!data && CHANNEL_ID.test(data.ucid || data.browseId)});
     id = data.ucid || data.browseId;
   }
+  const verifiedDisplay = savedRecord && savedRecord.kind===entry.kind && savedRecord.id===id;
   if (entry.kind === 'video') {
+    if(verifiedDisplay && savedRecord.title && savedRecord.title!=='סרטון מאושר')
+      return {kind:'video',...normalizeVideo(savedRecord)};
     const data = await getVideoMetadata(id);
     return {kind:'video',...normalizeVideo(data)};
   }
+  if(verifiedDisplay && savedRecord.name && savedRecord.name!=='ערוץ מאושר' && safeChannelImage(savedRecord.thumbnail))
+    return {kind:'channel',id,name:savedRecord.name,thumbnail:safeChannelImage(savedRecord.thumbnail)};
   const data = await getChannelMetadata(id);
   const images = Array.isArray(data.authorThumbnails) ? data.authorThumbnails : [];
   const image = images.find(item => item && item.width >= 128 && safeChannelImage(item.url)) || images.find(item => item && safeChannelImage(item.url));
@@ -624,7 +633,7 @@ async function loadApp() {
     if (entries && entries.length) {
       status('מזהים את הסרטונים והערוצים…', true);
       await parallelMap(entries.filter((entry,index) => entry.kind === 'channel' || index < SETTINGS.cardsPerPage), async entry => {
-        try { const record=await resolveLink(entry);if(!stillAuthorized())return;activeLinkRecords[entry.url]=record; }
+        try { const record=await resolveLink(entry,previous?.linkRecords?.[entry.url]);if(!stillAuthorized())return;activeLinkRecords[entry.url]=record; }
         catch (_) { if(!stillAuthorized())return;linkFailures++; }
         if(!stillAuthorized())return;
         config = configFromLinkRecords(entries, activeLinkRecords);
