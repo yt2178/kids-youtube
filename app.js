@@ -808,7 +808,15 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
     let shared={records:Object.create(null),lists:Object.create(null),dates:Object.create(null),progress:Object.create(null)};
     if(remote.catalogVersion===1)try {
       let catalog;
-      try {
+      // Native authorization can carry the already-approved, prepared
+      // display catalog in the SAME HTTPS response. This removes the extra
+      // WebView request and its fixed 4s stall on slow physical devices.
+      const bundled= NATIVE_MODE && remote.preparedCatalog;
+      if(bundled && bundled.version===remote.version && bundled.updatedAt===remote.updatedAt
+          && Array.isArray(bundled.entries)){
+        catalog=bundled;
+        debugCatalog('shared-catalog-from-authorization',{loadCycle:thisCycle,entries:bundled.entries.length});
+      }else try {
         catalog=await fetchJson(PARENT_API+'?action=catalog',4000);
       }catch(webError){
         // A timed-out optional display catalog may be retried ONCE over the
