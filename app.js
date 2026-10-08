@@ -692,7 +692,7 @@ async function loadMoreVideos() {
     paginationBusy=false;delete ui.more.dataset.busy;
     if(authorizationReloadPending){
       authorizationReloadPending=false;
-      await loadApp();
+      await loadApp({trigger:'pagination-grant-changed'});
     }else{
       render(activeConfig,activeLists);
       if(ui['status-text'].textContent===loadingText)status('');
@@ -714,7 +714,7 @@ function scheduleCatalogRetry(reason='partial'){
     if(document.hidden||playback||loading||paginationBusy||navigator.onLine===false){catalogRetryPending=true;return;}
     catalogMetrics.retries++;
     if(reason==='partial'&&approvalMarker&&displayed.size>0)retryCatalogContents();
-    else loadApp({forceCatalog:reason==='partial'});
+    else loadApp({forceCatalog:reason==='partial',trigger:'scheduled-'+reason});
   },delay);
   if(catalogRetryTimer&&typeof catalogRetryTimer.unref==='function')catalogRetryTimer.unref();
 }
@@ -733,7 +733,7 @@ async function retryCatalogContents(){
     if(next!==marker){
       debugCatalog('partial-retry-grants-changed',{loadCycle:cycle});
       failClosedAuthorization('רשימת ההורה השתנתה. מאמתים מחדש…');
-      await loadApp();return;
+      await loadApp({trigger:'partial-grant-changed'});return;
     }
     const channels=activeConfig.channels.filter(c=>pendingChannelRetry.has(c.id));
     let failures=0;
@@ -767,14 +767,14 @@ async function retryCatalogContents(){
     }
   }finally{contentRetryBusy=false;}
 }
-async function loadApp({forceCatalog=false}={}) {
+async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
   if (loading || paginationBusy || !ui.player.hidden) return;
   clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;
   const startedAt=Date.now();catalogMetrics.startedAt=startedAt;
   const thisCycle=++loadCycle;
   ++authorityCheckSerial;
   pendingChannelRetry.clear();
-  debugCatalog('load-start',{loadCycle:thisCycle,forceCatalog});
+  debugCatalog('load-start',{loadCycle:thisCycle,forceCatalog,trigger});
   catalogMetrics.requests=0;catalogMetrics.providerCalls=0;catalogMetrics.renderCalls=0;
   catalogMetrics.displayCacheHits=0;catalogMetrics.channelCacheHits=0;
   catalogMetrics.authorizationMs=0;catalogMetrics.metadataMs=0;catalogMetrics.channelsMs=0;catalogMetrics.firstUsefulMs=0;catalogMetrics.completedMs=0;
@@ -929,10 +929,10 @@ async function loadApp({forceCatalog=false}={}) {
       render(activeConfig, activeLists);
       if(!loadError)debugCatalog('load-complete',{loadCycle:thisCycle,displayed:displayed.size,linksFailed:linkFailures,channelsFailed:failures,metrics:{...catalogMetrics}});
     }
-    if(pendingOnlineRefresh&&navigator.onLine!==false){pendingOnlineRefresh=false;catalogRetryPending=false;loadApp();}
+    if(pendingOnlineRefresh&&navigator.onLine!==false){pendingOnlineRefresh=false;catalogRetryPending=false;loadApp({trigger:'online-pending'});}
     else if(catalogRetryPending&&!document.hidden&&!playback&&!paginationBusy&&navigator.onLine!==false){
       catalogRetryPending=false;catalogMetrics.retries++;
-      if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true});
+      if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true,trigger:'deferred-retry'});
     }
   }
 }
@@ -962,7 +962,7 @@ async function checkAuthorizationFreshness(source='poll'){
     if(!approvalMarker||marker!==approvalMarker){
       failClosedAuthorization('רשימת ההורה השתנתה. מאמתים אותה מחדש…','grant-change');
       if(paginationBusy){authorizationReloadPending=true;return;}
-      await loadApp();
+      await loadApp({trigger:'fresh-grant-changed'});
     }
   }catch(e){
     if(!current()){debugCatalog('authorization-check-stale',{source,loadCycle:cycle,serial,outcome:e?.code||'failed'});return;}
@@ -1138,7 +1138,7 @@ function openPlayer(id) {
       if(!approvalMarker||freshMarker!==approvalMarker){
         failClosedAuthorization('רשימת ההורה השתנתה. מאמתים מחדש…');
         if(paginationBusy)authorizationReloadPending=true;
-        else loadApp();
+        else loadApp({trigger:'parent-video-grant-changed'});
         return;
       }
       const current=displayed.get(id);
@@ -1171,7 +1171,7 @@ function closePlayer(fromHistory = false) {
   if (!fromHistory && history.state && history.state.kidsYoutubePlayer) history.back();
   if(catalogRetryPending&&!document.hidden&&!loading&&!paginationBusy&&navigator.onLine!==false){
     catalogRetryPending=false;catalogMetrics.retries++;
-    if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true});
+    if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true,trigger:'foreground-deferred-retry'});
   }
 }
 function flushSearch() {
@@ -1199,10 +1199,10 @@ ui.search.addEventListener('input', () => {
 });
 ui.sort.addEventListener('change', () => {sortMode=ui.sort.value;storageSet(SORT_KEY,sortMode);render(activeConfig,activeLists);});
 ui['channel-filter'].addEventListener('change', () => {channelFilter=ui['channel-filter'].value;storageSet(CHANNEL_FILTER_KEY,channelFilter);visibleCount=SETTINGS.cardsPerPage;render(activeConfig,activeLists);});
-ui['clear-cache'].addEventListener('click', () => {providers.clearCache();providers.resetHealth();loadApp();});
+ui['clear-cache'].addEventListener('click', () => {providers.clearCache();providers.resetHealth();loadApp({trigger:'clear-provider-cache'});});
 ui.search.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); flushSearch(); ui.search.blur(); } });
 ui['clear-search'].addEventListener('click', clearSearch);
-ui['empty-clear'].addEventListener('click', () => {if(ui['empty-clear'].dataset.action==='retry')loadApp();else clearSearch();});
+ui['empty-clear'].addEventListener('click', () => {if(ui['empty-clear'].dataset.action==='retry')loadApp({trigger:'user-empty-retry'});else clearSearch();});
 ui['view-grid'].addEventListener('click',()=>setViewStyle('grid'));
 ui['view-list'].addEventListener('click',()=>setViewStyle('list'));
 let pullStartY=null,pullDistance=0;
@@ -1220,7 +1220,7 @@ document.addEventListener('touchend',()=>{
   const refresh=pullStartY!==null&&pullDistance>=70&&!loading&&!playback&&window.scrollY<=0;
   if(!refresh){resetPull();return;}
   pullStartY=null;pullDistance=0;ui['pull-refresh'].dataset.active='true';ui['pull-refresh'].dataset.loading='true';ui['pull-refresh'].textContent='מרענן…';
-  Promise.resolve(loadApp({forceCatalog:true})).finally(()=>{delete ui['pull-refresh'].dataset.loading;resetPull();});
+  Promise.resolve(loadApp({forceCatalog:true,trigger:'pull-to-refresh'})).finally(()=>{delete ui['pull-refresh'].dataset.loading;resetPull();});
 },{passive:true});
 ui.more.addEventListener('click', loadMoreVideos);
 ui.back.addEventListener('click', () => closePlayer());
@@ -1263,7 +1263,7 @@ ui.install.addEventListener('click', async () => {
 });
 window.addEventListener('appinstalled', () => { installPrompt = null; ui.install.hidden = true; });
 window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
-window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;catalogRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp();});
+window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;catalogRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp({trigger:'online'});});
 document.addEventListener('visibilitychange', () => {
   if(document.hidden||navigator.onLine===false)return;
   if(catalogRetryPending&&!loading&&!paginationBusy&&!playback){
@@ -1271,12 +1271,12 @@ document.addEventListener('visibilitychange', () => {
     if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true});
     return;
   }
-  if(Date.now()-lastLoad>SETTINGS.refreshOnReturnMs){loadApp();return;}
+  if(Date.now()-lastLoad>SETTINGS.refreshOnReturnMs){loadApp({trigger:'foreground-stale'});return;}
   if(!PARENT_CATALOG&&!NATIVE_MODE)providers.healthCheck().then(audit);
   checkAuthorizationFreshness('foreground');
 });
 if (history.state && history.state.kidsYoutubePlayer) history.replaceState(null, '', location.href);
-loadApp();
+loadApp({trigger:'startup'});
 
 if (typeof setInterval === 'function' && !PARENT_CATALOG) {
   if(!NATIVE_MODE)setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
