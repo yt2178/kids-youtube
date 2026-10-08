@@ -18,7 +18,7 @@ async function main(){
   assert.equal(build.candidateSha,sha);
   for(const filename of ['app.js','parents.js','index.html']){
     const source=fs.readFileSync(path.join(folder,filename),'utf8');
-    assert.equal(source.includes(PRODUCTION),false,filename+' production endpoint');
+    assert.equal(source.split(PRODUCTION).slice(1).some(suffix=>!suffix.startsWith('-staging')),false,filename+' production endpoint');
     assert.equal(source.includes(STAGE),true,filename+' staging endpoint');
   }
   const listResponse=await request(STAGE+'?action=list');
