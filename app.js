@@ -753,9 +753,18 @@ async function retryCatalogContents(){
     else {catalogRetryAttempts=0;status('');}
   }catch(e){
     if(!current())return;
-    debugCatalog('partial-retry-auth-failed',{loadCycle:cycle,error:e?.code||e?.message||'UNKNOWN'});
-    failClosedAuthorization();
-    scheduleCatalogRetry('authorization');
+    // This is an optional content-completion retry, not the periodic authority
+    // enforcement check. A transient auth transport failure here must not erase
+    // a catalog that was already freshly authorized; the regular poll remains
+    // responsible for fail-closed enforcement.
+    debugCatalog('partial-retry-auth-failed',{loadCycle:cycle,error:e?.code||e?.message||'UNKNOWN',kept:displayed.size});
+    if(displayed.size&&approvalMarker){
+      status('חלק מהתוכן עדיין לא התעדכן. ננסה שוב אוטומטית.');
+      scheduleCatalogRetry('partial');
+    }else{
+      failClosedAuthorization(undefined,'partial-retry-no-authority');
+      scheduleCatalogRetry('authorization');
+    }
   }finally{contentRetryBusy=false;}
 }
 async function loadApp({forceCatalog=false}={}) {
