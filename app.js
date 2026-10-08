@@ -571,7 +571,7 @@ async function resolveLink(entry, savedRecord) {
     const data = await getVideoMetadata(id);
     return {kind:'video',...normalizeVideo(data),verifiedAt:Date.now()};
   }
-  if(freshMetadata && savedRecord.name && savedRecord.name!=='ערוץ מאושר' && safeChannelImage(savedRecord.thumbnail))
+  if(freshMetadata && savedRecord.name && savedRecord.name!=='ערוץ מאושר')
     return {kind:'channel',id,name:savedRecord.name,thumbnail:safeChannelImage(savedRecord.thumbnail),verifiedAt:savedRecord.verifiedAt};
   const data = await getChannelMetadata(id);
   const images = Array.isArray(data.authorThumbnails) ? data.authorThumbnails : [];
