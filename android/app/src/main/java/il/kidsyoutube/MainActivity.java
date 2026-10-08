@@ -100,7 +100,7 @@ public final class MainActivity extends Activity {
         message=text("מתחבר...");message.setGravity(Gravity.CENTER);message.setMinHeight(dp(42));
         overlay.addView(message,new LinearLayout.LayoutParams(-1,-2));
         retry=button("נסו שוב");retry.setVisibility(View.GONE);
-        retry.setOnClickListener(v->{if(active!=null)openPlayer(active.id);});
+        retry.setOnClickListener(v->{if(active!=null)openPlayer(active.id,title.getText().toString());});
         overlay.addView(retry,new LinearLayout.LayoutParams(-1,dp(64)));
         playerView=new PlayerView(this);
         playerView.setShowNextButton(false);playerView.setShowPreviousButton(false);
