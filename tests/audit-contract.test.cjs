@@ -10,7 +10,7 @@ test('authorization source is live Supabase only and stale browser cache cannot 
   assert.match(app,/const PARENT_API = 'https:\/\/jxhelpxhrmwvzrrfrjuh\.supabase\.co\/functions\/v1\/kids-youtube'/);
   assert.match(app,/return fetchJson\(PARENT_API\+'\?action=list'\)/);
   assert.match(app,/fetchAuthorization\('load'\)/);
-  assert.match(app,/window\.KidsNative\.fetchAuthorization\(\)/);
+  assert.match(app,/window\.KidsNative\.fetchAuthorization\(\{loadCycle,requestId,source\}\)/);
   assert.match(native,/synchronized JSONObject displayAuthorization\(\)/);
   assert.match(edge,/const response=\{list:s\.list_text,version:s\.version,updatedAt:s\.updated_at,catalogVersion:1/);
   assert.match(edge,/pinnedChannels:pins/);
