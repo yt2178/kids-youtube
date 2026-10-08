@@ -230,3 +230,37 @@ test('runtime: prepared channel page rejects unverified author identities',async
   const page=f.catalog.get(url).page;
   assert.equal(page.length,1);assert.equal(page[0].id,'CCCCCCCCCCC');
 });
+
+test('native authoritative list binds server-pinned legacy channel only to currently approved URL',async()=>{
+  const f=await createFixture(),handle='https://www.youtube.com/@meirshows';
+  f.db.list_text=handle+'\n'+A+'\n';
+  f.catalog.set(handle,{approval_url:handle,kind:'channel',item_id:'UCV6xoqUxJzkWwCbDmEwMSYw',checked_at:new Date().toISOString()});
+  const first=await f.request('list',{method:'GET',query:{format:'native'}});
+  assert.equal(first.status,200);
+  assert.equal(first.data.list,f.db.list_text);
+  assert.equal(first.data.pinnedChannels.length,1);
+  assert.equal(first.data.pinnedChannels[0].url,handle);
+  f.db.list_text=A+'\n';
+  const revoked=await f.request('list',{method:'GET',query:{format:'native'}});
+  assert.deepEqual(JSON.parse(JSON.stringify(revoked.data.pinnedChannels)),[]);
+});
+test('prepared legacy UC page falls back to a bounded YouTube channel feed when Invidious is unavailable',async()=>{
+  const handle='https://www.youtube.com/@meirshows',channel='UCV6xoqUxJzkWwCbDmEwMSYw';
+  const feed='<?xml version="1.0"?><feed><title>ערוץ מאיר</title><yt:channelId>'+channel+
+    '</yt:channelId><entry><yt:videoId>mVTlbvQ_010</yt:videoId><title>ילד טרמפולינה</title>'+
+    '<published>2026-10-01T12:00:00Z</published></entry></feed>';
+  const f=await createFixture({upstream:async url=>{
+    if(url.pathname==='/feeds/videos.xml')return new Response(feed,{status:200});
+    return new Response('',{status:503});
+  }});
+  f.db.list_text=handle+'\n';
+  f.catalog.set(handle,{approval_url:handle,kind:'channel',item_id:channel,page:[],pages_loaded:0,complete:false,checked_at:new Date().toISOString()});
+  const result=await f.request('prepare',{token:f.token,body:{link:handle}});
+  assert.equal(result.status,200);assert.equal(result.data.prepared,true);
+  assert.equal(result.data.count,1);
+  assert.equal(f.catalog.get(handle).page[0].title,'ילד טרמפולינה');
+  assert.equal(f.catalog.get(handle).page[0].authorId,channel);
+  f.db.list_text='';
+  const removed=await f.request('catalog',{method:'GET'});
+  assert.equal(removed.data.entries.length,0);
+});
