@@ -520,7 +520,9 @@ function sharedCatalogSnapshot(entries, response){
     if(Date.now()-checked>SETTINGS.channelTTL)continue;
     dates[row.item_id]=checked;
     if(Number.isSafeInteger(row.pages_loaded)&&row.pages_loaded>=1&&row.pages_loaded<=SETTINGS.maxPagesPerChannel){
-      const token=typeof row.continuation==='string'&&row.continuation.length<=20000?row.continuation:null;
+      const remoteToken=typeof row.continuation==='string'&&row.continuation.length<=20000?row.continuation:null;
+      // Invidious tokens cannot be passed to the native NewPipe pager.
+      const token=NATIVE_MODE&&remoteToken?'__NATIVE_FIRST_PAGE__':remoteToken;
       const complete=row.complete===true;
       if(token||complete)progress[row.item_id]={pages:row.pages_loaded,complete,continuation:token,tokens:token?[token]:[]};
     }
@@ -583,6 +585,10 @@ async function channelPage(channelId, continuation, deadline, force = false) {
 }
 async function loadChannel(channel, pagesToLoad = 1, force = false) {
   const progress = channelProgress.get(channel.id) || {continuation:null,pages:0,tokens:new Set(),videos:[],complete:false};
+  if(NATIVE_MODE&&progress.continuation==='__NATIVE_FIRST_PAGE__'){
+    progress.continuation=null;progress.pages=0;progress.tokens=new Set();
+    // Keep prepared titles, but bootstrap the separate native cursor sequence.
+  }
   if (progress.complete) return {videos:progress.videos,complete:true,limited:false,failed:false};
   const deadline = Date.now() + SETTINGS.channelBudgetMs;
   const videos = new Map(progress.videos.map(v => [v.id,v]));
