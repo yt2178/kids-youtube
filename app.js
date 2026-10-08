@@ -700,7 +700,7 @@ async function loadApp({forceCatalog=false}={}) {
     raw = remote.list;
     approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
     let shared={records:Object.create(null),lists:Object.create(null),dates:Object.create(null),progress:Object.create(null)};
-    try {
+    if(remote.catalogVersion===1)try {
       const catalog=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=catalog');
       if(!stillAuthorized())return;
       if(catalog&&catalog.available!==false&&Array.isArray(catalog.entries)){
