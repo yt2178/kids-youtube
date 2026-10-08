@@ -16,9 +16,8 @@ import org.schabi.newpipe.extractor.stream.*;
 
 /** Local equivalent of the existing UI's small Invidious metadata contract. */
 final class NativeApi {
-    static final String LIST_URL="https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list&format=text";
+    private final String listUrl;
     static final long LIST_TTL=30000, META_TTL=6*60*60*1000, CHANNEL_TTL=5*60*1000;
-    private final Context context;
     final ExtractorDownloader downloader=new ExtractorDownloader();
     private volatile ApprovalPolicy policy=ApprovalPolicy.parse("");
     private volatile String raw="";
@@ -27,9 +26,21 @@ final class NativeApi {
     private final Map<String,Cache> cache=new ConcurrentHashMap<>();
     private final Map<String,Cursor> cursors=new ConcurrentHashMap<>();
     private volatile long cooldownUntil;
+    private volatile boolean extractorReady;
+    private final boolean debugBuild;
     NativeApi(Context context) {
-        this.context=context.getApplicationContext();
+        // Do not initialize NewPipe on Activity.onCreate's UI thread.
+        debugBuild=(context.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0;
+        listUrl=context.getString(R.string.kids_list_url);
+    }
+    private synchronized void ensureExtractor() {
+        if(extractorReady)return;
+        long started=android.os.SystemClock.elapsedRealtime();
         NewPipe.init(downloader);
+        extractorReady=true;
+        if(debugBuild)
+            android.util.Log.d("KidsStartup","newpipe-init-worker-ms="+
+                    (android.os.SystemClock.elapsedRealtime()-started));
     }
     private static final class Alias {
         final String id;final long expires;
@@ -52,7 +63,7 @@ final class NativeApi {
     synchronized String whitelist(boolean force) throws Exception {
         if(!force && checkedAt>0 && System.currentTimeMillis()-checkedAt<LIST_TTL)return raw;
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
-        okhttp3.Request request=new okhttp3.Request.Builder().url(LIST_URL)
+        okhttp3.Request request=new okhttp3.Request.Builder().url(listUrl)
                 .header("Cache-Control","no-cache").build();
         Call call=downloader.client.newCall(request);
         if(scope!=null)scope.add(call);
@@ -66,10 +77,6 @@ final class NativeApi {
                 aliases.keySet().retainAll(next.channelUrls);
             }
             raw=text;policy=next;checkedAt=System.currentTimeMillis();
-            // Private native snapshot is for display only. Playback always requires
-            // a fresh successful whitelist check and does not trust this file.
-            context.getSharedPreferences("native-list",Context.MODE_PRIVATE).edit()
-                    .putString("display",text).putLong("savedAt",checkedAt).apply();
             return text;
         } finally {if(scope!=null)scope.remove(call);}
     }
@@ -112,6 +119,7 @@ final class NativeApi {
     }
     Object request(String path) throws Exception {
         whitelist(false);
+        ensureExtractor();
         if(path==null || path.length()>22000)throw new IOException("INVALID_REQUEST");
         Cache hit=cache.get(path);if(valid(hit))return hit.data;
         try {
@@ -232,6 +240,7 @@ final class NativeApi {
     Playback playback(String id) throws Exception {
         // Every playback starts from a fresh authoritative parent list.
         whitelist(true);
+        ensureExtractor();
         try {
             StreamExtractor extractor=extractVideo(id);
             String author=authorId(extractor.getUploaderUrl());

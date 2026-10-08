@@ -1,4 +1,5 @@
 plugins { id 'com.android.application' }
+def productionBackend = 'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube'
 android {
     namespace 'il.kidsyoutube'
     compileSdk 36
@@ -8,6 +9,12 @@ android {
         targetSdk 35
         versionCode 3
         versionName '0.3-beta'
+        resValue 'string','kids_list_url',productionBackend+'?action=list&format=text'
+        resValue 'string','kids_backend_url',productionBackend
+        resValue 'string','kids_app_label','סרטונים לילדים'
+        resValue 'string','kids_deep_link_scheme','kidsyoutube'
+        def candidateSha=System.getenv('KIDS_BUILD_SHA') ?: 'local'
+        resValue 'string','kids_build_sha',(candidateSha ==~ /[a-f0-9]{40}/ ? candidateSha : 'local')
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

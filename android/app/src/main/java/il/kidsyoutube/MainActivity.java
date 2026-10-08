@@ -26,7 +26,7 @@ import org.json.*;
 public final class MainActivity extends Activity {
     static final String ORIGIN="https://appassets.androidplatform.net";
     static final String HOME=ORIGIN+"/assets/index.html";
-    static final String SUPABASE_HOST="jxhelpxhrmwvzrrfrjuh.supabase.co";
+    private String effectiveSupabaseHost;
     static final String SUPABASE_PATH="/functions/v1/kids-youtube";
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ThreadPoolExecutor workers=new ThreadPoolExecutor(3,3,0,TimeUnit.SECONDS,
@@ -36,6 +36,7 @@ public final class MainActivity extends Activity {
     private NativeApi api;
     private LinearLayout overlay;
     private TextView title,message;
+    private ProgressBar loading;
     private Button retry;
     private PlayerView playerView;
     private ExoPlayer player;
@@ -46,6 +47,13 @@ public final class MainActivity extends Activity {
     private long resumeAt;
     private Runnable playerTimeout;
     private boolean destroyed;
+    private long startupStartedAt;
+    private void debugStartup(String stage){
+        if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)==0)return;
+        android.util.Log.d("KidsStartup",stage+" elapsedMs="+
+                (android.os.SystemClock.elapsedRealtime()-startupStartedAt)+
+                " build="+getString(R.string.kids_build_sha));
+    }
 
     private final class Task extends FutureTask<Void> {
         final String id;
@@ -56,7 +64,11 @@ public final class MainActivity extends Activity {
     }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        startupStartedAt=android.os.SystemClock.elapsedRealtime();
+        debugStartup("onCreate-start");
+        effectiveSupabaseHost=Uri.parse(getString(R.string.kids_backend_url)).getHost();
         api=new NativeApi(this);
+        debugStartup("native-api-created");
         FrameLayout root=new FrameLayout(this);root.setBackgroundColor(Color.rgb(26,26,46));
         if(Build.VERSION.SDK_INT>=30){
             getWindow().setDecorFitsSystemWindows(false);
@@ -70,6 +82,7 @@ public final class MainActivity extends Activity {
             root.requestApplyInsets();
         }
         web=new WebView(this);root.addView(web,new FrameLayout.LayoutParams(-1,-1));
+        debugStartup("webview-created");
         overlay=new LinearLayout(this);overlay.setOrientation(LinearLayout.VERTICAL);
         overlay.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         overlay.setBackgroundColor(Color.rgb(15,15,29));overlay.setVisibility(View.GONE);
@@ -81,7 +94,10 @@ public final class MainActivity extends Activity {
         bar.addView(back,new LinearLayout.LayoutParams(dp(116),-2));
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         overlay.addView(bar,new LinearLayout.LayoutParams(-1,-2));
-        message=text("מתחבר...");message.setGravity(Gravity.CENTER);message.setMinHeight(dp(48));
+        loading=new ProgressBar(this);loading.setIndeterminate(true);loading.setVisibility(View.GONE);
+        LinearLayout.LayoutParams loadingParams=new LinearLayout.LayoutParams(dp(42),dp(42));loadingParams.gravity=Gravity.CENTER_HORIZONTAL;
+        overlay.addView(loading,loadingParams);
+        message=text("מתחבר...");message.setGravity(Gravity.CENTER);message.setMinHeight(dp(42));
         overlay.addView(message,new LinearLayout.LayoutParams(-1,-2));
         retry=button("נסו שוב");retry.setVisibility(View.GONE);
         retry.setOnClickListener(v->{if(active!=null)openPlayer(active.id);});
@@ -92,7 +108,9 @@ public final class MainActivity extends Activity {
         overlay.addView(playerView,new LinearLayout.LayoutParams(-1,0,1));
         root.addView(overlay,new FrameLayout.LayoutParams(-1,-1));
         setContentView(root);
+        debugStartup("view-hierarchy-ready");
         setupWeb();
+        debugStartup("webview-load-started");
         handleDeepLink(getIntent());
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
@@ -102,7 +120,7 @@ public final class MainActivity extends Activity {
     }
     private void handleDeepLink(android.content.Intent intent) {
         Uri data=intent==null?null:intent.getData();
-        if(data==null || !"kidsyoutube".equals(data.getScheme()) || !"video".equals(data.getHost()))return;
+        if(data==null || !getString(R.string.kids_deep_link_scheme).equals(data.getScheme()) || !"video".equals(data.getHost()))return;
         List<String> parts=data.getPathSegments();
         String id=parts.size()==1?parts.get(0):"";
         if(ApprovalPolicy.VIDEO.matcher(id).matches())openPlayer(id);
@@ -111,9 +129,20 @@ public final class MainActivity extends Activity {
     private TextView text(String value){TextView v=new TextView(this);v.setTextColor(Color.WHITE);v.setTextSize(20);v.setText(value);v.setPadding(dp(12),dp(8),dp(12),dp(8));return v;}
     private Button button(String value){Button b=new Button(this);b.setText(value);b.setTextSize(20);b.setTextColor(Color.WHITE);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(233,69,96)));b.setMinHeight(dp(60));return b;}
     private void showMessage(String value){message.setText(value);message.setVisibility(value.isEmpty()?View.GONE:View.VISIBLE);}
+    private void showLoading(boolean value){loading.setVisibility(value?View.VISIBLE:View.GONE);}
     private void setupWeb() {
         WebSettings settings=web.getSettings();
         settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);
+        if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0){
+            WebView.setWebContentsDebuggingEnabled(true);
+            web.setWebChromeClient(new android.webkit.WebChromeClient(){
+                @Override public boolean onConsoleMessage(android.webkit.ConsoleMessage message){
+                    android.util.Log.d("KidsWeb",message.messageLevel()+": "+message.message()+
+                            " @"+message.sourceId()+":"+message.lineNumber());
+                    return true;
+                }
+            });
+        }
         settings.setTextZoom(Math.round(getResources().getConfiguration().fontScale*100));
         settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
@@ -122,6 +151,9 @@ public final class MainActivity extends Activity {
         WebViewAssetLoader loader=new WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(this)).build();
         web.setWebViewClient(new WebViewClient(){
+            @Override public void onPageFinished(WebView view,String url){
+                if(HOME.equals(url))debugStartup("webview-page-finished");
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request) {
                 // No outgoing browser intents, arbitrary URL entry or remote documents.
                 return !HOME.equals(request.getUrl().toString());
@@ -133,7 +165,7 @@ public final class MainActivity extends Activity {
                     return result==null ? denied() : result;
                 }
                 String h=u.getHost();
-                boolean supabaseApi="https".equals(u.getScheme()) && SUPABASE_HOST.equals(h)
+                boolean supabaseApi="https".equals(u.getScheme()) && effectiveSupabaseHost.equals(h)
                         && SUPABASE_PATH.equals(u.getPath()) && !request.isForMainFrame();
                 if(supabaseApi)return null;
                 boolean image="https".equals(u.getScheme()) && h!=null
@@ -218,7 +250,7 @@ public final class MainActivity extends Activity {
         active=new NativeApi.Playback(id,"הסרטון שלנו",List.of());
         sourceIndex=0;resumeAt=0;
         overlay.setVisibility(View.VISIBLE);web.setVisibility(View.INVISIBLE);
-        title.setText("הסרטון שלנו");showMessage("מתחבר...");retry.setVisibility(View.GONE);
+        title.setText("הסרטון שלנו");showLoading(true);showMessage("מתחבר...");retry.setVisibility(View.GONE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         RequestScope scope=new RequestScope(20000);
         playTask=new Task("player",scope,()->{
@@ -284,7 +316,7 @@ public final class MainActivity extends Activity {
         if(destroyed || generation!=playerGeneration || active==null)return;
         stopMedia();
         if(sourceIndex>=active.sources.size()){unavailable();return;}
-        showMessage(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
+        showLoading(true);showMessage(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
         NativeApi.Source source=active.sources.get(sourceIndex++);
         OkHttpClient mediaClient=mediaClient(api.downloader.client);
         OkHttpDataSource.Factory dataSource=new OkHttpDataSource.Factory(mediaClient);
@@ -311,7 +343,7 @@ public final class MainActivity extends Activity {
             @Override public void onPlaybackStateChanged(int state){
                 if(generation!=playerGeneration || player!=attempt || failed)return;
                 if(state==Player.STATE_READY){
-                    ready=true;cancelPlayerTimeout();showMessage("");
+                    ready=true;cancelPlayerTimeout();showLoading(false);showMessage("");
                 }else if(state==Player.STATE_ENDED){
                     cancelPlayerTimeout();showMessage("הסרטון הסתיים. אפשר לחזור ולבחור סרטון אחר.");
                     getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -337,12 +369,12 @@ public final class MainActivity extends Activity {
         if(player!=null){playerView.setPlayer(null);player.stop();player.release();player=null;}
     }
     private void unavailable(){
-        stopMedia();showMessage("לא הצלחנו להפעיל את הסרטון כרגע. נסה שוב בעוד רגע.");
+        stopMedia();showLoading(false);showMessage("לא הצלחנו להפעיל את הסרטון כרגע. נסו שוב בעוד רגע.");
         retry.setVisibility(View.VISIBLE);getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     private void closePlayer(){
         ++playerGeneration;if(playTask!=null){playTask.abort();playTask=null;}
-        stopMedia();active=null;overlay.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);
+        stopMedia();showLoading(false);active=null;overlay.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     @Override public void onBackPressed(){if(active!=null)closePlayer();else super.onBackPressed();}

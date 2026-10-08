@@ -30,14 +30,26 @@ const INSTANCE_KEY = 'kidsYoutubeLastInstance';
 const VIEW_KEY = 'kidsYoutubeViewMode';
 const SORT_KEY = 'kidsYoutubeSortMode';
 const CHANNEL_FILTER_KEY = 'kidsYoutubeChannelFilter';
-const PARENT_CATALOG = new URL(location.href).searchParams.get('parentCatalog') === '1' && window.parent !== window;
+function sameOriginParent(){
+  if(window.parent===window)return false;
+  try{
+    const expected=new URL('./parents.html',location.href);
+    return window.parent.location.origin===location.origin&&window.parent.location.pathname===expected.pathname;
+  }catch(_){return false;}
+}
+const PARENT_CATALOG = new URL(location.href).searchParams.get('parentCatalog') === '1' && sameOriginParent();
+const NATIVE_MODE = typeof window.KidsNative === 'object' && window.KidsNative !== null;
 const PARENT_API = 'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 const SCOPE = new URL('./', location.href).href;
 // A provider iframe may need its own storage for playback/preferences.
 // Its origin must stay external; CSP also blocks a redirect into our origin.
 function installFramePolicy() {
   if (!document.head) return;
-  const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';policy.content="frame-src 'self'; object-src 'none'; base-uri 'self'";document.head.append(policy);
+  const policy=document.createElement('meta');policy.httpEquiv='Content-Security-Policy';
+  policy.content=PARENT_CATALOG
+    ? "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https://img.youtube.com https://i.ytimg.com https://yt3.ggpht.com https://yt3.googleusercontent.com; connect-src 'self' https://jxhelpxhrmwvzrrfrjuh.supabase.co; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
+    : "frame-src 'self'; object-src 'none'; base-uri 'self'";
+  document.head.append(policy);
 }
 installFramePolicy();
 const $ = id => document.getElementById(id);
@@ -74,16 +86,38 @@ let channelDates = Object.create(null);
 let loadError = false;
 let statusTimer = null;
 let approvalMarker = '';
+let authorizationReloadPending = false;
+let authorizationGeneration = 0;
+let pendingOnlineRefresh = false;
+let catalogRetryTimer = null;
+let catalogRetryAttempts = 0;
+let catalogRetryPending = false;
+const catalogMetrics = {startedAt:0,authorizationMs:0,metadataMs:0,channelsMs:0,firstUsefulMs:0,completedMs:0,requests:0,providerCalls:0,renderCalls:0,displayCacheHits:0,channelCacheHits:0,retries:0};
+function debugCatalog(event,details={}){
+  if(!NATIVE_MODE)return;
+  try{console.log('KidsCatalog '+event+' '+JSON.stringify(details));}catch(_){}
+}
 const savedView = storageGet(VIEW_KEY);
 let viewStyle = savedView === 'list' ? 'list' : 'grid';
 function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
 function parentToken(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
-function providerFetch(input,options={}) {
-  if(!PARENT_CATALOG)return fetch(input,options);
-  let target;try{target=new URL(String(input),location.href);}catch(_){return fetch(input,options);}
-  if(!INVIDIOUS_INSTANCES.includes(target.origin))return fetch(input,options);
+async function providerFetch(input,options={}) {
+  if(!PARENT_CATALOG){catalogMetrics.providerCalls++;return fetch(input,options);}
+  let target;try{target=new URL(String(input),location.href);}catch(_){throw new Error('INVALID_PARENT_PROVIDER');}
+  if(!INVIDIOUS_INSTANCES.includes(target.origin))throw new Error('INVALID_PARENT_PROVIDER');
   const value=parentToken(),headers={...(options.headers||{}),...(value?{Authorization:'Bearer '+value}:{})};
-  return fetch(PARENT_API+'?action=provider&target='+encodeURIComponent(target.href),{...options,headers});
+  catalogMetrics.providerCalls++;
+  const response=await fetch(PARENT_API+'?action=provider&target='+encodeURIComponent(target.href),{...options,headers});
+  if(response.status===401){
+    try{window.parent.postMessage({type:'kids-parent-auth-expired'},location.origin);}catch(_){}
+    return response;
+  }
+  const upstream=Number(response.headers.get('X-Kids-Provider-Status')||0);
+  if(upstream>=400&&upstream<=599){
+    const body=await response.text();
+    return new Response(body,{status:upstream,headers:{'Content-Type':'application/json'}});
+  }
+  return response;
 }
 const providers = KidsProviders.createManager({instances:INVIDIOUS_INSTANCES, scope:SCOPE, fetcher:providerFetch, storage:optionalStorage(), timeout:SETTINGS.requestTimeoutMs, budget:SETTINGS.channelBudgetMs});
 const diagnosticsEnabled = new URL(location.href).searchParams.get('diagnostics') === '1';
@@ -99,7 +133,7 @@ function audit() {
   if (!diagnosticsEnabled) return;
   for(const {base,index,button} of providerButtons)button.textContent=providers.snapshot().health[base].api.pausedUntil>Date.now()?'הפעלת מקור '+(index+1)+' מחדש':'השהיית מקור '+(index+1)+' ל־5 דקות';
   const resources = typeof performance !== 'undefined' ? performance.getEntriesByType('resource').slice(-150).map(r => ({url:r.name,ms:Math.round(r.duration),bytes:r.transferSize,type:r.initiatorType})) : [];
-  ui.diagnostics.textContent = JSON.stringify({providers:providers.snapshot(),approvedVideos:activeConfig.videos.length,approvedChannels:activeConfig.channels.length,loadedVideos:displayed.size,renderedCards:ui.grid.children.length,resources},null,2);
+  ui.diagnostics.textContent = JSON.stringify({providers:providers.snapshot(),approvedVideos:activeConfig.videos.length,approvedChannels:activeConfig.channels.length,loadedVideos:displayed.size,renderedCards:ui.grid.children.length,catalogMetrics,resources},null,2);
 }
 function normalizeVideo(raw, channelId = '') {
   const id = raw && (raw.id || raw.videoId);
@@ -146,6 +180,7 @@ function readSnapshot() {
       if (!Number.isFinite(stamp) || stamp > Date.now() || Date.now()-stamp > 7*24*60*60*1000) delete snapshot.channelLists[c.id];
     }
     snapshot.channelLists = pruneLists(snapshot.config, snapshot.channelLists);
+    snapshot.channelProgress = snapshot.channelProgress && typeof snapshot.channelProgress==='object' ? snapshot.channelProgress : {};
     snapshot.linkRecords = snapshot.linkRecords && typeof snapshot.linkRecords === 'object' ? snapshot.linkRecords : {};
     return snapshot;
   } catch (_) { return null; }
@@ -176,7 +211,29 @@ function mergeVideos(config, lists) {
   return result;
 }
 function saveSnapshot(config, lists) {
-  return storageSet(CACHE_KEY, {version:2, scope:SCOPE, savedAt:Date.now(), config, channelLists:pruneLists(config, lists), channelDates:Object.fromEntries(config.channels.map(c=>[c.id,channelDates[c.id] || 0])), linkRecords:activeLinkRecords});
+  const progress=Object.create(null);
+  for(const channel of config.channels){
+    const p=channelProgress.get(channel.id);
+    if(!p)continue;
+    progress[channel.id]={pages:p.pages,complete:!!p.complete,continuation:p.continuation,tokens:[...p.tokens].slice(-SETTINGS.maxPagesPerChannel)};
+  }
+  return storageSet(CACHE_KEY, {version:2, scope:SCOPE, savedAt:Date.now(), config, channelLists:pruneLists(config, lists), channelDates:Object.fromEntries(config.channels.map(c=>[c.id,channelDates[c.id] || 0])), channelProgress:progress,linkRecords:activeLinkRecords});
+}
+function restoreChannelProgress(config,lists,previous){
+  if(!previous)return 0;
+  let restored=0;
+  for(const channel of config.channels){
+    const p=previous.channelProgress?.[channel.id],stamp=previous.channelDates?.[channel.id];
+    if(!p||!Number.isFinite(stamp)||stamp>Date.now()||Date.now()-stamp>SETTINGS.channelTTL)continue;
+    if(!Number.isSafeInteger(p.pages)||p.pages<1||p.pages>SETTINGS.maxPagesPerChannel)continue;
+    if(typeof p.complete!=='boolean'||(p.continuation!==null&&(typeof p.continuation!=='string'||p.continuation.length>20000)))continue;
+    if(!Array.isArray(p.tokens)||p.tokens.length>SETTINGS.maxPagesPerChannel||p.tokens.some(t=>typeof t!=='string'||t.length>20000))continue;
+    const videos=cleanChannelVideos(lists[channel.id],channel);
+    if(!videos.length||(!p.complete&&!p.continuation))continue;
+    channelProgress.set(channel.id,{continuation:p.continuation,pages:p.pages,tokens:new Set(p.tokens),videos,complete:p.complete});
+    restored++;
+  }
+  return restored;
 }
 function status(text, busy = false) {
   clearTimeout(statusTimer);statusTimer=null;
@@ -186,7 +243,7 @@ function status(text, busy = false) {
   if (busy) {
     ui.status.hidden=true;
     statusTimer=setTimeout(()=>{
-      if ((loading || paginationBusy) && !displayed.size) {
+      if (loading || paginationBusy) {
         ui.status.hidden=false;ui.spinner.hidden=false;
       }
     },260);
@@ -231,6 +288,7 @@ function clearSearch() {
 }
 function render(config, lists) {
   activeConfig = config;
+  catalogMetrics.renderCalls++;
   ui.grid.dataset.view=viewStyle;
   ui['view-grid'].setAttribute('aria-pressed',String(viewStyle==='grid'));
   ui['view-list'].setAttribute('aria-pressed',String(viewStyle==='list'));
@@ -242,6 +300,8 @@ function render(config, lists) {
   const focus = document.activeElement;
   const focusId = focus && (focus.dataset.videoId || focus.dataset.channelId);
   displayed = mergeVideos(config, lists);
+  if(catalogMetrics.startedAt && !catalogMetrics.firstUsefulMs && displayed.size>0)
+    catalogMetrics.firstUsefulMs=Date.now()-catalogMetrics.startedAt;
   const manualIds = new Set(config.videos.map(v=>v.id));
   const approvedChannelIds = new Set(config.channels.map(c=>c.id));
   const isChannels = viewMode === 'channels' && !selectedChannelId;
@@ -343,10 +403,10 @@ function render(config, lists) {
       ui['empty-clear'].hidden = false;ui['empty-clear'].dataset.action='clear';
       ui['empty-clear'].textContent = 'ניקוי החיפוש';
     } else if (loadError) {
-      ui['empty-title'].textContent = 'לא הצלחנו לטעון את הסרטונים.';
+      ui['empty-title'].textContent = 'לא הצלחנו לטעון את התוכן.';
       ui['empty-text'].textContent = 'בדקו את החיבור ונסו שוב.';
       ui['empty-clear'].hidden = false;ui['empty-clear'].dataset.action='retry';
-      ui['empty-clear'].textContent = 'נסה שוב';
+      ui['empty-clear'].textContent = 'נסו שוב';
     } else {
       ui['empty-title'].textContent = isChannels ? 'עדיין אין כאן ערוצים.' : 'עדיין אין כאן סרטונים.';
       ui['empty-text'].textContent = isChannels ? 'כשההורה יוסיף ערוצים, הם יופיעו כאן.' : 'כשההורה יוסיף סרטונים או ערוצים, הם יופיעו כאן.';
@@ -369,6 +429,7 @@ function orderedInstances() {
 }
 function rememberInstance(url) { storageSet(INSTANCE_KEY, {scope:SCOPE, url}); }
 function fetchData(url, timeout = SETTINGS.requestTimeoutMs, signal, format = 'json') {
+  catalogMetrics.requests++;
   return KidsProviders.fetchJSON(fetch,url,{timeout,signal,format});
 }
 function fetchJson(url, timeout = SETTINGS.requestTimeoutMs, signal) { return fetchData(url, timeout, signal, 'json'); }
@@ -414,8 +475,10 @@ function parseLinkList(text) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('//')) return;
     const input = trimmed.split(/\s+\/\//,1)[0].trim();
+    const note = trimmed.split(/\s+\/\//,2)[1];
     try {
       const entry = classifyYouTubeLink(input);
+      entry.label = typeof note==='string' ? note.trim().slice(0,300) : '';
       if (!entries.has(entry.url)) entries.set(entry.url, entry);
     } catch (_) { invalidLines.push(index + 1); }
   });
@@ -425,16 +488,58 @@ function safeChannelImage(value, base) {
   if (typeof value !== 'string' || !value || value.length > 4096) return '';
   try {
     const url = base ? new URL(value, base) : new URL(value);
-    const allowed = ['ggpht.com','googleusercontent.com','ytimg.com'].some(host => url.hostname === host || url.hostname.endsWith('.' + host)) || INVIDIOUS_INSTANCES.includes(url.origin);
+    const googleImage=['img.youtube.com','i.ytimg.com','yt3.ggpht.com','yt3.googleusercontent.com'].includes(url.hostname);
+    const allowed=googleImage || (!PARENT_CATALOG && INVIDIOUS_INSTANCES.includes(url.origin));
     return url.protocol === 'https:' && !url.username && !url.password && !url.port && allowed ? url.href : '';
   } catch (_) { return ''; }
+}
+function sharedCatalogSnapshot(entries, response){
+  const records=Object.create(null),lists=Object.create(null),dates=Object.create(null),progress=Object.create(null);
+  if(!response||!Array.isArray(response.entries)||response.entries.length>500)return {records,lists,dates,progress};
+  const approved=new Map(entries.map(e=>[e.url,e]));
+  for(const row of response.entries){
+    if(!row||typeof row.approval_url!=='string')continue;
+    const entry=approved.get(row.approval_url);
+    if(!entry||row.kind!==entry.kind||(entry.id&&row.item_id!==entry.id))continue;
+    const checked=Date.parse(row.checked_at);
+    if(!Number.isFinite(checked)||checked>Date.now()+300000)continue;
+    const title=cleanTitle(row.title);
+    if(entry.kind==='video'){
+      if(!VIDEO_ID.test(row.item_id))continue;
+      records[entry.url]={kind:'video',id:row.item_id,title,thumbnail:safeChannelImage(row.thumbnail),
+        published:Number.isSafeInteger(row.published)?row.published:0,
+        authorId:CHANNEL_ID.test(row.channel_id)?row.channel_id:'',verifiedAt:checked};
+      continue;
+    }
+    if(!CHANNEL_ID.test(row.item_id))continue;
+    records[entry.url]={kind:'channel',id:row.item_id,name:title,thumbnail:safeChannelImage(row.thumbnail),verifiedAt:checked};
+    const rows=Array.isArray(row.page)?row.page:[];
+    if(rows.length>SETTINGS.maxVideosWithoutLimit*2)continue;
+    lists[row.item_id]=cleanChannelVideos(rows.map(v=>({
+      ...v,channelId:row.item_id,authorId:row.item_id,
+      thumbnail:safeChannelImage(v?.thumbnail)
+    })),{id:row.item_id,name:title});
+    // Server-side continuations are provider tokens, and can be resumed only
+    // while the catalog timestamp is recent enough for our channel TTL.
+    if(Date.now()-checked>SETTINGS.channelTTL)continue;
+    dates[row.item_id]=checked;
+    if(Number.isSafeInteger(row.pages_loaded)&&row.pages_loaded>=1&&row.pages_loaded<=SETTINGS.maxPagesPerChannel){
+      const remoteToken=typeof row.continuation==='string'&&row.continuation.length<=20000?row.continuation:null;
+      // Invidious tokens cannot be passed to the native NewPipe pager.
+      const token=NATIVE_MODE&&remoteToken?'__NATIVE_FIRST_PAGE__':remoteToken;
+      const complete=row.complete===true;
+      if(token||complete)progress[row.item_id]={pages:row.pages_loaded,complete,continuation:token,tokens:token?[token]:[]};
+    }
+  }
+  return {records,lists,dates,progress};
 }
 function cachedLinkRecord(entry, records) {
   const old = records && records[entry.url];
   if (old && old.kind === entry.kind && (entry.kind === 'video' ? VIDEO_ID : CHANNEL_ID).test(old.id) && (!entry.id || old.id === entry.id)) {
-    return {kind:old.kind, id:old.id, title:cleanTitle(old.title), name:typeof old.name === 'string' ? old.name.slice(0,300) : '', author:typeof old.author === 'string' ? old.author.slice(0,300) : '', authorId:CHANNEL_ID.test(old.authorId) ? old.authorId : '', published:Number.isFinite(old.published) ? old.published : 0, thumbnail:safeChannelImage(old.thumbnail)};
+    catalogMetrics.displayCacheHits++;
+    return {kind:old.kind, id:old.id, title:cleanTitle(old.title), name:typeof old.name === 'string' ? old.name.slice(0,300) : '', author:typeof old.author === 'string' ? old.author.slice(0,300) : '', authorId:CHANNEL_ID.test(old.authorId) ? old.authorId : '', published:Number.isFinite(old.published) ? old.published : 0, verifiedAt:Number.isFinite(old.verifiedAt) ? old.verifiedAt : 0, thumbnail:safeChannelImage(old.thumbnail)};
   }
-  return entry.id ? {kind:entry.kind, id:entry.id, title:'סרטון מאושר', name:'ערוץ מאושר', author:''} : null;
+  return entry.id ? {kind:entry.kind, id:entry.id, title:entry.kind==='video' ? cleanTitle(entry.label||'סרטון מאושר') : 'סרטון מאושר', name:entry.kind==='channel' ? cleanTitle(entry.label||'ערוץ מאושר') : 'ערוץ מאושר', author:''} : null;
 }
 function configFromLinkRecords(entries, records) {
   const videos = [], channels = [];
@@ -453,28 +558,41 @@ function getVideoMetadata(id, signal, force = false) {
 function getChannelMetadata(id) {
   return providers.request('/api/v1/channels/' + id,{ttl:12*60*60*1000,validate:data => !!data && data.authorId === id && typeof data.author === 'string' && !!data.author.trim()});
 }
-async function resolveLink(entry) {
+async function resolveLink(entry, savedRecord) {
   let id = entry.id;
+  // An @handle must still resolve freshly: a saved mapping is display metadata,
+  // never a grant. A canonical ID, however, is already the parent's grant.
   if (!id) {
     const data = await providers.request('/api/v1/resolveurl?url=' + encodeURIComponent(entry.url),{force:true,ttl:SETTINGS.metadataTTL,validate:data => !!data && CHANNEL_ID.test(data.ucid || data.browseId)});
     id = data.ucid || data.browseId;
   }
+  const verifiedDisplay = savedRecord && savedRecord.kind===entry.kind && savedRecord.id===id;
+  const freshMetadata=verifiedDisplay && Number.isFinite(savedRecord.verifiedAt)
+    && savedRecord.verifiedAt<=Date.now() && Date.now()-savedRecord.verifiedAt<24*60*60*1000;
   if (entry.kind === 'video') {
+    if(freshMetadata && savedRecord.title && savedRecord.title!=='סרטון מאושר')
+      return {kind:'video',...normalizeVideo(savedRecord),verifiedAt:savedRecord.verifiedAt};
     const data = await getVideoMetadata(id);
-    return {kind:'video',...normalizeVideo(data)};
+    return {kind:'video',...normalizeVideo(data),verifiedAt:Date.now()};
   }
+  if(freshMetadata && savedRecord.name && savedRecord.name!=='ערוץ מאושר')
+    return {kind:'channel',id,name:savedRecord.name,thumbnail:safeChannelImage(savedRecord.thumbnail),verifiedAt:savedRecord.verifiedAt};
   const data = await getChannelMetadata(id);
   const images = Array.isArray(data.authorThumbnails) ? data.authorThumbnails : [];
   const image = images.find(item => item && item.width >= 128 && safeChannelImage(item.url)) || images.find(item => item && safeChannelImage(item.url));
-  return {kind:'channel',id,name:cleanTitle(data.author),thumbnail:image ? safeChannelImage(image.url) : ''};
+  return {kind:'channel',id,name:cleanTitle(data.author),thumbnail:image ? safeChannelImage(image.url) : '',verifiedAt:Date.now()};
 }
-async function channelPage(channelId, continuation, deadline) {
+async function channelPage(channelId, continuation, deadline, force = false) {
   let path = '/api/v1/channels/' + channelId + '/videos';
   if (continuation) path += '?continuation=' + encodeURIComponent(continuation);
-  return providers.request(path,{ttl:SETTINGS.channelTTL,timeoutMs:Math.min(SETTINGS.requestTimeoutMs, Math.max(1,deadline-Date.now())),validate:data => !!data && Array.isArray(data.videos) && (data.continuation == null || (typeof data.continuation === 'string' && data.continuation.length < 20000))});
+  return providers.request(path,{force,ttl:SETTINGS.channelTTL,timeoutMs:Math.min(SETTINGS.requestTimeoutMs, Math.max(1,deadline-Date.now())),validate:data => !!data && Array.isArray(data.videos) && (data.continuation == null || (typeof data.continuation === 'string' && data.continuation.length < 20000))});
 }
-async function loadChannel(channel, pagesToLoad = 1) {
+async function loadChannel(channel, pagesToLoad = 1, force = false) {
   const progress = channelProgress.get(channel.id) || {continuation:null,pages:0,tokens:new Set(),videos:[],complete:false};
+  if(NATIVE_MODE&&progress.continuation==='__NATIVE_FIRST_PAGE__'){
+    progress.continuation=null;progress.pages=0;progress.tokens=new Set();
+    // Keep prepared titles, but bootstrap the separate native cursor sequence.
+  }
   if (progress.complete) return {videos:progress.videos,complete:true,limited:false,failed:false};
   const deadline = Date.now() + SETTINGS.channelBudgetMs;
   const videos = new Map(progress.videos.map(v => [v.id,v]));
@@ -482,7 +600,8 @@ async function loadChannel(channel, pagesToLoad = 1) {
   let failed = false;
   for (let page = 0; page < pagesToLoad && progress.pages < SETTINGS.maxPagesPerChannel; page++) {
     try {
-      const data = await channelPage(channel.id,progress.continuation,deadline);
+      const data = await channelPage(channel.id,progress.continuation,deadline,force);
+      if(!providers.isNetworkData(data))catalogMetrics.channelCacheHits++;
       progress.pages++;
       if (providers.isNetworkData(data)) channelDates[channel.id]=Date.now();
       for (const row of data.videos) {
@@ -528,7 +647,16 @@ async function loadMoreVideos() {
       saveSnapshot(activeConfig,activeLists); render(activeConfig,activeLists);
       if (result.failed) status('חלק מהסרטונים אינם זמינים כרגע. אפשר לנסות שוב מאוחר יותר.');
     })]);
-  } finally {paginationBusy = false;delete ui.more.dataset.busy;render(activeConfig,activeLists);if(ui['status-text'].textContent===loadingText)status('');}
+  } finally {
+    paginationBusy=false;delete ui.more.dataset.busy;
+    if(authorizationReloadPending){
+      authorizationReloadPending=false;
+      await loadApp();
+    }else{
+      render(activeConfig,activeLists);
+      if(ui['status-text'].textContent===loadingText)status('');
+    }
+  }
 }
 async function parallelMap(items, worker) {
   let index = 0;
@@ -536,11 +664,30 @@ async function parallelMap(items, worker) {
     while (index < items.length) { const item = items[index++]; await worker(item); }
   }));
 }
-async function loadApp() {
+function scheduleCatalogRetry(){
+  if(catalogRetryTimer||catalogRetryAttempts>=3||navigator.onLine===false)return;
+  const delays=[35000,90000,180000],delay=delays[catalogRetryAttempts++];
+  catalogRetryTimer=setTimeout(()=>{
+    catalogRetryTimer=null;
+    if(document.hidden||playback||loading||paginationBusy||navigator.onLine===false){catalogRetryPending=true;return;}
+    catalogMetrics.retries++;
+    loadApp({forceCatalog:true});
+  },delay);
+  // Tests running with Node timers must not be held open by a browser retry.
+  if(catalogRetryTimer&&typeof catalogRetryTimer.unref==='function')catalogRetryTimer.unref();
+}
+async function loadApp({forceCatalog=false}={}) {
   if (loading || paginationBusy || !ui.player.hidden) return;
+  clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;
+  const startedAt=Date.now();catalogMetrics.startedAt=startedAt;
+  catalogMetrics.requests=0;catalogMetrics.providerCalls=0;catalogMetrics.renderCalls=0;
+  catalogMetrics.displayCacheHits=0;catalogMetrics.channelCacheHits=0;
+  catalogMetrics.authorizationMs=0;catalogMetrics.metadataMs=0;catalogMetrics.channelsMs=0;catalogMetrics.firstUsefulMs=0;catalogMetrics.completedMs=0;
   loadError=false;
   channelProgress.clear(); verifiedChannelVideos.clear();
   loading = true; lastLoad = Date.now();
+  const generation=authorizationGeneration;
+  const stillAuthorized=()=>generation===authorizationGeneration;
   ui.grid.setAttribute('aria-busy','true');
   // Never keep previously approved cards visible while authority is being revalidated.
   activeConfig={videos:[],channels:[]};activeLists=Object.create(null);displayed=new Map();
@@ -557,9 +704,27 @@ async function loadApp() {
   try {
     let raw;
     const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
+    if(!stillAuthorized())return;
+    catalogMetrics.authorizationMs=Date.now()-startedAt;
+    debugCatalog('authorization-ok',{ms:catalogMetrics.authorizationMs,version:remote&&remote.version,catalogVersion:remote&&remote.catalogVersion});
     if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
     raw = remote.list;
     approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
+    let shared={records:Object.create(null),lists:Object.create(null),dates:Object.create(null),progress:Object.create(null)};
+    if(remote.catalogVersion===1)try {
+      const catalog=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=catalog');
+      if(!stillAuthorized())return;
+      if(catalog&&catalog.available!==false&&Array.isArray(catalog.entries)){
+        if(catalog.version!==remote.version||catalog.updatedAt!==remote.updatedAt)
+          throw new Error('CATALOG_AUTH_CHANGED');
+        shared=sharedCatalogSnapshot(parseLinkList(raw).entries,catalog);
+        debugCatalog('shared-catalog-ok',{entries:catalog.entries.length,records:Object.keys(shared.records).length,channelLists:Object.keys(shared.lists).length});
+      }
+    }catch(e){
+      debugCatalog('shared-catalog-miss',{error:String(e&&e.message||'UNKNOWN')});
+      if(e?.message==='CATALOG_AUTH_CHANGED')throw e;
+      // Catalog unavailable is an ordinary cache miss, never a permission grant.
+    }
     {
       try {
         // Compatibility for an old JSON list pasted into the new file.
@@ -571,66 +736,96 @@ async function loadApp() {
             // decorate that same ID. A handle/legacy alias must be resolved again
             // before it grants anything to the visible catalog.
             if (!entry.id) continue;
-            const record = cachedLinkRecord(entry, previous ? previous.linkRecords : {});
+            const record = cachedLinkRecord(entry, {...(previous?.linkRecords||{}),...shared.records});
             if (record) activeLinkRecords[entry.url] = record;
           }
           config = configFromLinkRecords(entries, activeLinkRecords);
         }
       } catch (error) { invalidConfig = true; throw error; }
-      lists = pruneLists(config, previous ? previous.channelLists : {});
+      lists = pruneLists(config, {...(previous?.channelLists||{}),...shared.lists});
+      channelDates={...channelDates,...shared.dates};
       // Persist removals before metadata or channel requests can fail.
       if (!saveSnapshot(config, lists)) cacheSaved = false;
     }
     // Manual approvals appear immediately; cached channels only after fresh config validation.
     render(config, lists);
+    const metadataStarted=Date.now();
     if (entries && entries.length) {
       status('מזהים את הסרטונים והערוצים…', true);
+      let resolvedCount=0;
       await parallelMap(entries.filter((entry,index) => entry.kind === 'channel' || index < SETTINGS.cardsPerPage), async entry => {
-        try { activeLinkRecords[entry.url] = await resolveLink(entry); }
-        catch (_) { linkFailures++; }
-        config = configFromLinkRecords(entries, activeLinkRecords);
-        lists = pruneLists(config, lists);
-        if (!saveSnapshot(config, lists)) cacheSaved = false;
-        render(config, lists);
+        try { const record=await resolveLink(entry,shared.records[entry.url]||previous?.linkRecords?.[entry.url]);if(!stillAuthorized())return;activeLinkRecords[entry.url]=record; }
+        catch (error) { if(!stillAuthorized())return;linkFailures++;debugCatalog('metadata-failed',{kind:entry.kind,hasId:!!entry.id,error:String(error&&error.message||'UNKNOWN')}); }
+        if(!stillAuthorized())return;
+        // Render the first useful result and then batches, not each late title.
+        if(++resolvedCount===1 || resolvedCount%3===0){
+          config=configFromLinkRecords(entries,activeLinkRecords);
+          lists=pruneLists(config,{...lists,...shared.lists});
+          render(config,lists);
+        }
       });
+      if(!stillAuthorized())return;
+      config=configFromLinkRecords(entries,activeLinkRecords);
+      lists=pruneLists(config,{...lists,...shared.lists});
+      if(!saveSnapshot(config,lists))cacheSaved=false;
+      render(config,lists);
     }
+    catalogMetrics.metadataMs=Date.now()-metadataStarted;
+    const restoredChannels=forceCatalog?0:restoreChannelProgress(config,lists,{channelProgress:{...(previous?.channelProgress||{}),...shared.progress},channelDates:{...(previous?.channelDates||{}),...shared.dates}});
+    catalogMetrics.channelCacheHits+=restoredChannels;
+    const channelsStarted=Date.now();
     let finished = 0, failures = 0, limited = 0;
     if (config.channels.length) status('טוענים את הסרטונים מהערוצים…', true);
     await parallelMap(config.channels, async channel => {
-      const result = await loadChannel(channel);
-      if (result.failed) failures++;
+      const restored=channelProgress.get(channel.id);
+      const result=restored ? {videos:restored.videos,complete:restored.complete,limited:!!restored.continuation,failed:false} : await loadChannel(channel,1,forceCatalog);
+      if(!stillAuthorized())return;
+      if (result.failed){failures++;debugCatalog('channel-page-failed',{channel:channel.id.slice(0,8),cached:(lists[channel.id]||[]).length});}
       if (result.limited) limited++;
       lists[channel.id] = result.complete ? result.videos : cleanChannelVideos([...result.videos, ...(lists[channel.id] || [])], channel);
       if (!saveSnapshot(config, lists)) cacheSaved = false;
       render(config, lists);
       status('טוענים את הסרטונים מהערוצים… ' + (++finished) + ' מתוך ' + config.channels.length, true);
     });
+    if(!stillAuthorized())return;
+    catalogMetrics.channelsMs=Date.now()-channelsStarted;
     if (!saveSnapshot(config, lists)) cacheSaved = false;
     const messages = [];
     if (invalidLines.length) messages.push('חלק מהקישורים ברשימה זקוקים לבדיקה של ההורה.');
-    if (linkFailures && displayed.size) messages.push('חלק מהשמות לא התעדכנו כרגע. הסרטונים הזמינים והשמורים כאן בשבילכם.');
+    if (linkFailures && displayed.size) messages.push('חלק מהפרטים לא התעדכנו כרגע. התוכן שכבר נטען עדיין זמין.');
     else if (linkFailures) messages.push('הסרטונים אינם זמינים כרגע. נסו שוב מאוחר יותר.');
-    if (failures && displayed.size) messages.push('חלק מהערוצים אינם זמינים כרגע. הסרטונים הזמינים והשמורים כאן בשבילכם.');
+    if (failures && displayed.size) messages.push('חלק מהערוצים אינם זמינים כרגע. התוכן שכבר נטען עדיין מוצג.');
     else if (failures) messages.push('הסרטונים אינם זמינים כרגע. נסו שוב מאוחר יותר.');
     if (limited) messages.push('אפשר ללחוץ על ״עוד סרטונים״ להמשך הרשימה.');
-    if (!cacheSaved) messages.push('לא הצלחנו לשמור את הרשימה במכשיר. הצפייה עדיין זמינה עם חיבור לאינטרנט.');
+    if (!cacheSaved) messages.push('לא הצלחנו לשמור נתונים זמניים במכשיר. התוכן עדיין זמין כל עוד יש חיבור לאינטרנט.');
+    if(linkFailures||failures){messages.push('המערכת תנסה להשלים את הפרטים שוב באופן אוטומטי.');scheduleCatalogRetry();}
+    else {catalogRetryAttempts=0;catalogRetryPending=false;}
+    debugCatalog('load-complete',{displayed:displayed.size,linksFailed:linkFailures,channelsFailed:failures,metrics:{...catalogMetrics}});
     status(messages.join(' '));
-  } catch (_) {
+  } catch (error) {
+    if(!stillAuthorized())return;
+    debugCatalog('load-fatal',{error:String(error&&error.message||'UNKNOWN'),metrics:{...catalogMetrics}});
     loadError=true;
     activeConfig = {videos:[], channels:[]}; activeLists = Object.create(null);
     displayed = new Map(); ui.grid.replaceChildren(); ui.count.textContent = ''; ui.more.hidden = true;
     activeLinkRecords = Object.create(null);approvalMarker='';
     // Any authority failure clears the local grant snapshot too.
     saveSnapshot({videos:[], channels:[]}, {});
-    status('');
+    status('');scheduleCatalogRetry();
   } finally {
+    catalogMetrics.completedMs=Date.now()-startedAt;
     loading = false; ui.grid.removeAttribute('aria-busy');
-    render(activeConfig, activeLists);
+    if(stillAuthorized())render(activeConfig, activeLists);
+    if(pendingOnlineRefresh&&navigator.onLine!==false){pendingOnlineRefresh=false;catalogRetryPending=false;loadApp();}
+    else if(catalogRetryPending&&!document.hidden&&!playback&&!paginationBusy&&navigator.onLine!==false){
+      catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});
+    }
   }
 }
 
 function failClosedAuthorization(message='לא הצלחנו לאמת כרגע את רשימת ההורה.') {
-  loadError=true;approvalMarker='';activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
+  clearTimeout(catalogRetryTimer);catalogRetryTimer=null;
+  authorizationGeneration++;loadError=true;approvalMarker='';activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
   displayed=new Map();ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;saveSnapshot(activeConfig,{});
   status(message);render(activeConfig,activeLists);
 }
@@ -640,7 +835,11 @@ async function checkAuthorizationFreshness() {
     const remote=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
     if(!remote||typeof remote.list!=='string')throw new Error('INVALID_REMOTE_LIST');
     const marker=String(remote.updatedAt||'')+'\0'+remote.list;
-    if(!approvalMarker||marker!==approvalMarker)await loadApp();
+    if(!approvalMarker||marker!==approvalMarker){
+      failClosedAuthorization('רשימת ההורה השתנתה. מאמתים אותה מחדש…');
+      if(paginationBusy){authorizationReloadPending=true;return;}
+      await loadApp();
+    }
   }catch(_){failClosedAuthorization();}
 }
 
@@ -786,13 +985,15 @@ async function tryCompatiblePlayer(session,base,sequence) {
 function launchNativeApp() {
   const session=playback;
   if(!session || !session.appPrompt || !VIDEO_ID.test(session.video.id))return;
-  let leftPage=!!document.hidden;
-  const onVisibility=()=>{if(document.hidden)leftPage=true;};
-  document.addEventListener('visibilitychange',onVisibility,{once:true});
+  let leftPage=!!document.hidden,finished=false;
+  const cleanup=()=>{if(finished)return;finished=true;document.removeEventListener('visibilitychange',onVisibility);};
+  const onVisibility=()=>{if(document.hidden){leftPage=true;cleanup();}};
+  document.addEventListener('visibilitychange',onVisibility);
   ui['app-open-message'].textContent='פותחים את האפליקציה…';
   try { location.href='kidsyoutube://video/'+session.video.id; }
-  catch (_) { ui['app-open-message'].textContent='האפליקציה עדיין לא מותקנת במכשיר הזה.'; return; }
+  catch (_) {cleanup();ui['app-open-message'].textContent='האפליקציה עדיין לא מותקנת במכשיר הזה.';return;}
   setTimeout(()=>{
+    cleanup();
     if(playback===session && !leftPage && !document.hidden)
       ui['app-open-message'].textContent='האפליקציה עדיין לא מותקנת במכשיר הזה.';
   },1200);
@@ -801,7 +1002,21 @@ function openPlayer(id) {
   const video = displayed.get(id);
   if (!video || (!getApprovedVideos().has(id) && !getApprovedChannels().has(video.channelId))) return;
   if (PARENT_CATALOG) {
-    window.parent.postMessage({type:'kids-parent-open-video',id:video.id,title:video.title,author:video.author||''},location.origin);
+    status('בודקים שהסרטון עדיין מאושר…',true);
+    fetchJson(PARENT_API+'?action=list').then(remote=>{
+      if(!remote||typeof remote.list!=='string')throw new Error('INVALID_REMOTE_LIST');
+      const freshMarker=String(remote.updatedAt||'')+'\0'+remote.list;
+      if(!approvalMarker||freshMarker!==approvalMarker){
+        failClosedAuthorization('רשימת ההורה השתנתה. מאמתים מחדש…');
+        if(paginationBusy)authorizationReloadPending=true;
+        else loadApp();
+        return;
+      }
+      const current=displayed.get(id);
+      if(!current||(!getApprovedVideos().has(id)&&!getApprovedChannels().has(current.channelId)))return;
+      status('');
+      window.parent.postMessage({type:'kids-parent-open-video',id:current.id,title:current.title,author:current.author||''},location.origin);
+    }).catch(()=>failClosedAuthorization('לא ניתן לאמת כרגע את הרשאות ההורה. נסו שוב מאוחר יותר.'));
     return;
   }
   flushSearch();
@@ -825,6 +1040,9 @@ function closePlayer(fromHistory = false) {
   const target=returnFocus && returnFocus.isConnected ? returnFocus : [...ui.grid.children].find(card=>card.dataset.videoId===returnVideoId);
   if (target) target.focus({preventScroll:true}); scrollToPosition(returnScrollY);
   if (!fromHistory && history.state && history.state.kidsYoutubePlayer) history.back();
+  if(catalogRetryPending&&!document.hidden&&!loading&&!paginationBusy&&navigator.onLine!==false){
+    catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});
+  }
 }
 function flushSearch() {
   if (searchTimer) {clearTimeout(searchTimer);searchTimer=null;searchQuery=ui.search.value.slice(0,100);visibleCount=SETTINGS.cardsPerPage;render(activeConfig,activeLists);}
@@ -872,7 +1090,7 @@ document.addEventListener('touchend',()=>{
   const refresh=pullStartY!==null&&pullDistance>=70&&!loading&&!playback&&window.scrollY<=0;
   if(!refresh){resetPull();return;}
   pullStartY=null;pullDistance=0;ui['pull-refresh'].dataset.active='true';ui['pull-refresh'].dataset.loading='true';ui['pull-refresh'].textContent='מרענן…';
-  Promise.resolve(loadApp()).finally(()=>{delete ui['pull-refresh'].dataset.loading;resetPull();});
+  Promise.resolve(loadApp({forceCatalog:true})).finally(()=>{delete ui['pull-refresh'].dataset.loading;resetPull();});
 },{passive:true});
 ui.more.addEventListener('click', loadMoreVideos);
 ui.back.addEventListener('click', () => closePlayer());
@@ -915,15 +1133,18 @@ ui.install.addEventListener('click', async () => {
 });
 window.addEventListener('appinstalled', () => { installPrompt = null; ui.install.hidden = true; });
 window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
-window.addEventListener('online', () => {providers.resetHealth();loadApp();});
+window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;catalogRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp();});
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && navigator.onLine !== false) {providers.healthCheck().then(audit);checkAuthorizationFreshness();}
-  if (!document.hidden && Date.now() - lastLoad > SETTINGS.refreshOnReturnMs) loadApp();
+  if(document.hidden||navigator.onLine===false)return;
+  if(catalogRetryPending&&!loading&&!paginationBusy&&!playback){catalogRetryPending=false;catalogMetrics.retries++;loadApp({forceCatalog:true});return;}
+  if(Date.now()-lastLoad>SETTINGS.refreshOnReturnMs){loadApp();return;}
+  if(!PARENT_CATALOG&&!NATIVE_MODE)providers.healthCheck().then(audit);
+  checkAuthorizationFreshness();
 });
 if (history.state && history.state.kidsYoutubePlayer) history.replaceState(null, '', location.href);
 loadApp();
 
-if (typeof setInterval === 'function') {
-  setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
-  if(!PARENT_CATALOG)setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
+if (typeof setInterval === 'function' && !PARENT_CATALOG) {
+  if(!NATIVE_MODE)setInterval(() => {if (!document.hidden && !playback && !loading && navigator.onLine !== false) providers.healthCheck().then(audit);},120000);
+  setInterval(checkAuthorizationFreshness,SETTINGS.authorizationRefreshMs);
 }
