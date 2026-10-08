@@ -40,7 +40,7 @@ test('native CSP allows only the production Kids Supabase origin for connections
 });
 test('native WebView allows only the exact Kids Supabase function as a remote API request',()=>{
   const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
-  assert.match(source,/SUPABASE_HOST="jxhelpxhrmwvzrrfrjuh\.supabase\.co"/);
+  assert.doesNotMatch(source,/static final String SUPABASE_HOST/);
   assert.match(source,/SUPABASE_PATH="\/functions\/v1\/kids-youtube"/);
   assert.match(source,/effectiveSupabaseHost\.equals\(h\)/);
   assert.match(source,/effectiveSupabaseHost=Uri\.parse\(getString\(R\.string\.kids_backend_url\)\)\.getHost\(\)/);
