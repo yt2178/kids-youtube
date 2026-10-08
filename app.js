@@ -813,9 +813,9 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
       }catch(webError){
         // A timed-out optional display catalog may be retried ONCE over the
         // already configured native OkHttp path. This does not grant access.
-        const timeout=webError?.code==='TIMEOUT'||webError?.message==='TIMEOUT';
-        if(!NATIVE_MODE||!timeout||typeof window.KidsNative.fetchCatalog!=='function')throw webError;
-        debugCatalog('catalog-native-fallback-start',{loadCycle:thisCycle,error:'TIMEOUT'});
+        const retryable=webError?.code==='TIMEOUT'||webError?.code==='NETWORK_OR_CORS'||webError?.message==='TIMEOUT';
+        if(!NATIVE_MODE||!retryable||typeof window.KidsNative.fetchCatalog!=='function')throw webError;
+        debugCatalog('catalog-native-fallback-start',{loadCycle:thisCycle,error:webError?.code||'TIMEOUT'});
         catalog=await window.KidsNative.fetchCatalog({version:remote.version,updatedAt:remote.updatedAt});
         debugCatalog('catalog-native-fallback-end',{loadCycle:thisCycle,entries:Array.isArray(catalog?.entries)?catalog.entries.length:0});
       }
