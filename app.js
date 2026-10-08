@@ -807,7 +807,18 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
     approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
     let shared={records:Object.create(null),lists:Object.create(null),dates:Object.create(null),progress:Object.create(null)};
     if(remote.catalogVersion===1)try {
-      const catalog=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=catalog');
+      let catalog;
+      try {
+        catalog=await fetchJson(PARENT_API+'?action=catalog',4000);
+      }catch(webError){
+        // A timed-out optional display catalog may be retried ONCE over the
+        // already configured native OkHttp path. This does not grant access.
+        const timeout=webError?.code==='TIMEOUT'||webError?.message==='TIMEOUT';
+        if(!NATIVE_MODE||!timeout||typeof window.KidsNative.fetchCatalog!=='function')throw webError;
+        debugCatalog('catalog-native-fallback-start',{loadCycle:thisCycle,error:'TIMEOUT'});
+        catalog=await window.KidsNative.fetchCatalog({version:remote.version,updatedAt:remote.updatedAt});
+        debugCatalog('catalog-native-fallback-end',{loadCycle:thisCycle,entries:Array.isArray(catalog?.entries)?catalog.entries.length:0});
+      }
       if(!stillAuthorized())return;
       if(catalog&&catalog.available!==false&&Array.isArray(catalog.entries)){
         if(catalog.version!==remote.version||catalog.updatedAt!==remote.updatedAt)
