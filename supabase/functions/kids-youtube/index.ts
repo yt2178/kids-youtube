@@ -277,7 +277,7 @@ async function catalogReadThrough(rows:any[],snapshot:any){
   try{
     const latest=await state();
     if(latest.version!==snapshot.version||!approvedCatalogUrls(latest.list_text).has(row.approval_url))return rows;
-    const updated={...row,page,continuation:null,pages_loaded:1,complete:true,checked_at:new Date().toISOString(),updated_at:new Date().toISOString()};
+    const updated={...row,page,continuation:null,pages_loaded:1,complete:false,checked_at:new Date().toISOString(),updated_at:new Date().toISOString()};
     await saveCatalog(updated);
     return rows.map(v=>v.approval_url===row.approval_url?updated:v);
   }catch{return rows;}
@@ -412,7 +412,7 @@ async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|n
   const thumbnail=safeThumbnail(Array.isArray(info?.authorThumbnails)?info.authorThumbnails.find((x:any)=>safeThumbnail(x?.url))?.url:"");
   const row={approval_url:approvalUrl,kind:"channel",item_id:id,title:safeNote(info?.author||saved?.title||"ערוץ YouTube"),
     thumbnail:thumbnail||safeThumbnail(saved?.thumbnail||""),published:0,channel_id:id,page,continuation,
-    pages_loaded:Math.min(8,(next&&same?saved.pages_loaded:0)+1),complete:!continuation,updated_at:now,checked_at:now};
+    pages_loaded:Math.min(8,(next&&same?saved.pages_loaded:0)+1),complete:!raw.feedFallback&&!continuation,updated_at:now,checked_at:now};
   if(!approvedCatalogUrls((await state()).list_text).has(approvalUrl))return {prepared:false,reason:"REMOVED"};
   await saveCatalog(row);return {prepared:true,kind:"channel",count:page.length,complete:row.complete};
 }
