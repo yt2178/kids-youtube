@@ -1345,3 +1345,31 @@ test('native 409-equivalent NETWORK_ERROR is bounded, fail-closed and recoverabl
   assert.equal(a.run('displayed.size'),1);
   assert.equal(calls,3);
 });
+
+test('app sends the same load-cycle and request trace to native for startup and two periodic checks',async()=>{
+  const events=[],traces=[],list='https://www.youtube.com/watch?v='+id(1)+'\n';
+  const a=await app(list,()=>{throw Error('native authorization only');},new Map(),{
+    nativeMode:true,logCollector:events,
+    nativeFetchAuthorization:async trace=>{
+      traces.push(trace);
+      return {list,version:3,updatedAt:'stable',catalogVersion:1,preparedCatalog:{
+        version:3,updatedAt:'stable',entries:[{approval_url:'https://www.youtube.com/watch?v='+id(1),
+          kind:'video',item_id:id(1),title:'מוכן',checked_at:new Date().toISOString()}]
+      }};
+    }
+  });
+  assert.equal(a.run('displayed.size'),1);
+  await a.run("checkAuthorizationFreshness('poll')");
+  await a.run("checkAuthorizationFreshness('poll')");
+  assert.equal(traces.length,3);
+  assert.equal(traces[0].source,'load');
+  assert.equal(traces[1].source,'poll');assert.equal(traces[2].source,'poll');
+  for(const trace of traces){
+    assert.equal(Number.isSafeInteger(trace.loadCycle),true);
+    assert.equal(Number.isSafeInteger(trace.requestId),true);
+    assert.ok(events.some(line=>line.startsWith('KidsCatalog request-start ') &&
+      line.includes('"requestId":'+trace.requestId) &&
+      line.includes('"loadCycle":'+trace.loadCycle)));
+  }
+  assert.equal(new Set(traces.map(t=>t.requestId)).size,3);
+});
