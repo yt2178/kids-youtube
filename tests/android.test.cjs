@@ -259,3 +259,54 @@ test('native authorization distinguishes generic list failure from video availab
   assert.match(activity,/reason=scope\.cancelled\?"CANCELLED":NativeApi\.errorCode\(e\)/);
   assert.match(source,/synchronized JSONObject displayAuthorization\(\) throws Exception[\s\S]*?whitelist\(true\)/);
 });
+
+test('one JS authorization trace survives the real JavaScript-to-native message bridge',async()=>{
+  const {c,messages,reply}=context();
+  const promise=c.KidsNative.fetchAuthorization({loadCycle:19,requestId:41,source:'poll'});
+  assert.equal(messages.length,1);
+  assert.equal(messages[0].method,'authorization');
+  assert.deepEqual(JSON.parse(JSON.stringify(messages[0].argument)),{loadCycle:19,requestId:41,source:'poll'});
+  assert.match(messages[0].id,/^\d+$/);
+  reply({id:messages[0].id,data:{list:'',version:3,updatedAt:'now',catalogVersion:1}});
+  assert.equal((await promise).version,3);
+});
+
+test('one JS cycle joins native worker queue, lock wait and OkHttp phases without network changes',()=>{
+  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  const scope=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/RequestScope.java'),'utf8');
+  const downloader=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/ExtractorDownloader.java'),'utf8');
+  const api=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  assert.match(app,/fetchAuthorization\(\{loadCycle,requestId,source\}\)/);
+  assert.match(activity,/new RequestScope\(14000,id,jsCycle,jsRequestId\)/);
+  assert.match(activity,/scope\.phase\("worker-queue-wait",started-scope\.queuedAtMs\)/);
+  assert.match(activity,/result=api\.tracedDisplayAuthorization\(\)/);
+  assert.match(scope,/String trace\(\)\{return " bridgeId="\+bridgeId\+" loadCycle="\+loadCycle\+" jsRequestId="\+jsRequestId;/);
+  assert.match(api,/scope\.phase\("authorization-lock-wait"/);
+  assert.match(downloader,/RequestScope scope=RequestScope\.CURRENT\.get\(\)/);
+  assert.match(downloader,/trace=scope==null\?/);
+  assert.match(downloader,/kind=\+kind\+trace\+" phase="/);
+  // Do not print untrusted WebView sourceId, console messages or signed URLs.
+  assert.doesNotMatch(activity,/message\.sourceId\(\)/);
+  assert.match(activity,/logWebDiagnostic\(message\.message\(\)\)/);
+  const playback=api.slice(api.indexOf('Playback playback(String id,long requestId)'));
+  assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+});
+
+test('ADB capture refuses ambiguous targets and requires evidence from two periodic checks',()=>{
+  const ps=fs.readFileSync(path.join(root,'scripts/collect-late-authorization.ps1'),'utf8');
+  assert.match(ps,/if \(\$Serial\)/);
+  assert.match(ps,/Expected one authorized device or an explicit -Serial/);
+  assert.match(ps,/& \$adb -s \$Serial shell am force-stop \$package/);
+  assert.match(ps,/& \$adb -s \$Serial shell am start -n/);
+  assert.match(ps,/ValidateRange\(145,600\)/);
+  assert.match(ps,/PeriodicAuthorizationChecks: \$polls/);
+  assert.match(ps,/\$polls -ge 2/);
+  assert.match(ps,/ExpectedBuildSha/);
+  assert.match(ps,/KidsStartup:D/);
+  assert.match(ps,/KidsNetwork:D/);
+  assert.match(ps,/KidsCatalog:D/);
+  assert.match(ps,/KidsWeb:D/);
+  assert.match(ps,/KidsPlayback:D/);
+  assert.doesNotMatch(ps,/logcat\s+-c|pm clear|pm grant|pm revoke|settings put/);
+});
