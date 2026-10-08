@@ -890,3 +890,18 @@ test('native first-run prepared channel page never sends an Invidious cursor to 
   assert.equal(a.run('displayed.size'),2);
   assert.equal(a.run('channelProgress.get('+JSON.stringify(A)+').continuation'),'native-token');
 });
+
+test('two directly approved videos survive metadata and channel outages and later retry',async()=>{
+  const video1='https://www.youtube.com/watch?v='+id(1);
+  const video2='https://www.youtube.com/watch?v='+id(2);
+  const raw=[video1,video2,'https://www.youtube.com/channel/'+A].join('\n');
+  const a=await app(raw,()=>{throw Error('provider down');},new Map(),{timerCap:10});
+  assert.equal(a.run('displayed.size'),2);
+  assert.equal(a.run(`displayed.has('${id(1)}')`),true);
+  assert.equal(a.run(`displayed.has('${id(2)}')`),true);
+  assert.match(a.run(`displayed.get('${id(1)}').title`),/סרטון מאושר/);
+  await until(()=>a.run('catalogMetrics.retries')>=1);
+  assert.equal(a.run('displayed.size'),2,'retry must not erase direct parent approvals');
+  assert.equal(a.run(`displayed.has('${id(1)}')`),true);
+  assert.equal(a.run(`displayed.has('${id(2)}')`),true);
+});
