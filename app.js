@@ -32,7 +32,10 @@ const SORT_KEY = 'kidsYoutubeSortMode';
 const CHANNEL_FILTER_KEY = 'kidsYoutubeChannelFilter';
 function sameOriginParent(){
   if(window.parent===window)return false;
-  try{return window.parent.location.origin===location.origin;}catch(_){return false;}
+  try{
+    const expected=new URL('./parents.html',location.href);
+    return window.parent.location.origin===location.origin&&window.parent.location.pathname===expected.pathname;
+  }catch(_){return false;}
 }
 const PARENT_CATALOG = new URL(location.href).searchParams.get('parentCatalog') === '1' && sameOriginParent();
 const NATIVE_MODE = typeof window.KidsNative === 'object' && window.KidsNative !== null;
@@ -837,7 +840,21 @@ function openPlayer(id) {
   const video = displayed.get(id);
   if (!video || (!getApprovedVideos().has(id) && !getApprovedChannels().has(video.channelId))) return;
   if (PARENT_CATALOG) {
-    window.parent.postMessage({type:'kids-parent-open-video',id:video.id,title:video.title,author:video.author||''},location.origin);
+    status('בודקים שהסרטון עדיין מאושר…',true);
+    fetchJson(PARENT_API+'?action=list').then(remote=>{
+      if(!remote||typeof remote.list!=='string')throw new Error('INVALID_REMOTE_LIST');
+      const freshMarker=String(remote.updatedAt||'')+'\0'+remote.list;
+      if(!approvalMarker||freshMarker!==approvalMarker){
+        failClosedAuthorization('רשימת ההורה השתנתה. מאמתים מחדש…');
+        if(paginationBusy)authorizationReloadPending=true;
+        else loadApp();
+        return;
+      }
+      const current=displayed.get(id);
+      if(!current||(!getApprovedVideos().has(id)&&!getApprovedChannels().has(current.channelId)))return;
+      status('');
+      window.parent.postMessage({type:'kids-parent-open-video',id:current.id,title:current.title,author:current.author||''},location.origin);
+    }).catch(()=>failClosedAuthorization('לא ניתן לאמת כרגע את הרשאות ההורה. נסו שוב מאוחר יותר.'));
     return;
   }
   flushSearch();
