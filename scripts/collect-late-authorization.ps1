@@ -35,7 +35,7 @@ $versionLine = @(& $adb -s $Serial shell dumpsys package $package |
     Select-Object -First 1)
 $version = if ($versionLine.Count -gt 0) { ($versionLine[0] -replace '^\s*versionName=', '').Trim() } else { 'unavailable' }
 if ($ValidateOnly) {
-    Write-Host "VALIDATED device=$Serial package=$package version=$version"
+    Write-Output "VALIDATED device=$Serial package=$package version=$version"
     Write-Host 'No app restart, recording or settings change was performed.'
     return
 }
