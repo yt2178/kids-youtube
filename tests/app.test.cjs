@@ -53,7 +53,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   const context=vm.createContext({URL,AbortController,Response,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
     navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/',origin:new URL(options.href||'https://example.test/kids-youtube/').origin},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
-    fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
+    fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
   if(options.parentWindow){
@@ -867,6 +867,6 @@ test('server catalog is never a grant after the same content has been removed',a
 test('shared catalog with a mismatched grant version fails closed even if it has valid metadata',async()=>{
   const catalog={version:6,updatedAt:'stable',entries:[{approval_url:'https://www.youtube.com/watch?v='+id(1),
     kind:'video',item_id:id(1),title:'ישן',checked_at:new Date().toISOString()}]};
-  const a=await app('https://www.youtube.com/watch?v='+id(1),()=>{throw Error('No provider');},new Map(),{sharedCatalog:catalog});
+  const a=await app('https://www.youtube.com/watch?v='+id(1),()=>{throw Error('No provider');},new Map(),{sharedCatalog:catalog,grantVersion:7});
   assert.equal(a.run('displayed.size'),0);assert.equal(a.run('approvalMarker'),'');
 });
