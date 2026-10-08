@@ -56,7 +56,18 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.listFetch?options.listFetch({url:target,opts,calls,raw}):options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return options.catalogFetch?options.catalogFetch({url:target,opts,calls}):json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
-  if(options.nativeMode)context.KidsNative={...(options.nativeFetchAuthorization?{fetchAuthorization:options.nativeFetchAuthorization}:{}),...(options.nativeFetchCatalog?{fetchCatalog:options.nativeFetchCatalog}:{})};
+  if(options.nativeMode){
+    // Native Android returns the catalog with the authoritative whitelist;
+    // the browser-only catalogFetch fixture is never used for this path.
+    const nativeGrant=options.nativeFetchAuthorization||
+      (!options.listFetch&&options.sharedCatalog?async()=>({
+        list:typeof config==='string'?config:JSON.stringify(config),
+        version:options.sharedCatalog.version,updatedAt:options.sharedCatalog.updatedAt,
+        catalogVersion:1,preparedCatalog:options.sharedCatalog
+      }):undefined);
+    context.KidsNative={...(nativeGrant?{fetchAuthorization:nativeGrant}:{}),
+      ...(options.nativeFetchCatalog?{fetchCatalog:options.nativeFetchCatalog}:{})};
+  }
   if(options.parentWindow){
     const here=new URL(options.href||'https://example.test/kids-youtube/');
     context.parent={location:{origin:here.origin,pathname:new URL('./parents.html',here).pathname},...options.parentWindow};
@@ -945,7 +956,10 @@ test('device startup list timeout retries successfully into 17 server-prepared a
   let authCalls=0;
   const a=await app(list,()=>{throw Error('Channel page should be deferred when prepared')},new Map(),{
     nativeMode:true,sharedCatalog:catalog,timerCap:8,
-    listFetch:()=>++authCalls===1?new Promise(()=>{}):json({list,version:3,updatedAt:'stable',catalogVersion:1})
+    nativeFetchAuthorization:async()=>{
+      if(++authCalls===1)throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'});
+      return {list,version:3,updatedAt:'stable',catalogVersion:1,preparedCatalog:catalog};
+    }
   });
   await until(()=>a.run('displayed.size')===17);
   assert.equal(authCalls>=2,true);
@@ -1033,7 +1047,8 @@ test('poll and partial-channel retry cannot issue competing list checks',async()
  const retry=a.run('retryCatalogContents()');
  await until(()=>typeof finish==='function');
  await a.run("checkAuthorizationFreshness('poll')");
- assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,before+1);
+ assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,before,
+   'Android must not send a competing WebView authority request');
  finish(json({videos:[row(2,C)],continuation:null}));
  await retry;
  assert.equal(a.run('displayed.size'),2);
@@ -1070,7 +1085,12 @@ test('debug request trace identifies list timeout source and later authorization
 test('Android first load and periodic verification share the native authoritative transport, not WebView HTTP',async()=>{
  const list='https://www.youtube.com/watch?v='+id(1)+'\n';
  const calls=[];
- const doc={list,version:3,updatedAt:'2026-10-08T16:28:30Z',catalogVersion:1};
+ const doc={list,version:3,updatedAt:'2026-10-08T16:28:30Z',catalogVersion:1,preparedCatalog:{
+    version:3,updatedAt:'2026-10-08T16:28:30Z',entries:[{
+      approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',
+      item_id:id(1),title:'שם מהשרת',checked_at:new Date().toISOString()
+    }]
+  }};
  const a=await app(list,()=>json({videoId:id(1),title:'מוכן',authorId:A}),new Map(),{
    nativeMode:true,
    nativeFetchAuthorization:async()=>{calls.push('native-authorization');return doc;},
@@ -1114,7 +1134,7 @@ test('optional partial-channel retry auth timeout keeps 17 freshly approved prep
     nativeMode:true,timerCap:20,sharedCatalog:catalog,
     nativeFetchAuthorization:async()=>{
       authCalls++;
-      if(authCalls===1)return {list,version:3,updatedAt:'stable',catalogVersion:1};
+      if(authCalls===1)return {list,version:3,updatedAt:'stable',catalogVersion:1,preparedCatalog:catalog};
       throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'});
     }
   });
@@ -1128,7 +1148,7 @@ test('optional partial-channel retry auth timeout keeps 17 freshly approved prep
   assert.doesNotMatch(a.elements['status-text'].textContent,/לא הצלחנו לאמת כרגע/);
 });
 
-test('device catalog WebView timeout falls back once to native transport for same grant version',async()=>{
+test('Android with no embedded catalog skips both browser and native catalog fetches',async()=>{
  const list='https://www.youtube.com/watch?v='+id(1)+'\n';
  const catalog={version:3,updatedAt:'fresh',entries:[{
    approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',item_id:id(1),
@@ -1143,12 +1163,12 @@ test('device catalog WebView timeout falls back once to native transport for sam
      nativeCalls++;assert.equal(grant.version,3);assert.equal(grant.updatedAt,'fresh');return catalog;
    }
  });
- assert.equal(nativeCalls,1);assert.equal(extractorCalls,0);
+ assert.equal(nativeCalls,0);assert.ok(extractorCalls>=1);
  assert.equal(a.run('displayed.size'),1);
- assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם מוכן מהשרת');
+ assert.notEqual(a.run(`displayed.get('${id(1)}').title`),'שם מוכן מהשרת');
  assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,0);
 });
-test('catalog fallback mismatch fails closed rather than granting stale content',async()=>{
+test('missing bundled catalog cannot authorize stale content or cause a second catalog request',async()=>{
  const list='https://www.youtube.com/watch?v='+id(1)+'\n';
  const a=await app(list,()=>json({videoId:id(1),title:'unverified',authorId:A}),new Map(),{
   nativeMode:true,sharedCatalog:{version:3,updatedAt:'fresh',entries:[]},
@@ -1158,7 +1178,9 @@ test('catalog fallback mismatch fails closed rather than granting stale content'
     approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',item_id:id(1),title:'stale'
   }]})
  });
- assert.equal(a.run('displayed.size'),0);assert.equal(a.run('approvalMarker'),'');
+ assert.equal(a.run('displayed.size'),1,'direct grant remains authoritative');
+ assert.ok(a.run('approvalMarker').includes(list));
+ assert.notEqual(a.run(`displayed.get('${id(1)}').title`),'stale');
 });
 test('optional catalog timeout plus metadata network failure preserves only freshly approved manual card',async()=>{
  const list='https://www.youtube.com/watch?v='+id(1)+'\n';
@@ -1169,7 +1191,7 @@ test('optional catalog timeout plus metadata network failure preserves only fres
   catalogFetch:()=>{throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'})},
   nativeFetchCatalog:async()=>{nativeCalls++;throw Object.assign(new Error('CONNECT_ERROR'),{code:'CONNECT_ERROR'})}
  });
- assert.equal(nativeCalls,1);assert.equal(a.run('displayed.size'),1);
+ assert.equal(nativeCalls,0);assert.equal(a.run('displayed.size'),1);
  assert.equal(a.run('approvalMarker').includes(list),true);
  assert.match(a.elements['status-text'].textContent,/חלק מהפרטים/);
 });
@@ -1184,4 +1206,66 @@ test('load-start records user pull and scheduled retry triggers independently',a
  assert.ok(starts.some(x=>x.includes('"trigger":"startup"')));
  assert.ok(starts.some(x=>x.includes('"trigger":"pull-to-refresh"')));
  assert.ok(starts.every(x=>x.includes('"trigger":')));
+});
+
+test('native startup uses version-matched catalog embedded in fresh authorization with no second WebView request',async()=>{
+ const url='https://www.youtube.com/watch?v='+id(1),list=url+'\n',calls=[];
+ const prepared={version:17,updatedAt:'fresh-time',entries:[{approval_url:url,kind:'video',item_id:id(1),title:'מוכן מהאימות',checked_at:new Date().toISOString()}]};
+ const a=await app(list,()=>{throw Error('No provider request required');},new Map(),{
+   nativeMode:true,
+   nativeFetchAuthorization:async()=>({list,version:17,updatedAt:'fresh-time',catalogVersion:1,preparedCatalog:prepared}),
+   catalogFetch:()=>{calls.push('WebView');throw Error('Browser catalog must not be fetched');},
+   nativeFetchCatalog:async()=>{calls.push('OkHttp');throw Error('Native fallback must not be fetched');}
+ });
+ assert.equal(a.run('displayed.size'),1);
+ assert.equal(a.run(`displayed.get('${id(1)}').title`),'מוכן מהאימות');
+ assert.equal(calls.length,0,'one successful native authorization must suffice for first display');
+ assert.equal(a.calls.length,0,'no browser network requests');
+});
+test('bundled old-version catalog is never authorization; metadata failure cannot grant removed video',async()=>{
+ const url='https://www.youtube.com/watch?v='+id(1),list=url+'\n';
+ const prepared={version:16,updatedAt:'old-time',entries:[{approval_url:url,kind:'video',item_id:id(1),title:'ישן'}]};
+ let catalogAttempts=0;
+ const a=await app(list,()=>{throw Error('Provider unavailable');},new Map(),{
+   nativeMode:true,
+   nativeFetchAuthorization:async()=>({list,version:17,updatedAt:'fresh-time',catalogVersion:1,preparedCatalog:prepared}),
+   catalogFetch:()=>{catalogAttempts++;return json({version:17,updatedAt:'fresh-time',entries:[]})}
+ });
+ assert.equal(catalogAttempts,0,'invalid embedded cache cannot cause a second native/browser request');
+ assert.equal(a.run('displayed.size'),1,'direct video grant remains visible despite metadata failure');
+ assert.notEqual(a.run(`displayed.get('${id(1)}').title`),'ישן');
+ const revoked=await app('',()=>{throw Error('provider should not be used')},new Map(),{
+   nativeMode:true,
+   nativeFetchAuthorization:async()=>({list:'',version:18,updatedAt:'revoked',catalogVersion:1,preparedCatalog:{version:18,updatedAt:'revoked',entries:prepared.entries}}),
+   catalogFetch:()=>{throw Error('bundled grants should not fall back')}
+ });
+ assert.equal(revoked.run('displayed.size'),0);
+});
+test('slow optional content completion shows spinner only while active and stops on completion',async()=>{
+ const list='https://www.youtube.com/channel/'+A+'\n';
+ let complete,attempt=0;
+ const a=await app(list,url=>{
+   if(url.endsWith('/api/v1/channels/'+A))return json({author:'Channel',authorId:A,authorThumbnails:[]});
+   attempt++;
+   return attempt===1?json({videos:[row(1)],continuation:'next'}):new Promise(resolve=>complete=resolve);
+ },new Map(),{timerCap:12});
+ assert.equal(a.run('displayed.size'),1);
+ a.run('pendingChannelRetry.add('+JSON.stringify(A)+')');
+ const pending=a.run('retryCatalogContents()');
+ await until(()=>typeof complete==='function');
+ await until(()=>a.elements.spinner.hidden===false);
+ assert.equal(a.elements.spinner.hidden,false);
+ complete(json({videos:[row(1),row(2)],continuation:null}));
+ await pending;
+ assert.equal(a.elements.spinner.hidden,true);
+});
+test('failed authorization displays a finite error with explicit retry button and no cached grants',async()=>{
+ const raw='https://www.youtube.com/watch?v='+id(1);
+ const a=await app(raw,()=>json({videoId:id(1),title:'title'}),new Map(),{
+   nativeMode:true,nativeFetchAuthorization:async()=>{throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'})}
+ });
+ assert.equal(a.run('displayed.size'),0);
+ assert.equal(a.elements.spinner.hidden,true);
+ assert.equal(a.elements['status-retry'].hidden,false);
+ assert.match(a.elements['status-text'].textContent,/לא הצלחנו לאמת/);
 });
