@@ -259,6 +259,29 @@ async function metadata(input:string){
 const CATALOG_TABLE = BASE+"/rest/v1/kids_youtube_catalog";
 const PREPARE_TIMEOUT_MS = 12500;
 const PAGE_MAX_ITEMS = 45;
+const lastFeedAttempt = new Map<string,number>();
+async function catalogReadThrough(rows:any[],snapshot:any){
+  // Only the first missing page of one currently approved UC channel may be
+  // prepared, synchronously, under 1.9s. No background work, no cron.
+  const now=Date.now();
+  const row=rows.find(v=>v?.kind==="channel"&&/^UC[A-Za-z0-9_-]{22}$/.test(v.item_id)
+    &&(!Array.isArray(v.page)||v.page.length===0)
+    &&now-Date.parse(v.checked_at||"")>20*60*1000
+    &&now-(lastFeedAttempt.get(v.approval_url)||0)>20*60*1000);
+  if(!row)return rows;
+  lastFeedAttempt.set(row.approval_url,now);
+  const feed=await youtubeFeedPage(row.item_id,Date.now()+1800);
+  if(!feed?.videos?.length)return rows;
+  const page=feed.videos.slice(0,20).map((v:any)=>safePreparedVideo(v,row.item_id)).filter(Boolean);
+  if(!page.length)return rows;
+  try{
+    const latest=await state();
+    if(latest.version!==snapshot.version||!approvedCatalogUrls(latest.list_text).has(row.approval_url))return rows;
+    const updated={...row,page,continuation:null,pages_loaded:1,complete:true,checked_at:new Date().toISOString(),updated_at:new Date().toISOString()};
+    await saveCatalog(updated);
+    return rows.map(v=>v.approval_url===row.approval_url?updated:v);
+  }catch{return rows;}
+}
 function approvedCatalogUrls(list:string):Set<string>{return existingUrls(list);}
 async function catalogRows(approved:Set<string>){
   if(!approved.size)return [];
@@ -417,8 +440,11 @@ Deno.serve(async(req)=>{
     }
     if(req.method==="GET"&&action==="catalog"){
       const allowed=approvedCatalogUrls(s.list_text);
-      try{return json({version:s.version,updatedAt:s.updated_at,entries:await catalogRows(allowed)},200,origin);}
-      catch{return json({version:s.version,updatedAt:s.updated_at,entries:[],available:false},200,origin);}
+      try{
+        const entries=await catalogRows(allowed);
+        const ready=await catalogReadThrough(entries,s);
+        return json({version:s.version,updatedAt:s.updated_at,entries:ready},200,origin);
+      }catch{return json({version:s.version,updatedAt:s.updated_at,entries:[],available:false},200,origin);}
     }
     if(req.method==="GET"&&action==="list"){
       const format=url.searchParams.get("format");
