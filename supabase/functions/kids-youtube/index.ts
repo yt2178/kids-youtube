@@ -306,9 +306,54 @@ async function providerData(path:string,deadline=Date.now()+PREPARE_TIMEOUT_MS){
 async function stableChannelId(url:string,deadline=Date.now()+PREPARE_TIMEOUT_MS){
   const match=url.match(/^https:\/\/www\.youtube\.com\/channel\/(UC[A-Za-z0-9_-]{22})$/);
   if(match)return match[1];
+  // An already-approved exact URL with a previously resolved pinned UC id
+  // must not be silently retargeted when @handle changes or a provider fails.
+  const saved=(await catalogRows(new Set([url])))[0];
+  if(saved?.kind==="channel" && /^UC[A-Za-z0-9_-]{22}$/.test(saved.item_id))return saved.item_id;
   const data=await providerData("/api/v1/resolveurl?url="+encodeURIComponent(url),deadline);
   const id=data?.ucid||data?.browseId||"";
   return /^UC[A-Za-z0-9_-]{22}$/.test(id)?id:"";
+}
+function xmlValue(xml:string,tag:string){
+  const pattern=new RegExp("<"+tag.replace(/[.*+?^$()|[\]\\]/g,"\\async function stableChannelId(url:string,deadline=Date.now()+PREPARE_TIMEOUT_MS){
+  const match=url.match(/^https:\/\/www\.youtube\.com\/channel\/(UC[A-Za-z0-9_-]{22})$/);
+  if(match)return match[1];
+  const data=await providerData("/api/v1/resolveurl?url="+encodeURIComponent(url),deadline);
+  const id=data?.ucid||data?.browseId||"";
+  return /^UC[A-Za-z0-9_-]{22}$/.test(id)?id:"";
+}")+">([\\s\\S]*?)<\\/"+tag.replace(/[.*+?^$()|[\]\\]/g,"\\async function stableChannelId(url:string,deadline=Date.now()+PREPARE_TIMEOUT_MS){
+  const match=url.match(/^https:\/\/www\.youtube\.com\/channel\/(UC[A-Za-z0-9_-]{22})$/);
+  if(match)return match[1];
+  const data=await providerData("/api/v1/resolveurl?url="+encodeURIComponent(url),deadline);
+  const id=data?.ucid||data?.browseId||"";
+  return /^UC[A-Za-z0-9_-]{22}$/.test(id)?id:"";
+}")+">","i");
+  const m=xml.match(pattern);
+  return m?htmlText(m[1]):"";
+}
+// Public YouTube channel feed: a bounded, key-free first-page fallback, not
+// YouTube Data API and not an authorization source.
+async function youtubeFeedPage(channelId:string,deadline:number){
+  if(!/^UC[A-Za-z0-9_-]{22}$/.test(channelId))return null;
+  try{
+    return await timed(Math.min(3500,Math.max(1,deadline-Date.now())),async signal=>{
+      const u="https://www.youtube.com/feeds/videos.xml?channel_id="+channelId;
+      const r=await fetch(u,{signal,redirect:"manual",headers:{"Accept":"application/atom+xml, application/xml"}});
+      if(!r.ok||oversized(r,500000))return null;
+      const xml=await readBounded(r.body,500000);
+      if(xmlValue(xml,"yt:channelId")!==channelId)return null;
+      const entries=xml.match(/<entry\b[^>]*>[\s\S]*?<\/entry>/gi)||[];
+      const videos=[];
+      for(const block of entries.slice(0,20)){
+        const id=xmlValue(block,"yt:videoId");
+        if(!/^[A-Za-z0-9_-]{11}$/.test(id))continue;
+        const published=Date.parse(xmlValue(block,"published"));
+        videos.push({videoId:id,authorId:channelId,title:xmlValue(block,"title"),
+          author:xmlValue(xml,"title"),published:Number.isFinite(published)?Math.floor(published/1000):0});
+      }
+      return videos.length?{videos,continuation:null,feedFallback:true}:null;
+    });
+  }catch{return null;}
 }
 async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|null){
   const deadline=Date.now()+PREPARE_TIMEOUT_MS;
@@ -334,7 +379,7 @@ async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|n
   if(next!==null&&(!same||saved?.continuation!==next||saved?.complete||saved?.pages_loaded>=8))
     throw Error("INVALID_CONTINUATION");
   const path="/api/v1/channels/"+id+"/videos"+(next?"?continuation="+encodeURIComponent(next):"");
-  const raw=await providerData(path,deadline);
+  const raw=(await providerData(path,deadline)) || (!next?await youtubeFeedPage(id,deadline):null);
   if(!raw||!Array.isArray(raw.videos))return {prepared:false,reason:"PROVIDER_UNAVAILABLE"};
   const fresh=raw.videos.slice(0,PAGE_MAX_ITEMS).map((v:any)=>safePreparedVideo(v,id)).filter(Boolean);
   const previous=same&&next ? (Array.isArray(saved.page)?saved.page:[]) : [];
@@ -378,7 +423,27 @@ Deno.serve(async(req)=>{
       try{return json({version:s.version,updatedAt:s.updated_at,entries:await catalogRows(allowed)},200,origin);}
       catch{return json({version:s.version,updatedAt:s.updated_at,entries:[],available:false},200,origin);}
     }
-    if(req.method==="GET"&&action==="list"){ if(url.searchParams.get("format")==="text") return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}}); return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,setupRequired:!s.password_hash},200,origin); }
+    if(req.method==="GET"&&action==="list"){
+      const format=url.searchParams.get("format");
+      if(format==="text")return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}});
+      if(format==="native"){
+        // Single coherent parent-state snapshot and server-pinned channel mapping.
+        // Missing catalog means no alias grants; direct video/UC approvals remain.
+        const pins:any[]=[];
+        try{
+          const approved=approvedCatalogUrls(s.list_text);
+          for(const row of await catalogRows(approved)){
+            if(row.kind!=="channel"||!/^UC[A-Za-z0-9_-]{22}$/.test(row.item_id))continue;
+            const time=Date.parse(row.checked_at||"");
+            if(!Number.isFinite(time)||time>Date.now()+300000)continue;
+            if(!/^https:\/\/www\.youtube\.com\/(?:@|c\/|user\/)/.test(row.approval_url))continue;
+            pins.push({url:row.approval_url,id:row.item_id});
+          }
+        }catch{}
+        return json({list:s.list_text,version:s.version,pinnedChannels:pins},200,origin);
+      }
+      return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,setupRequired:!s.password_hash},200,origin);
+    }
     if(req.method!=="POST")return json({error:"METHOD"},405,origin);
     const declared=Number(req.headers.get("content-length")||0);
     if(Number.isFinite(declared)&&declared>MAX_BODY_BYTES)return json({error:"TOO_LARGE"},413,origin);
