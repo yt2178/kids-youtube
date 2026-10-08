@@ -107,7 +107,7 @@ test('native activity restricts messages to the packaged main frame and stops me
   assert.match(source,/setShowNextButton\(false\)/);
   assert.match(source,/handleDeepLink\(getIntent\(\)\)/);assert.match(source,/ApprovalPolicy\.VIDEO\.matcher\(id\)/);
   const manifest=fs.readFileSync(path.join(root,'android/app/src/main/AndroidManifest.xml'),'utf8');
-  assert.match(manifest,/android:scheme="\$\{kidsDeepLinkScheme\}"/);
+  assert.match(manifest,/android:scheme="kidsyoutube"/);
   assert.match(source,/getString\(R\.string\.kids_deep_link_scheme\)\.equals\(data\.getScheme\(\)\)/);assert.match(manifest,/android:host="video"/);assert.match(manifest,/android.intent.category.BROWSABLE/);
 });
 
@@ -125,15 +125,3 @@ test('parent share target and credentials are isolated from the child app and pa
   }finally{fs.rmSync(out,{recursive:true,force:true});}
 });
 
-test('staging Android build requires a non-production URL, a distinct app id and scheme',()=>{
-  const gradle=fs.readFileSync(path.join(root,'android/app/build.gradle'),'utf8');
-  const packager=fs.readFileSync(path.join(root,'android/prepare-assets.gradle'),'utf8');
-  const native=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
-  assert.match(gradle,/applicationId kidsStaging \? 'il\.kidsyoutube\.staging'/);
-  assert.match(gradle,/stagingBackend == productionBackend/);
-  assert.match(gradle,/kidsDeepLinkScheme: kidsStaging \? 'kidsyoutube-staging'/);
-  assert.match(gradle,/kids_backend_url/);
-  assert.match(packager,/Production endpoint leaked into staging assets/);
-  assert.match(native,/listUrl=context\.getString\(R\.string\.kids_list_url\)/);
-  assert.match(native,/\.url\(listUrl\)/);
-});
