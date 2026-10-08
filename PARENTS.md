@@ -1,4 +1,4 @@
-# להורה — ניהול תוכן בלי GitHub
+> **התקנה ועדכון:** משכו את main באמצעות `git pull`, פתחו את תיקיית `android` ב־Android Studio והפעילו Run. אין עוד הפצת APK/ZIP, Releases או תגי family-beta אוטומטיים. אתר GitHub Pages מיועד להורים בלבד; קטלוג הילדים זמין באפליקציית Android.\n\n# להורה — ניהול תוכן בלי GitHub
 
 פותחים את [אתר ההורים](https://yt2178.github.io/kids-youtube/parents.html).
 
