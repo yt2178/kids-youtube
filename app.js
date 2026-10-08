@@ -1013,7 +1013,7 @@ document.addEventListener('touchend',()=>{
   const refresh=pullStartY!==null&&pullDistance>=70&&!loading&&!playback&&window.scrollY<=0;
   if(!refresh){resetPull();return;}
   pullStartY=null;pullDistance=0;ui['pull-refresh'].dataset.active='true';ui['pull-refresh'].dataset.loading='true';ui['pull-refresh'].textContent='מרענן…';
-  Promise.resolve(loadApp()).finally(()=>{delete ui['pull-refresh'].dataset.loading;resetPull();});
+  Promise.resolve(loadApp({forceCatalog:true})).finally(()=>{delete ui['pull-refresh'].dataset.loading;resetPull();});
 },{passive:true});
 ui.more.addEventListener('click', loadMoreVideos);
 ui.back.addEventListener('click', () => closePlayer());
