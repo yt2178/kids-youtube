@@ -53,7 +53,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   const context=vm.createContext({URL,AbortController,Response,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
     navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/',origin:new URL(options.href||'https://example.test/kids-youtube/').origin},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
-    fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
+    fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.listFetch?options.listFetch({url:target,opts,calls,raw}):options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
   if(options.nativeMode)context.KidsNative={};
@@ -930,4 +930,94 @@ test('legacy handle mapping only in localStorage must not grant channel access',
   })]]);
   const a=await app(handle+'\n',()=>{throw Error('provider unavailable')},store);
   assert.equal(a.run('displayed.size'),0);
+});
+
+test('device startup list timeout retries successfully into 17 server-prepared approved videos without manual refresh',async()=>{
+  const C='UCV6xoqUxJzkWwCbDmEwMSYw',channel='https://www.youtube.com/channel/'+C;
+  const vids=Array.from({length:17},(_,i)=>id(i+1));
+  const list=vids.slice(0,2).map(v=>'https://www.youtube.com/watch?v='+v).concat(channel).join('\n')+'\n';
+  const checked=new Date().toISOString();
+  const catalog={version:3,updatedAt:'stable',entries:[
+    ...vids.slice(0,2).map(v=>({approval_url:'https://www.youtube.com/watch?v='+v,kind:'video',item_id:v,title:'שם מוכן '+v,checked_at:checked})),
+    {approval_url:channel,kind:'channel',item_id:C,title:'ערוץ מוכן',checked_at:checked,pages_loaded:1,complete:false,
+     page:vids.slice(2).map(v=>({id:v,videoId:v,channelId:C,authorId:C,title:'שם סרטון '+v}))}
+  ]};
+  let authCalls=0;
+  const a=await app(list,()=>{throw Error('Channel page should be deferred when prepared')},new Map(),{
+    nativeMode:true,sharedCatalog:catalog,timerCap:8,
+    listFetch:()=>++authCalls===1?new Promise(()=>{}):json({list,version:3,updatedAt:'stable',catalogVersion:1})
+  });
+  await until(()=>a.run('displayed.size')===17);
+  assert.equal(authCalls>=2,true);
+  assert.equal(a.run('displayed.size'),17);
+  assert.equal(a.run('approvalMarker')!=='',true);
+  assert.ok(a.run('catalogMetrics.authorizationMs')>=0);
+});
+test('late failed poll cannot clear a newer successful loading cycle',async()=>{
+  const list='https://www.youtube.com/watch?v='+id(1)+'\n';
+  let authCalls=0,rejectOldPoll;
+  const a=await app(list,()=>json({videoId:id(1),title:'מוכן',authorId:A}),new Map(),{
+    listFetch:()=>{
+      authCalls++;
+      if(authCalls===2)return new Promise((_,reject)=>{rejectOldPoll=reject;});
+      return json({list,updatedAt:'stable'});
+    }
+  });
+  assert.equal(a.run('displayed.size'),1);
+  const poll=a.run("checkAuthorizationFreshness('poll')");
+  await until(()=>!!rejectOldPoll);
+  const refresh=a.run('loadApp()');
+  await refresh;assert.equal(a.run('displayed.size'),1);
+  const generation=a.run('authorizationGeneration');
+  rejectOldPoll(new Error('TIMEOUT'));await poll;
+  assert.equal(a.run('authorizationGeneration'),generation);
+  assert.equal(a.run('displayed.size'),1);
+  assert.match(a.run('approvalMarker'),/watch/);
+});
+test('real failed fresh poll fails closed, rejects prior cards and schedules a bounded authorization retry',async()=>{
+  const list='https://www.youtube.com/watch?v='+id(2)+'\n';
+  let calls=0;
+  const a=await app(list,()=>json({videoId:id(2),title:'מוכן',authorId:A}),new Map(),{
+    timerCap:25,
+    listFetch:()=>++calls===1?json({list,updatedAt:'stable'}):new Promise(()=>{})
+  });
+  await a.run("checkAuthorizationFreshness('poll')");
+  assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.run('approvalMarker'),'');
+  assert.equal(a.run('catalogRetryAttempts')>=1,true);
+});
+test('provider page failure after successful grant verification cannot erase 17 prepared cards',async()=>{
+  const C='UCV6xoqUxJzkWwCbDmEwMSYw',channel='https://www.youtube.com/channel/'+C;
+  const vids=Array.from({length:17},(_,i)=>id(i+1)),now=new Date().toISOString();
+  const list=vids.slice(0,2).map(v=>'https://www.youtube.com/watch?v='+v).concat(channel).join('\n')+'\n';
+  const catalog={version:3,updatedAt:'stable',entries:[
+    ...vids.slice(0,2).map(v=>({approval_url:'https://www.youtube.com/watch?v='+v,kind:'video',item_id:v,title:'מוכן',checked_at:now})),
+    {approval_url:channel,kind:'channel',item_id:C,title:'ערוץ מוכן',checked_at:now,pages_loaded:1,complete:false,
+    page:vids.slice(2).map(v=>({id:v,videoId:v,authorId:C,channelId:C,title:'מוכן'}))}
+  ]};
+  const a=await app(list,()=>{throw Error('UPSTREAM_BLOCKED')},new Map(),{nativeMode:true,sharedCatalog:catalog});
+  assert.equal(a.run('displayed.size'),17);
+  assert.equal(a.run('pendingChannelRetry.has('+JSON.stringify(C)+')'),true);
+  const generation=a.run('authorizationGeneration');
+  await a.run('retryCatalogContents()');
+  assert.equal(a.run('displayed.size'),17);
+  assert.equal(a.run('authorizationGeneration'),generation);
+  assert.equal(a.run('approvalMarker')!=='',true);
+  assert.doesNotMatch(a.elements['status-text'].textContent,/לא הצלחנו לאמת כרגע/);
+});
+test('pending channel page response arriving after an authoritative revocation is ignored',async()=>{
+  const C='UCV6xoqUxJzkWwCbDmEwMSYw',channel='https://www.youtube.com/channel/'+C,now=new Date().toISOString();
+  const list=channel+'\n',catalog={version:3,updatedAt:'stable',entries:[{
+    approval_url:channel,kind:'channel',item_id:C,title:'ערוץ',checked_at:now,pages_loaded:1,complete:false,
+    page:[{id:id(1),videoId:id(1),channelId:C,authorId:C,title:'מוכן'}]}]};
+  let finish;
+  const a=await app(list,()=>new Promise(resolve=>finish=resolve),new Map(),{nativeMode:true,sharedCatalog:catalog});
+  assert.equal(a.run('displayed.size'),1);
+  const pending=a.run('retryCatalogContents()');
+  await until(()=>typeof finish==='function');
+  a.run("failClosedAuthorization('ההרשאה הוסרה','test')");
+  finish(json({videos:[row(9,C)],continuation:null}));
+  await pending;
+  assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.run('approvalMarker'),'');
 });
