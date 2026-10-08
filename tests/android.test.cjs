@@ -161,7 +161,7 @@ test('native bridge exposes one versioned fresh authorization request without le
  assert.match(source,/lastAuthorization=doc/);
  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
  assert.match(activity,/api\.displayAuthorization\(\)/);
- assert.match(activity,/Set\.of\("whitelist","authorization","api","clear"\)/);
+ assert.match(activity,/Set\.of\("whitelist","authorization","catalog","api","clear"\)/);
 });
 test('native WebView is detached before destroy and debug native traces omit arguments and tokens',()=>{
  const c=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
@@ -189,4 +189,41 @@ test('debug Media3 diagnostics record states, playing, first frame and release r
   assert.match(main,/api\.playback\(id,generation\)/);
   const playback=native.slice(native.indexOf('Playback playback(String id,long requestId)'));
   assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+});
+
+test('native display catalog fallback uses a separate bridge method and matching expected version',async()=>{
+ const {c,messages,reply}=context();
+ const p=c.KidsNative.fetchCatalog({version:3,updatedAt:'approval-stamp'});
+ assert.equal(messages.length,1);assert.equal(messages[0].method,'catalog');
+ assert.equal(messages[0].argument.version,3);assert.equal(messages[0].argument.updatedAt,'approval-stamp');
+ reply({id:messages[0].id,data:{version:3,updatedAt:'approval-stamp',entries:[]}});
+ assert.equal((await p).version,3);
+});
+test('native catalog fallback is display-only, version-pinned, scope-cancellable and endpoint-fixed',()=>{
+ const native=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+ const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+ assert.match(native,/JSONObject sharedCatalog\(JSONObject expected\)/);
+ assert.match(native,/if\(!listUrl\.endsWith\("\?action=list&format=native"\)\)/);
+ assert.match(native,/lastAuthorization\.optInt\("version",-2\)!=version/);
+ assert.match(native,/CATALOG_AUTH_CHANGED/);assert.match(native,/scope\.add\(call\)/);
+ assert.match(activity,/method\.equals\("catalog"\)\)result=api\.sharedCatalog/);
+ assert.match(activity,/new RequestScope\(14000\)/);
+});
+test('debug native network trace is limited to phase timings and does not log URLs or signed streams',()=>{
+ const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/ExtractorDownloader.java'),'utf8');
+ const api=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+ assert.match(source,/if\(debugBuild\)builder\.eventListenerFactory/);
+ for(const phase of ['dns-start','dns-end','tcp-start','tcp-end','tls-start','tls-end','body-end','call-failed'])
+   assert.match(source,new RegExp(phase==='call-failed'?'callFailed':phase));
+ assert.match(api,/new ExtractorDownloader\(debugBuild\)/);
+ assert.match(api,/UnknownHostException/);assert.match(api,/SSLException/);
+ assert.match(api,/ConnectException/);assert.match(api,/InterruptedIOException/);
+ assert.match(api,/safeRootClass\(Throwable error\)/);
+});
+test('Android double fresh playback validation is unchanged after catalog transport addition',()=>{
+ const native=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+ const playback=native.slice(native.indexOf('Playback playback(String id,long requestId)'));
+ assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+ assert.match(playback,/auth-before-extraction-ok/);
+ assert.match(playback,/auth-after-extraction-ok/);
 });

@@ -219,7 +219,7 @@ public final class MainActivity extends Activity {
                 // The title is display-only. NativeApi independently validates the id.
                 openPlayer(video,videoTitle);respond(reply,id,Boolean.TRUE,null);return;
             }
-            if(!Set.of("whitelist","authorization","api","clear").contains(method)){
+            if(!Set.of("whitelist","authorization","catalog","api","clear").contains(method)){
                 respond(reply,id,null,"INVALID_REQUEST");return;
             }
             RequestScope scope=new RequestScope(14000);
@@ -232,6 +232,7 @@ public final class MainActivity extends Activity {
                     Object result;
                     if(method.equals("whitelist"))result=api.displayWhitelist();
                     else if(method.equals("authorization"))result=api.displayAuthorization();
+                    else if(method.equals("catalog"))result=api.sharedCatalog(data.optJSONObject("argument"));
                     else if(method.equals("clear")){api.clear();result=Boolean.TRUE;}
                     else result=api.request(argument);
                     scope.check();debugBridge(method,id,"end",started,"ok");
@@ -239,6 +240,11 @@ public final class MainActivity extends Activity {
                 }catch(Exception e){
                     String reason=scope.cancelled?"CANCELLED":NativeApi.errorCode(e);
                     debugBridge(method,id,"end",started,reason);
+                    // Debug type-only diagnostics: exception messages may contain signed media URLs.
+                    if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0)
+                        android.util.Log.d("KidsCatalog","native-failure operation="+method+
+                            " type="+e.getClass().getSimpleName()+
+                            " root="+NativeApi.safeRootClass(e)+" category="+reason);
                     if(!scope.cancelled)respond(reply,id,null,reason);
                 }finally{scope.close();}
                 return null;

@@ -12,10 +12,45 @@ import org.schabi.newpipe.extractor.downloader.Response;
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException;
 
 final class ExtractorDownloader extends Downloader {
-    final OkHttpClient client = new OkHttpClient.Builder()
-            .connectTimeout(5,TimeUnit.SECONDS).readTimeout(8,TimeUnit.SECONDS)
-            .callTimeout(12,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
-            .retryOnConnectionFailure(false).build();
+    final OkHttpClient client;
+    // Keep the optional legacy parent companion source-compatible.
+    ExtractorDownloader(){this(false);}
+    ExtractorDownloader(boolean debugBuild) {
+        OkHttpClient.Builder builder=new OkHttpClient.Builder()
+                .connectTimeout(5,TimeUnit.SECONDS).readTimeout(8,TimeUnit.SECONDS)
+                .callTimeout(12,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
+                .retryOnConnectionFailure(false);
+        if(debugBuild)builder.eventListenerFactory(call -> new NetworkTrace(call));
+        client=builder.build();
+    }
+    // No hostname, IP, URL, cookies, credentials, or signed media URI is logged.
+    private static final class NetworkTrace extends okhttp3.EventListener {
+        private static final java.util.concurrent.atomic.AtomicLong NEXT=
+                new java.util.concurrent.atomic.AtomicLong();
+        private final long id=NEXT.incrementAndGet();
+        private final long started=android.os.SystemClock.elapsedRealtime();
+        private final String kind;
+        NetworkTrace(Call call){
+            String tag=call.request().tag(String.class);
+            kind="authorization".equals(tag)?"authorization":
+                "catalog".equals(tag)?"catalog":"extractor";
+        }
+        private void mark(String phase){
+            android.util.Log.d("KidsNetwork","id="+id+" kind="+kind+" phase="+phase+
+                    " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-started));
+        }
+        @Override public void callStart(Call call){mark("call-start");}
+        @Override public void dnsStart(Call call,String name){mark("dns-start");}
+        @Override public void dnsEnd(Call call,String name,List<java.net.InetAddress> addresses){mark("dns-end");}
+        @Override public void connectStart(Call call,java.net.InetSocketAddress address,java.net.Proxy proxy){mark("tcp-start");}
+        @Override public void connectEnd(Call call,java.net.InetSocketAddress address,java.net.Proxy proxy,okhttp3.Protocol protocol){mark("tcp-end");}
+        @Override public void secureConnectStart(Call call){mark("tls-start");}
+        @Override public void secureConnectEnd(Call call,Handshake handshake){mark("tls-end");}
+        @Override public void responseHeadersEnd(Call call,okhttp3.Response response){mark("headers-"+response.code());}
+        @Override public void responseBodyEnd(Call call,long byteCount){mark("body-end");}
+        @Override public void callEnd(Call call){mark("call-end");}
+        @Override public void callFailed(Call call,IOException error){mark("failed-"+error.getClass().getSimpleName());}
+    }
     static boolean allowed(String url) {
         try {
             URI u=URI.create(url);String h=u.getHost();
@@ -30,7 +65,8 @@ final class ExtractorDownloader extends Downloader {
         if(scope!=null)scope.check();
         if(!allowed(request.url()))throw new IOException("INVALID_REQUEST");
         RequestBody body=request.dataToSend()==null ? null : RequestBody.create(request.dataToSend(),null);
-        okhttp3.Request.Builder builder=new okhttp3.Request.Builder().url(request.url()).method(request.httpMethod(),body);
+        okhttp3.Request.Builder builder=new okhttp3.Request.Builder().url(request.url())
+                .tag(String.class,"extractor").method(request.httpMethod(),body);
         for(Map.Entry<String,List<String>> header:request.headers().entrySet())
             for(String value:header.getValue())builder.addHeader(header.getKey(),value);
         // Use the library's normal headers. No cookies, CAPTCHA solver, PoToken provider,
