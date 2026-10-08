@@ -1099,3 +1099,31 @@ test('Android native whitelist failure remains fail-closed instead of falling ba
  assert.equal(a.run('approvalMarker'),'');
  assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,0);
 });
+
+test('optional partial-channel retry auth timeout keeps 17 freshly approved prepared cards',async()=>{
+  const C='UCV6xoqUxJzkWwCbDmEwMSYw',channel='https://www.youtube.com/channel/'+C;
+  const vids=Array.from({length:17},(_,i)=>id(i+1)),now=new Date().toISOString();
+  const list=vids.slice(0,2).map(v=>'https://www.youtube.com/watch?v='+v).concat(channel).join('\n')+'\n';
+  const catalog={version:3,updatedAt:'stable',entries:[
+    ...vids.slice(0,2).map(v=>({approval_url:'https://www.youtube.com/watch?v='+v,kind:'video',item_id:v,title:'מוכן',checked_at:now})),
+    {approval_url:channel,kind:'channel',item_id:C,title:'ערוץ מוכן',checked_at:now,pages_loaded:1,complete:false,
+      page:vids.slice(2).map(v=>({id:v,videoId:v,authorId:C,channelId:C,title:'מוכן'}))}
+  ]};
+  let authCalls=0;
+  const a=await app(list,()=>{throw Error('UPSTREAM_BLOCKED')},new Map(),{
+    nativeMode:true,timerCap:20,sharedCatalog:catalog,
+    nativeFetchAuthorization:async()=>{
+      authCalls++;
+      if(authCalls===1)return {list,version:3,updatedAt:'stable',catalogVersion:1};
+      throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'});
+    }
+  });
+  assert.equal(a.run('displayed.size'),17);
+  assert.equal(a.run('pendingChannelRetry.has('+JSON.stringify(C)+')'),true);
+  const generation=a.run('authorizationGeneration');
+  await a.run('retryCatalogContents()');
+  assert.equal(a.run('displayed.size'),17);
+  assert.equal(a.run('authorizationGeneration'),generation);
+  assert.notEqual(a.run('approvalMarker'),'');
+  assert.doesNotMatch(a.elements['status-text'].textContent,/לא הצלחנו לאמת כרגע/);
+});
