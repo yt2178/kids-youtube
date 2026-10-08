@@ -535,12 +535,12 @@ async function resolveLink(entry, savedRecord) {
   const image = images.find(item => item && item.width >= 128 && safeChannelImage(item.url)) || images.find(item => item && safeChannelImage(item.url));
   return {kind:'channel',id,name:cleanTitle(data.author),thumbnail:image ? safeChannelImage(image.url) : '',verifiedAt:Date.now()};
 }
-async function channelPage(channelId, continuation, deadline) {
+async function channelPage(channelId, continuation, deadline, force = false) {
   let path = '/api/v1/channels/' + channelId + '/videos';
   if (continuation) path += '?continuation=' + encodeURIComponent(continuation);
-  return providers.request(path,{ttl:SETTINGS.channelTTL,timeoutMs:Math.min(SETTINGS.requestTimeoutMs, Math.max(1,deadline-Date.now())),validate:data => !!data && Array.isArray(data.videos) && (data.continuation == null || (typeof data.continuation === 'string' && data.continuation.length < 20000))});
+  return providers.request(path,{force,ttl:SETTINGS.channelTTL,timeoutMs:Math.min(SETTINGS.requestTimeoutMs, Math.max(1,deadline-Date.now())),validate:data => !!data && Array.isArray(data.videos) && (data.continuation == null || (typeof data.continuation === 'string' && data.continuation.length < 20000))});
 }
-async function loadChannel(channel, pagesToLoad = 1) {
+async function loadChannel(channel, pagesToLoad = 1, force = false) {
   const progress = channelProgress.get(channel.id) || {continuation:null,pages:0,tokens:new Set(),videos:[],complete:false};
   if (progress.complete) return {videos:progress.videos,complete:true,limited:false,failed:false};
   const deadline = Date.now() + SETTINGS.channelBudgetMs;
@@ -549,7 +549,7 @@ async function loadChannel(channel, pagesToLoad = 1) {
   let failed = false;
   for (let page = 0; page < pagesToLoad && progress.pages < SETTINGS.maxPagesPerChannel; page++) {
     try {
-      const data = await channelPage(channel.id,progress.continuation,deadline);
+      const data = await channelPage(channel.id,progress.continuation,deadline,force);
       if(!providers.isNetworkData(data))catalogMetrics.channelCacheHits++;
       progress.pages++;
       if (providers.isNetworkData(data)) channelDates[channel.id]=Date.now();
@@ -620,12 +620,12 @@ function scheduleCatalogRetry(){
     catalogRetryTimer=null;
     if(document.hidden||playback||loading||paginationBusy||navigator.onLine===false)return;
     catalogMetrics.retries++;
-    loadApp();
+    loadApp({forceCatalog:true});
   },delay);
   // Tests running with Node timers must not be held open by a browser retry.
   if(catalogRetryTimer&&typeof catalogRetryTimer.unref==='function')catalogRetryTimer.unref();
 }
-async function loadApp() {
+async function loadApp({forceCatalog=false}={}) {
   if (loading || paginationBusy || !ui.player.hidden) return;
   clearTimeout(catalogRetryTimer);catalogRetryTimer=null;
   const startedAt=Date.now();catalogMetrics.startedAt=startedAt;
@@ -703,14 +703,14 @@ async function loadApp() {
       render(config,lists);
     }
     catalogMetrics.metadataMs=Date.now()-metadataStarted;
-    const restoredChannels=restoreChannelProgress(config,lists,previous);
+    const restoredChannels=forceCatalog?0:restoreChannelProgress(config,lists,previous);
     catalogMetrics.channelCacheHits+=restoredChannels;
     const channelsStarted=Date.now();
     let finished = 0, failures = 0, limited = 0;
     if (config.channels.length) status('טוענים את הסרטונים מהערוצים…', true);
     await parallelMap(config.channels, async channel => {
       const restored=channelProgress.get(channel.id);
-      const result=restored ? {videos:restored.videos,complete:restored.complete,limited:!!restored.continuation,failed:false} : await loadChannel(channel);
+      const result=restored ? {videos:restored.videos,complete:restored.complete,limited:!!restored.continuation,failed:false} : await loadChannel(channel,1,forceCatalog);
       if(!stillAuthorized())return;
       if (result.failed) failures++;
       if (result.limited) limited++;
