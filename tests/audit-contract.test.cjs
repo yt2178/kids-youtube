@@ -51,5 +51,13 @@ test('parent UI keeps official YouTube iframe, exact requested label and no exte
 test('cache-bust version and service-worker shell version are audited together',()=>{
   const appVersion=(html.match(/app\.js\?v=([^"']+)/)||[])[1];
   assert.ok(appVersion);assert.match(sw,new RegExp("app\\.js\\?v="+appVersion.replace(/[.*+?^$()|[\]\\]/g,'\\$&')));
-  assert.match(sw,/SHELL_CACHE = CACHE_PREFIX \+ 'v19'/);
+  assert.match(sw,/SHELL_CACHE = CACHE_PREFIX \+ 'v20'/);
+});
+
+
+test('legacy videos.txt is not deployed or packaged as an authorization fallback',()=>{
+  const pages=read('.github/workflows/pages.yml'),androidReadme=read('android/README.md');
+  assert.doesNotMatch(pages,/cp[^\n]*videos\.txt/);
+  assert.doesNotMatch(app,/fetch[^\n]*videos\.txt/);assert.doesNotMatch(sw,/videos\.txt/);
+  assert.match(androidReadme,/אינו מקור ההרשאה הפעיל/);
 });
