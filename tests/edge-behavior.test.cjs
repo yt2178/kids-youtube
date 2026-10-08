@@ -264,3 +264,28 @@ test('prepared legacy UC page falls back to a bounded YouTube channel feed when 
   const removed=await f.request('catalog',{method:'GET'});
   assert.equal(removed.data.entries.length,0);
 });
+
+test('cold catalog read prepares one approved empty channel from bounded feed and never grants revoked entries',async()=>{
+  const handle='https://www.youtube.com/@meirshows',channel='UCV6xoqUxJzkWwCbDmEwMSYw';
+  let feedCount=0;
+  const feed='<feed><title>ערוץ מאיר</title><yt:channelId>'+channel+'</yt:channelId>'+
+    '<entry><yt:videoId>mVTlbvQ_010</yt:videoId><title>שם מוכן</title>'+
+    '<published>2026-10-01T11:00:00Z</published></entry></feed>';
+  const f=await createFixture({upstream:async url=>{
+    if(url.pathname==='/feeds/videos.xml'){feedCount++;return new Response(feed,{status:200});}
+    return new Response('',{status:503});
+  }});
+  f.db.list_text=handle+'\n';
+  f.catalog.set(handle,{approval_url:handle,kind:'channel',item_id:channel,title:'ערוץ מאיר',
+    thumbnail:'',published:0,channel_id:channel,page:[],pages_loaded:0,continuation:null,
+    complete:false,updated_at:'2026-10-07T10:00:00Z',checked_at:'2026-10-07T10:00:00Z'});
+  const first=await f.request('catalog',{method:'GET'});
+  assert.equal(first.status,200);assert.equal(first.data.entries[0].page.length,1);
+  assert.equal(first.data.entries[0].page[0].authorId,channel);
+  assert.equal(feedCount,1);
+  const again=await f.request('catalog',{method:'GET'});
+  assert.equal(again.data.entries[0].page.length,1);assert.equal(feedCount,1);
+  f.db.list_text='';
+  const after=await f.request('catalog',{method:'GET'});
+  assert.equal(after.data.entries.length,0);
+});
