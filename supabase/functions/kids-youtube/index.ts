@@ -275,7 +275,7 @@ Deno.serve(async(req)=>{
       if(!await auth(req,s))return json({error:"UNAUTHORIZED"},401,origin);
       return proxyProvider(url.searchParams.get("target")||"",origin);
     }
-    if(req.method==="GET"&&action==="list"){ if(url.searchParams.get("format")==="text") return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}}); return json({list:s.list_text,updatedAt:s.updated_at,setupRequired:!s.password_hash},200,origin); }
+    if(req.method==="GET"&&action==="list"){ if(url.searchParams.get("format")==="text") return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}}); return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,setupRequired:!s.password_hash},200,origin); }
     if(req.method!=="POST")return json({error:"METHOD"},405,origin);
     const declared=Number(req.headers.get("content-length")||0);
     if(Number.isFinite(declared)&&declared>MAX_BODY_BYTES)return json({error:"TOO_LARGE"},413,origin);
@@ -307,12 +307,13 @@ Deno.serve(async(req)=>{
     if(action==="replace"){
       if(!await auth(req,s))return json({error:"UNAUTHORIZED"},401,origin);
       let replacement:string; try{replacement=validateList(body.list);}catch{return json({error:"INVALID_LIST"},400,origin);}
-      for(let i=0;i<3;i++){
-        const fresh=i?await state():s;
-        if(replacement===fresh.list_text)return json({ok:true,changed:false,list:fresh.list_text},200,origin);
-        if(await patch(fresh.version,{list_text:replacement}))return json({ok:true,changed:true,list:replacement},200,origin);
-      }
-      return json({error:"CONFLICT"},409,origin);
+      // Whole-list replacement is NOT automatically rebased onto a newer state.
+      // Its caller must have fetched precisely the version it is replacing.
+      if(!Number.isSafeInteger(body.expectedVersion)||body.expectedVersion<0)return json({error:"EXPECTED_VERSION_REQUIRED"},400,origin);
+      if(body.expectedVersion!==s.version)return json({error:"CONFLICT",version:s.version},409,origin);
+      if(replacement===s.list_text)return json({ok:true,changed:false,list:s.list_text,version:s.version},200,origin);
+      if(!await patch(s.version,{list_text:replacement}))return json({error:"CONFLICT"},409,origin);
+      return json({ok:true,changed:true,list:replacement,version:s.version+1},200,origin);
     }
     if(action==="mutate"){
       if(!await auth(req,s))return json({error:"UNAUTHORIZED"},401,origin);
@@ -321,8 +322,8 @@ Deno.serve(async(req)=>{
       let url2:string;try{url2=share(body.link||"");}catch{return json({error:"INVALID_LINK"},400,origin);}
       for(let i=0;i<3;i++){
         const fresh=i?await state():s; const updated=edit(fresh.list_text,op,url2,note);
-        if(updated===fresh.list_text)return json({ok:true,changed:false,list:fresh.list_text},200,origin);
-        if(await patch(fresh.version,{list_text:updated}))return json({ok:true,changed:true,list:updated},200,origin);
+        if(updated===fresh.list_text)return json({ok:true,changed:false,list:fresh.list_text,version:fresh.version},200,origin);
+        if(await patch(fresh.version,{list_text:updated}))return json({ok:true,changed:true,list:updated,version:fresh.version+1},200,origin);
       }
       return json({error:"CONFLICT"},409,origin);
     }
