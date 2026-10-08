@@ -29,13 +29,13 @@ test('native CSP allows only the production Kids Supabase origin for connections
   const {prepare}=require('../android/prepare-assets.cjs'),out=fs.mkdtempSync(path.join(os.tmpdir(),'kids-csp-'));
   try{
     const {html}=prepare(out);
-    const metas=[...html.matchAll(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/g)];
+    const metas=[...html.matchAll(/<meta id="app-csp" http-equiv="Content-Security-Policy" content="([^"]+)">/g)];
     assert.equal(metas.length,1);
     const csp=metas[0][1];
     assert.match(csp,/connect-src 'self' https:\/\/jxhelpxhrmwvzrrfrjuh\.supabase\.co(?:;|$)/);
     assert.doesNotMatch(csp,/connect-src[^;]*\*/);
     assert.doesNotMatch(csp,/connect-src[^;]*https:\/\/[^ ;]*supabase\.co[^ ;]*\*/);
-    assert.doesNotMatch(csp,/unsafe-eval/);
+    assert.doesNotMatch(csp,/unsafe-eval/);assert.doesNotMatch(csp,/invidious|chocolatemoo/);assert.match(csp,/media-src 'none'/);assert.match(csp,/worker-src 'none'/);
   }finally{fs.rmSync(out,{recursive:true,force:true});}
 });
 test('native WebView allows only the exact Kids Supabase function as a remote API request',()=>{
