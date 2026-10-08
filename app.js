@@ -91,7 +91,7 @@ let authorizationGeneration = 0;
 let pendingOnlineRefresh = false;
 let catalogRetryTimer = null;
 let catalogRetryAttempts = 0;
-const catalogMetrics = {startedAt:0,authorizationMs:0,metadataMs:0,channelsMs:0,requests:0,providerCalls:0,renderCalls:0,displayCacheHits:0,channelCacheHits:0,retries:0};
+const catalogMetrics = {startedAt:0,authorizationMs:0,metadataMs:0,channelsMs:0,firstUsefulMs:0,completedMs:0,requests:0,providerCalls:0,renderCalls:0,displayCacheHits:0,channelCacheHits:0,retries:0};
 const savedView = storageGet(VIEW_KEY);
 let viewStyle = savedView === 'list' ? 'list' : 'grid';
 function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
@@ -295,6 +295,8 @@ function render(config, lists) {
   const focus = document.activeElement;
   const focusId = focus && (focus.dataset.videoId || focus.dataset.channelId);
   displayed = mergeVideos(config, lists);
+  if(catalogMetrics.startedAt && !catalogMetrics.firstUsefulMs && displayed.size>0)
+    catalogMetrics.firstUsefulMs=Date.now()-catalogMetrics.startedAt;
   const manualIds = new Set(config.videos.map(v=>v.id));
   const approvedChannelIds = new Set(config.channels.map(c=>c.id));
   const isChannels = viewMode === 'channels' && !selectedChannelId;
@@ -631,7 +633,7 @@ async function loadApp({forceCatalog=false}={}) {
   const startedAt=Date.now();catalogMetrics.startedAt=startedAt;
   catalogMetrics.requests=0;catalogMetrics.providerCalls=0;catalogMetrics.renderCalls=0;
   catalogMetrics.displayCacheHits=0;catalogMetrics.channelCacheHits=0;
-  catalogMetrics.authorizationMs=0;catalogMetrics.metadataMs=0;catalogMetrics.channelsMs=0;
+  catalogMetrics.authorizationMs=0;catalogMetrics.metadataMs=0;catalogMetrics.channelsMs=0;catalogMetrics.firstUsefulMs=0;catalogMetrics.completedMs=0;
   loadError=false;
   channelProgress.clear(); verifiedChannelVideos.clear();
   loading = true; lastLoad = Date.now();
@@ -743,6 +745,7 @@ async function loadApp({forceCatalog=false}={}) {
     saveSnapshot({videos:[], channels:[]}, {});
     status('');scheduleCatalogRetry();
   } finally {
+    catalogMetrics.completedMs=Date.now()-startedAt;
     loading = false; ui.grid.removeAttribute('aria-busy');
     if(stillAuthorized())render(activeConfig, activeLists);
     if(pendingOnlineRefresh&&navigator.onLine!==false){pendingOnlineRefresh=false;loadApp();}
