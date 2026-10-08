@@ -1279,7 +1279,7 @@ document.addEventListener('visibilitychange', () => {
   if(document.hidden||navigator.onLine===false)return;
   if(catalogRetryPending&&!loading&&!paginationBusy&&!playback){
     catalogRetryPending=false;catalogMetrics.retries++;
-    if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true});
+    if(approvalMarker&&displayed.size)retryCatalogContents();else loadApp({forceCatalog:true,trigger:'foreground-deferred-retry'});
     return;
   }
   if(Date.now()-lastLoad>SETTINGS.refreshOnReturnMs){loadApp({trigger:'foreground-stale'});return;}
