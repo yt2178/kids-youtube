@@ -956,7 +956,10 @@ test('device startup list timeout retries successfully into 17 server-prepared a
   let authCalls=0;
   const a=await app(list,()=>{throw Error('Channel page should be deferred when prepared')},new Map(),{
     nativeMode:true,sharedCatalog:catalog,timerCap:8,
-    listFetch:()=>++authCalls===1?new Promise(()=>{}):json({list,version:3,updatedAt:'stable',catalogVersion:1})
+    nativeFetchAuthorization:async()=>{
+      if(++authCalls===1)throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'});
+      return {list,version:3,updatedAt:'stable',catalogVersion:1,preparedCatalog:catalog};
+    }
   });
   await until(()=>a.run('displayed.size')===17);
   assert.equal(authCalls>=2,true);
@@ -1082,7 +1085,12 @@ test('debug request trace identifies list timeout source and later authorization
 test('Android first load and periodic verification share the native authoritative transport, not WebView HTTP',async()=>{
  const list='https://www.youtube.com/watch?v='+id(1)+'\n';
  const calls=[];
- const doc={list,version:3,updatedAt:'2026-10-08T16:28:30Z',catalogVersion:1};
+ const doc={list,version:3,updatedAt:'2026-10-08T16:28:30Z',catalogVersion:1,preparedCatalog:{
+    version:3,updatedAt:'2026-10-08T16:28:30Z',entries:[{
+      approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',
+      item_id:id(1),title:'שם מהשרת',checked_at:new Date().toISOString()
+    }]
+  }};
  const a=await app(list,()=>json({videoId:id(1),title:'מוכן',authorId:A}),new Map(),{
    nativeMode:true,
    nativeFetchAuthorization:async()=>{calls.push('native-authorization');return doc;},
@@ -1126,7 +1134,7 @@ test('optional partial-channel retry auth timeout keeps 17 freshly approved prep
     nativeMode:true,timerCap:20,sharedCatalog:catalog,
     nativeFetchAuthorization:async()=>{
       authCalls++;
-      if(authCalls===1)return {list,version:3,updatedAt:'stable',catalogVersion:1};
+      if(authCalls===1)return {list,version:3,updatedAt:'stable',catalogVersion:1,preparedCatalog:catalog};
       throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'});
     }
   });
@@ -1236,7 +1244,8 @@ test('bundled old-version catalog is never authorization; metadata failure canno
 test('slow optional content completion shows spinner only while active and stops on completion',async()=>{
  const list='https://www.youtube.com/channel/'+A+'\n';
  let complete,attempt=0;
- const a=await app(list,()=>{
+ const a=await app(list,url=>{
+   if(url.endsWith('/api/v1/channels/'+A))return json({author:'Channel',authorId:A,authorThumbnails:[]});
    attempt++;
    return attempt===1?json({videos:[row(1)],continuation:'next'}):new Promise(resolve=>complete=resolve);
  },new Map(),{timerCap:12});
