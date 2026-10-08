@@ -31,6 +31,10 @@ public final class MainActivity extends Activity {
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ThreadPoolExecutor workers=new ThreadPoolExecutor(3,3,0,TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(32),new ThreadPoolExecutor.AbortPolicy());
+    // A blocked extractor must not exhaust the execution slots for parent
+    // authorization. Keep this separate, bounded and cancellable.
+    private final ThreadPoolExecutor authorizationWorkers=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(8),new ThreadPoolExecutor.AbortPolicy());
     private final Map<String,Task> tasks=new HashMap<>();
     private WebView web;
     private NativeApi api;
@@ -283,7 +287,10 @@ public final class MainActivity extends Activity {
                 return null;
             });
             tasks.put(id,task);
-            try{workers.execute(task);}catch(RejectedExecutionException e){
+            try{
+                (method.equals("authorization")||method.equals("whitelist")?
+                    authorizationWorkers:workers).execute(task);
+            }catch(RejectedExecutionException e){
                 tasks.remove(id);task.abort();respond(reply,id,null,"BUSY");
             }
         }catch(JSONException ignored){ /* Malformed bridge input never grants access. */ }
@@ -502,7 +509,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onDestroy(){
         destroyed=true;closePlayer();
-        for(Task task:tasks.values())task.abort();tasks.clear();workers.shutdownNow();api.cancelAll();
+        for(Task task:tasks.values())task.abort();tasks.clear();workers.shutdownNow();authorizationWorkers.shutdownNow();api.cancelAll();
         if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
             WebViewCompat.removeWebMessageListener(web,"KidsAndroid");
         // Chromium requires detaching a WebView from its parent before destroy().
