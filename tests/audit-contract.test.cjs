@@ -56,7 +56,7 @@ test('parent UI keeps official YouTube iframe, exact requested label and no exte
 test('cache-bust version and service-worker shell version are audited together',()=>{
   const appVersion=(html.match(/app\.js\?v=([^"']+)/)||[])[1];
   assert.ok(appVersion);assert.match(sw,new RegExp("app\\.js\\?v="+appVersion.replace(/[.*+?^$()|[\]\\]/g,'\\$&')));
-  assert.match(sw,/SHELL_CACHE = CACHE_PREFIX \+ 'v21'/);
+  assert.match(sw,/SHELL_CACHE = CACHE_PREFIX \+ 'v22'/);
 });
 
 
