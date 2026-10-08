@@ -21,6 +21,7 @@ android {
         resValue 'string','kids_backend_url',kidsBackend
         resValue 'string','kids_app_label',kidsStaging ? 'סרטונים לילדים — בדיקה' : 'סרטונים לילדים'
         manifestPlaceholders = [kidsDeepLinkScheme: kidsStaging ? 'kidsyoutube-staging' : 'kidsyoutube']
+        resValue 'string','kids_deep_link_scheme',kidsStaging ? 'kidsyoutube-staging' : 'kidsyoutube'
         def candidateSha=System.getenv('KIDS_BUILD_SHA') ?: 'local'
         resValue 'string','kids_build_sha',(candidateSha ==~ /[a-f0-9]{40}/ ? candidateSha : 'local')
     }
