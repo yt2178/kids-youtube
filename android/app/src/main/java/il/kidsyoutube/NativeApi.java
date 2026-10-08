@@ -16,7 +16,7 @@ import org.schabi.newpipe.extractor.stream.*;
 
 /** Local equivalent of the existing UI's small Invidious metadata contract. */
 final class NativeApi {
-    static final String LIST_URL="https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list&format=text";
+    private final String listUrl;
     static final long LIST_TTL=30000, META_TTL=6*60*60*1000, CHANNEL_TTL=5*60*1000;
     final ExtractorDownloader downloader=new ExtractorDownloader();
     private volatile ApprovalPolicy policy=ApprovalPolicy.parse("");
@@ -31,6 +31,7 @@ final class NativeApi {
     NativeApi(Context context) {
         // Do not initialize NewPipe on Activity.onCreate's UI thread.
         debugBuild=(context.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0;
+        listUrl=context.getString(R.string.kids_list_url);
     }
     private synchronized void ensureExtractor() {
         if(extractorReady)return;
@@ -62,7 +63,7 @@ final class NativeApi {
     synchronized String whitelist(boolean force) throws Exception {
         if(!force && checkedAt>0 && System.currentTimeMillis()-checkedAt<LIST_TTL)return raw;
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
-        okhttp3.Request request=new okhttp3.Request.Builder().url(LIST_URL)
+        okhttp3.Request request=new okhttp3.Request.Builder().url(listUrl)
                 .header("Cache-Control","no-cache").build();
         Call call=downloader.client.newCall(request);
         if(scope!=null)scope.add(call);
