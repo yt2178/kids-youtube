@@ -246,7 +246,7 @@ test('native authoritative list binds server-pinned legacy channel only to curre
 });
 test('prepared legacy UC page falls back to a bounded YouTube channel feed when Invidious is unavailable',async()=>{
   const handle='https://www.youtube.com/@meirshows',channel='UCV6xoqUxJzkWwCbDmEwMSYw';
-  const feed='<?xml version="1.0"?><feed><title>ערוץ מאיר</title><yt:channelId>'+channel+
+  const feed='<?xml version="1.0"?><feed><title>ערוץ מאיר</title><yt:channelId>'+channel.slice(2)+
     '</yt:channelId><entry><yt:videoId>mVTlbvQ_010</yt:videoId><title>ילד טרמפולינה</title>'+
     '<published>2026-10-01T12:00:00Z</published></entry></feed>';
   const f=await createFixture({upstream:async url=>{
@@ -263,6 +263,20 @@ test('prepared legacy UC page falls back to a bounded YouTube channel feed when 
   f.db.list_text='';
   const removed=await f.request('catalog',{method:'GET'});
   assert.equal(removed.data.entries.length,0);
+});
+
+test('RSS feed from a different UC identity is rejected even if it offers valid-looking videos',async()=>{
+  const handle='https://www.youtube.com/@meirshows',channel='UCV6xoqUxJzkWwCbDmEwMSYw';
+  const feed='<feed><title>זר</title><yt:channelId>V6xoqUxJzkWwCbDmEwMSYz</yt:channelId>'+
+    '<entry><yt:videoId>mVTlbvQ_010</yt:videoId><title>לא מאושר</title></entry></feed>';
+  const f=await createFixture({upstream:async url=>
+    url.pathname==='/feeds/videos.xml'?new Response(feed,{status:200}):new Response('',{status:503})
+  });
+  f.db.list_text=handle+'\\n';
+  f.catalog.set(handle,{approval_url:handle,kind:'channel',item_id:channel,page:[],pages_loaded:0,complete:false,checked_at:new Date().toISOString()});
+  const result=await f.request('prepare',{token:f.token,body:{link:handle}});
+  assert.equal(result.data.prepared,false);
+  assert.equal(f.catalog.get(handle).page.length,0);
 });
 
 test('cold catalog read prepares one approved empty channel from bounded feed and never grants revoked entries',async()=>{
