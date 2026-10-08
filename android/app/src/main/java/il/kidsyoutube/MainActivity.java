@@ -123,7 +123,7 @@ public final class MainActivity extends Activity {
         if(data==null || !getString(R.string.kids_deep_link_scheme).equals(data.getScheme()) || !"video".equals(data.getHost()))return;
         List<String> parts=data.getPathSegments();
         String id=parts.size()==1?parts.get(0):"";
-        if(ApprovalPolicy.VIDEO.matcher(id).matches())openPlayer(id);
+        if(ApprovalPolicy.VIDEO.matcher(id).matches())openPlayer(id,"טוענים את פרטי הסרטון…");
     }
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
     private TextView text(String value){TextView v=new TextView(this);v.setTextColor(Color.WHITE);v.setTextSize(20);v.setText(value);v.setPadding(dp(12),dp(8),dp(12),dp(8));return v;}
@@ -204,9 +204,12 @@ public final class MainActivity extends Activity {
             }
             if(tasks.containsKey(id)){respond(reply,id,null,"INVALID_REQUEST");return;}
             if(method.equals("play")) {
-                String video=data.getString("argument");
+                JSONObject arg=data.optJSONObject("argument");
+                String video=arg==null?data.optString("argument",""):arg.optString("id","");
+                String videoTitle=arg==null?"":arg.optString("title","");
                 if(!ApprovalPolicy.VIDEO.matcher(video).matches()){respond(reply,id,null,"INVALID_REQUEST");return;}
-                openPlayer(video);respond(reply,id,Boolean.TRUE,null);return;
+                // The title is display-only. NativeApi independently validates the id.
+                openPlayer(video,videoTitle);respond(reply,id,Boolean.TRUE,null);return;
             }
             if(!Set.of("whitelist","api","clear").contains(method)){
                 respond(reply,id,null,"INVALID_REQUEST");return;
@@ -241,29 +244,47 @@ public final class MainActivity extends Activity {
             }catch(JSONException ignored){}
         });
     }
-    private void openPlayer(String id) {
+    private void logPlayback(long generation,String stage,Throwable failure){
+        if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)==0)return;
+        String detail=failure==null?"":(" type="+failure.getClass().getSimpleName()+
+            " cause="+(failure.getCause()==null?"none":failure.getCause().getClass().getSimpleName())+
+            " category="+NativeApi.errorCode(failure));
+        android.util.Log.d("KidsPlayback","request="+generation+" stage="+stage+detail);
+    }
+    private void openPlayer(String id,String displayTitle) {
         android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
         if(keyboard!=null)keyboard.hideSoftInputFromWindow(web.getWindowToken(),0);
         long generation=++playerGeneration;
         if(playTask!=null)playTask.abort();
         stopMedia();
-        active=new NativeApi.Playback(id,"הסרטון שלנו",List.of());
+        String initialTitle=displayTitle!=null&&!displayTitle.trim().isEmpty()
+            ? displayTitle.trim().substring(0,Math.min(200,displayTitle.trim().length()))
+            : "טוענים את פרטי הסרטון…";
+        active=new NativeApi.Playback(id,initialTitle,List.of());
+        logPlayback(generation,"request",null);
         sourceIndex=0;resumeAt=0;
         overlay.setVisibility(View.VISIBLE);web.setVisibility(View.INVISIBLE);
-        title.setText("הסרטון שלנו");showLoading(true);showMessage("מתחבר...");retry.setVisibility(View.GONE);
+        title.setText(initialTitle);showLoading(true);showMessage("מתחבר...");retry.setVisibility(View.GONE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         RequestScope scope=new RequestScope(20000);
         playTask=new Task("player",scope,()->{
             scope.enter();
             try {
+                logPlayback(generation,"fresh-auth-and-extraction-start",null);
                 NativeApi.Playback result=api.playback(id);scope.check();
+                logPlayback(generation,"extraction-success sources="+result.sources.size(),null);
                 handler.post(()->{
                     if(destroyed || generation!=playerGeneration || scope.cancelled)return;
-                    active=result;title.setText(result.title);trySource(generation);
+                    active=result;
+                    if(result.title!=null&&!result.title.isBlank()&&!result.title.equals("סרטון מאושר"))
+                        title.setText(result.title);
+                    trySource(generation);
                 });
             }catch(Exception e){
+                logPlayback(generation,"extraction-failed",e);
                 api.recordFailure(e);
-                handler.post(()->{if(!destroyed && generation==playerGeneration)unavailable();});
+                final String code=NativeApi.errorCode(e);
+                handler.post(()->{if(!destroyed && generation==playerGeneration)unavailable(code);});
             }finally {
                 // Do not mark a completed task "cancelled": its posted result still
                 // has to pass the generation guard on the UI thread.
@@ -318,6 +339,7 @@ public final class MainActivity extends Activity {
         if(sourceIndex>=active.sources.size()){unavailable();return;}
         showLoading(true);showMessage(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
         NativeApi.Source source=active.sources.get(sourceIndex++);
+        logPlayback(generation,"media-source-"+sourceIndex+" of "+active.sources.size(),null);
         OkHttpClient mediaClient=mediaClient(api.downloader.client);
         OkHttpDataSource.Factory dataSource=new OkHttpDataSource.Factory(mediaClient);
         ProgressiveMediaSource.Factory factory=new ProgressiveMediaSource.Factory(dataSource)
@@ -335,8 +357,11 @@ public final class MainActivity extends Activity {
                 if(failed || generation!=playerGeneration || player!=attempt)return;
                 failed=true;resumeAt=Math.max(resumeAt,attempt.getCurrentPosition());
                 String code=NativeApi.errorCode(error);
+                logPlayback(generation,error instanceof PlaybackException
+                    ? "media3-error-code-"+((PlaybackException)error).errorCode
+                    : "media-source-failed",error);
                 if(code.equals("UPSTREAM_BLOCKED") || code.equals("RATE_LIMITED")){
-                    api.recordFailure(error);unavailable();
+                    api.recordFailure(error);unavailable(code);
                 }else trySource(generation);
             }
             @Override public void onPlayerError(PlaybackException error){advance(error);}
@@ -368,8 +393,16 @@ public final class MainActivity extends Activity {
         cancelPlayerTimeout();
         if(player!=null){playerView.setPlayer(null);player.stop();player.release();player=null;}
     }
-    private void unavailable(){
-        stopMedia();showLoading(false);showMessage("לא הצלחנו להפעיל את הסרטון כרגע. נסו שוב בעוד רגע.");
+    private void unavailable(){unavailable("VIDEO_UNAVAILABLE");}
+    private void unavailable(String code){
+        stopMedia();showLoading(false);
+        String reason="לא הצלחנו להפעיל את הסרטון. אפשר לנסות שוב.";
+        if("NOT_APPROVED".equals(code))reason="הסרטון כבר אינו מאושר לצפייה.";
+        else if("NO_SUPPORTED_STREAM".equals(code))reason="לא נמצא מקור וידאו וקול מתאים לסרטון הזה.";
+        else if("UPSTREAM_BLOCKED".equals(code))reason="YouTube חסם את בקשת הניגון. נסו שוב מאוחר יותר.";
+        else if("RATE_LIMITED".equals(code))reason="שירות הסרטונים הגביל בקשות. נסו שוב מאוחר יותר.";
+        else if("TIMEOUT".equals(code))reason="הטעינה ארכה יותר מדי זמן. בדקו את החיבור ונסו שוב.";
+        showMessage(reason);
         retry.setVisibility(View.VISIBLE);getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     private void closePlayer(){
