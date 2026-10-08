@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import okhttp3.*;
 import org.json.*;
 import org.schabi.newpipe.extractor.*;
@@ -28,6 +29,10 @@ final class NativeApi {
     private final Map<String,Cursor> cursors=new ConcurrentHashMap<>();
     private volatile long cooldownUntil;
     private volatile boolean extractorReady;
+    private final Object extractorInitLock=new Object();
+    // A completed older request must never replace an authorization request
+    // started later (including when a cancelled request finishes late).
+    private final AtomicLong authorizationGeneration=new AtomicLong();
     private final boolean debugBuild;
     NativeApi(Context context) {
         // Do not initialize NewPipe on Activity.onCreate's UI thread.
@@ -35,14 +40,17 @@ final class NativeApi {
         downloader=new ExtractorDownloader(debugBuild);
         listUrl=context.getString(R.string.kids_list_url);
     }
-    private synchronized void ensureExtractor() {
+    private void ensureExtractor() {
         if(extractorReady)return;
-        long started=android.os.SystemClock.elapsedRealtime();
-        NewPipe.init(downloader);
-        extractorReady=true;
-        if(debugBuild)
-            android.util.Log.d("KidsStartup","newpipe-init-worker-ms="+
-                    (android.os.SystemClock.elapsedRealtime()-started));
+        synchronized(extractorInitLock){
+            if(extractorReady)return;
+            long started=android.os.SystemClock.elapsedRealtime();
+            NewPipe.init(downloader);
+            extractorReady=true;
+            if(debugBuild)
+                android.util.Log.d("KidsStartup","newpipe-init-worker-ms="+
+                        (android.os.SystemClock.elapsedRealtime()-started));
+        }
     }
     private static final class Alias {
         final String id;final long expires;
@@ -62,9 +70,15 @@ final class NativeApi {
             this.channel=channel;this.authority=authority;this.tabs=tabs;this.tab=tab;this.page=page;
         }
     }
-    synchronized String whitelist(boolean force) throws Exception {
-        if(!force && checkedAt>0 && System.currentTimeMillis()-checkedAt<LIST_TTL)return raw;
+    String whitelist(boolean force) throws Exception {
+        // Only state reads and commits hold this monitor. TCP/TLS, response
+        // headers and body must never hold the shared authorization lock.
+        synchronized(this){
+            if(!force && checkedAt>0 && System.currentTimeMillis()-checkedAt<LIST_TTL)
+                return raw;
+        }
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
+        final long generation=authorizationGeneration.incrementAndGet();
         okhttp3.Request request=new okhttp3.Request.Builder().url(listUrl)
                 .header("Cache-Control","no-cache").tag(String.class,"authorization").build();
         Call call=downloader.client.newCall(request);
@@ -75,7 +89,8 @@ final class NativeApi {
             JSONObject doc;
             try{doc=new JSONObject(responseBody);}catch(JSONException e){throw new IOException("INVALID_AUTH_RESPONSE",e);}
             String text=doc.optString("list","");
-            if(!doc.has("list")||!doc.has("version")||text.length()>1000000)throw new IOException("INVALID_AUTH_RESPONSE");
+            if(!doc.has("list")||!doc.has("version")||text.length()>1000000)
+                throw new IOException("INVALID_AUTH_RESPONSE");
             ApprovalPolicy next=ApprovalPolicy.parse(text);
             Map<String,Alias> pinned=new HashMap<>();
             JSONArray pins=doc.optJSONArray("pinnedChannels");
@@ -85,10 +100,19 @@ final class NativeApi {
                 if(next.channelUrls.contains(url)&&ApprovalPolicy.CHANNEL.matcher(id).matches())
                     pinned.put(url,new Alias(id));
             }
-            if(!next.fingerprint.equals(policy.fingerprint)){cache.clear();cursors.clear();}
-            aliases.clear();aliases.putAll(pinned);
-            raw=text;policy=next;lastAuthorization=doc;checkedAt=System.currentTimeMillis();
-            return text;
+            if(scope!=null)scope.check();
+            long entered=android.os.SystemClock.elapsedRealtime();
+            synchronized(this){
+                if(debugBuild&&scope!=null)scope.phase("authorization-state-lock-wait",
+                        android.os.SystemClock.elapsedRealtime()-entered);
+                if(scope!=null)scope.check();
+                if(generation!=authorizationGeneration.get())
+                    throw new IOException("AUTH_SUPERSEDED");
+                if(!next.fingerprint.equals(policy.fingerprint)){cache.clear();cursors.clear();}
+                aliases.clear();aliases.putAll(pinned);
+                raw=text;policy=next;lastAuthorization=doc;checkedAt=System.currentTimeMillis();
+                return text;
+            }
         } finally {if(scope!=null)scope.remove(call);}
     }
     String displayWhitelist() throws Exception {
@@ -133,24 +157,19 @@ final class NativeApi {
     }
 
     JSONObject tracedDisplayAuthorization() throws Exception {
-        RequestScope scope=RequestScope.CURRENT.get();
-        long started=android.os.SystemClock.elapsedRealtime();
-        synchronized(this){
-            if(debugBuild&&scope!=null)
-                scope.phase("authorization-lock-wait",
-                    android.os.SystemClock.elapsedRealtime()-started);
-            return displayAuthorization();
-        }
+        return displayAuthorization();
     }
-    synchronized JSONObject displayAuthorization() throws Exception {
-        // One native transport is authoritative for the WebView and the playback
-        // bridge. Never return a previous document after a failed fresh request.
+    JSONObject displayAuthorization() throws Exception {
+        // Fail closed on transport errors, then copy only a committed fresh
+        // document under a short state lock (never around network I/O).
         whitelist(true);
-        if(lastAuthorization==null || !lastAuthorization.has("updatedAt")
-                || !lastAuthorization.has("version")
-                || lastAuthorization.optInt("catalogVersion",-1)!=1)
-            throw new IOException("INVALID_AUTH_RESPONSE");
-        return new JSONObject(lastAuthorization.toString());
+        synchronized(this){
+            if(lastAuthorization==null || !lastAuthorization.has("updatedAt")
+                    || !lastAuthorization.has("version")
+                    || lastAuthorization.optInt("catalogVersion",-1)!=1)
+                throw new IOException("INVALID_AUTH_RESPONSE");
+            return new JSONObject(lastAuthorization.toString());
+        }
     }
     private void checkNetwork() throws IOException {
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
@@ -399,6 +418,11 @@ final class NativeApi {
         if(code.equals("UPSTREAM_BLOCKED"))cooldownUntil=System.currentTimeMillis()+15*60*1000;
         else if(code.equals("RATE_LIMITED"))cooldownUntil=System.currentTimeMillis()+2*60*1000;
     }
-    void clear() {cache.clear();cursors.clear();checkedAt=0; /* A block cooldown survives a cache clear. */ }
+    synchronized void clear() {
+        authorizationGeneration.incrementAndGet();
+        cache.clear();cursors.clear();aliases.clear();checkedAt=0;lastAuthorization=null;
+        raw="";policy=ApprovalPolicy.parse("");
+        // A block cooldown survives a cache clear.
+    }
     void cancelAll() {downloader.client.dispatcher().cancelAll();}
 }
