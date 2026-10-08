@@ -6,12 +6,19 @@ const A='https://www.youtube.com/watch?v=mVTlbvQ_010',B='https://www.youtube.com
 const hash=(pass,secret)=>createHash('sha256').update(secret+'\0'+pass).digest('base64url');
 async function createFixture({upstream,configured=true}={}){
  const db={list_text:A+'\n',password_hash:configured?hash('familyPassword!','secret123'):null,session_secret:'secret123',version:7,updated_at:'date'};
- let serve,patches=0,conflict=false;
+ let serve,patches=0,conflict=false;const catalog=new Map();
  async function fetcher(input,opts={}){
   const u=new URL(String(input));
   if(u.origin!=='https://test.supabase.co'){
     if(upstream)return upstream(u,opts);
     throw Error('Unexpected outbound fetch: '+u.href);
+  }
+  if(u.pathname.includes('/kids_youtube_catalog')){
+    if(opts.method==='POST'){
+      const row=JSON.parse(opts.body);catalog.set(row.approval_url,row);
+      return new Response('',{status:201});
+    }
+    return new Response(JSON.stringify([...catalog.values()]),{status:200});
   }
   if(opts.method==='PATCH'){
     patches++;const expected=Number(u.searchParams.get('version').slice(3));
@@ -33,7 +40,7 @@ async function createFixture({upstream,configured=true}={}){
    const res=await serve(req);return {status:res.status,data:await res.json(),headers:res.headers};
  }
  const token=(await request('login',{body:{password:'familyPassword!'}})).data.token;
- return {db,request,token,patches:()=>patches,conflict:flag=>conflict=flag};
+ return {db,catalog,request,token,patches:()=>patches,conflict:flag=>conflict=flag};
 }
 test('stale manual replace cannot overwrite another parent mutation',async()=>{
  const f=await createFixture(),original=await f.request('list',{method:'GET'});
@@ -159,4 +166,67 @@ test('runtime: body-read timeout is also bounded and returns 504',async()=>{
   }});
   const r=await f.request('provider',{method:'GET',token:f.token,query:{target:'https://invidious.f5.si/api/v1/videos/mVTlbvQ_010'}});
   assert.equal(r.status,200);assert.equal(r.headers.get('X-Kids-Provider-Status'),'504');
+});
+
+test('runtime: server-prepared metadata is shared with fresh clients but removed grants hide it',async()=>{
+  const f=await createFixture({upstream:async url=>{
+    if(url.hostname==='www.youtube.com'&&url.pathname==='/oembed')return new Response(JSON.stringify({title:'Real title',author_name:'Real author'}));
+    if(url.pathname.includes('/api/v1/videos/'))return new Response(JSON.stringify({
+      videoId:'AAAAAAAAAAA',title:'Prepared title',authorId:'UC'+'A'.repeat(22),published:1234567
+    }));
+    return new Response('unavailable',{status:403});
+  }});
+  const add=await f.request('mutate',{token:f.token,body:{operation:'add',link:B}});
+  assert.equal(add.status,200);assert.equal(add.data.catalog.prepared,true);
+  const fresh=await f.request('list',{method:'GET'});
+  assert.equal(fresh.data.catalogVersion,1);
+  const catalog=await f.request('catalog',{method:'GET'});
+  assert.equal(catalog.status,200);assert.equal(catalog.data.entries.length,1);
+  assert.equal(catalog.data.entries[0].title,'Prepared title');
+  assert.equal(catalog.data.entries[0].item_id,'AAAAAAAAAAA');
+  const removed=await f.request('mutate',{token:f.token,body:{operation:'remove',link:B}});
+  assert.equal(removed.status,200);
+  assert.equal(f.catalog.size,1,'display cache may survive removal');
+  const after=await f.request('catalog',{method:'GET'});
+  assert.equal(after.data.entries.length,0,'but it can never authorize removed material');
+});
+test('runtime: only newly approved handles are pinned to verified stable UC IDs',async()=>{
+  const id='UC'+'A'.repeat(22),url='https://www.youtube.com/@newchannel';
+  const f=await createFixture({upstream:async target=>{
+    if(target.pathname==='/api/v1/resolveurl')return new Response(JSON.stringify({ucid:id}));
+    if(target.pathname==='/api/v1/channels/'+id+'/videos')return new Response(JSON.stringify({
+      videos:[{videoId:'AAAAAAAAAAA',title:'Child video',authorId:id,published:123}],continuation:null
+    }));
+    if(target.pathname==='/api/v1/channels/'+id)return new Response(JSON.stringify({author:'New channel',authorThumbnails:[]}));
+    return new Response('',{status:404});
+  }});
+  const added=await f.request('mutate',{token:f.token,body:{operation:'add',link:url}});
+  assert.equal(added.data.pinned,true);
+  assert.match(f.db.list_text,new RegExp(id));
+  assert.doesNotMatch(f.db.list_text,/@newchannel/);
+  const rows=(await f.request('catalog',{method:'GET'})).data.entries;
+  assert.equal(rows.length,1);assert.equal(rows[0].item_id,id);
+  assert.equal(rows[0].page.length,1);
+  const old=await createFixture({upstream:async()=>new Response(JSON.stringify({ucid:id}))});
+  old.db.list_text=url+'\n';old.db.version++;
+  const existing=await old.request('mutate',{token:old.token,body:{operation:'add',link:url}});
+  assert.equal(existing.data.changed,false);
+  assert.equal(old.db.list_text,url+'\n','existing alias meaning is never rewritten');
+});
+test('runtime: prepared channel page rejects unverified author identities',async()=>{
+  const id='UC'+'A'.repeat(22),url='https://www.youtube.com/channel/'+id;
+  const f=await createFixture({upstream:async target=>{
+    if(target.pathname.endsWith('/videos'))return new Response(JSON.stringify({videos:[
+      {videoId:'AAAAAAAAAAA',title:'untrusted',authorId:''},
+      {videoId:'BBBBBBBBBBB',title:'wrong channel',authorId:'UC'+'B'.repeat(22)},
+      {videoId:'CCCCCCCCCCC',title:'valid',authorId:id}
+    ],continuation:null}));
+    if(target.pathname.endsWith(id))return new Response(JSON.stringify({author:'Real channel',authorThumbnails:[]}));
+    return new Response('',{status:404});
+  }});
+  f.db.list_text=url+'\n';
+  const prepared=await f.request('prepare',{token:f.token,body:{link:url}});
+  assert.equal(prepared.data.prepared,true);
+  const page=f.catalog.get(url).page;
+  assert.equal(page.length,1);assert.equal(page[0].id,'CCCCCCCCCCC');
 });
