@@ -16,8 +16,6 @@
     // for the Android asset-loader and the authenticated parent iframe.
     if(location.hostname==='yt2178.github.io' && window.top===window)
       location.replace(new URL('./parents.html',location.href));
-  </script>
-  <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(function () {
         // Browsing still works if installation/storage is unavailable.
