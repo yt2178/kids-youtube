@@ -115,6 +115,11 @@ jobs:
           zip -q -r staging-package/Kids-YouTube-Staging-Web.zip staging-dist
           cd staging-package
           sha256sum *.apk *.zip > SHA256SUMS.txt
+      - name: Live staging-only read/auth/catalog acceptance
+        if: github.event_name == 'pull_request'
+        env:
+          KIDS_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node staging/live-smoke.cjs
       - name: Upload isolated staging APK and PWA
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
