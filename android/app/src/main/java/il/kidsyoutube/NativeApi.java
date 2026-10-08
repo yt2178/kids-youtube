@@ -69,13 +69,22 @@ final class NativeApi {
         if(scope!=null)scope.add(call);
         try(okhttp3.Response response=call.execute()){
             if(!response.isSuccessful())throw new IOException("WHITELIST_UNAVAILABLE");
-            String text=ExtractorDownloader.readBounded(response.body(),1000000);
-            if(text.trim().startsWith("{"))throw new IOException("PLAIN_LIST_REQUIRED");
+            String responseBody=ExtractorDownloader.readBounded(response.body(),1000000);
+            JSONObject doc;
+            try{doc=new JSONObject(responseBody);}catch(JSONException e){throw new IOException("INVALID_AUTH_RESPONSE",e);}
+            String text=doc.optString("list","");
+            if(!doc.has("list")||!doc.has("version")||text.length()>1000000)throw new IOException("INVALID_AUTH_RESPONSE");
             ApprovalPolicy next=ApprovalPolicy.parse(text);
-            if(!next.fingerprint.equals(policy.fingerprint)) {
-                cache.clear();cursors.clear();
-                aliases.keySet().retainAll(next.channelUrls);
+            Map<String,Alias> pinned=new HashMap<>();
+            JSONArray pins=doc.optJSONArray("pinnedChannels");
+            if(pins!=null)for(int i=0;i<Math.min(500,pins.length());i++){
+                JSONObject item=pins.optJSONObject(i);if(item==null)continue;
+                String url=item.optString("url",""),id=item.optString("id","");
+                if(next.channelUrls.contains(url)&&ApprovalPolicy.CHANNEL.matcher(id).matches())
+                    pinned.put(url,new Alias(id));
             }
+            if(!next.fingerprint.equals(policy.fingerprint)){cache.clear();cursors.clear();}
+            aliases.clear();aliases.putAll(pinned);
             raw=text;policy=next;checkedAt=System.currentTimeMillis();
             return text;
         } finally {if(scope!=null)scope.remove(call);}
