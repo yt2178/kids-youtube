@@ -489,6 +489,44 @@ function safeChannelImage(value, base) {
     return url.protocol === 'https:' && !url.username && !url.password && !url.port && allowed ? url.href : '';
   } catch (_) { return ''; }
 }
+function sharedCatalogSnapshot(entries, response){
+  const records=Object.create(null),lists=Object.create(null),dates=Object.create(null),progress=Object.create(null);
+  if(!response||!Array.isArray(response.entries)||response.entries.length>500)return {records,lists,dates,progress};
+  const approved=new Map(entries.filter(e=>!!e.id).map(e=>[e.url,e]));
+  for(const row of response.entries){
+    if(!row||typeof row.approval_url!=='string')continue;
+    const entry=approved.get(row.approval_url);
+    if(!entry||row.kind!==entry.kind||row.item_id!==entry.id)continue;
+    const checked=Date.parse(row.checked_at);
+    if(!Number.isFinite(checked)||checked>Date.now()+300000)continue;
+    const title=cleanTitle(row.title);
+    if(entry.kind==='video'){
+      if(!VIDEO_ID.test(row.item_id))continue;
+      records[entry.url]={kind:'video',id:row.item_id,title,thumbnail:safeChannelImage(row.thumbnail),
+        published:Number.isSafeInteger(row.published)?row.published:0,
+        authorId:CHANNEL_ID.test(row.channel_id)?row.channel_id:'',verifiedAt:checked};
+      continue;
+    }
+    if(!CHANNEL_ID.test(row.item_id))continue;
+    records[entry.url]={kind:'channel',id:row.item_id,name:title,thumbnail:safeChannelImage(row.thumbnail),verifiedAt:checked};
+    const rows=Array.isArray(row.page)?row.page:[];
+    if(rows.length>SETTINGS.maxVideosWithoutLimit*2)continue;
+    lists[row.item_id]=cleanChannelVideos(rows.map(v=>({
+      ...v,channelId:row.item_id,authorId:row.item_id,
+      thumbnail:safeChannelImage(v?.thumbnail)
+    })),{id:row.item_id,name:title});
+    // Server-side continuations are provider tokens, and can be resumed only
+    // while the catalog timestamp is recent enough for our channel TTL.
+    if(Date.now()-checked>SETTINGS.channelTTL)continue;
+    dates[row.item_id]=checked;
+    if(Number.isSafeInteger(row.pages_loaded)&&row.pages_loaded>=1&&row.pages_loaded<=SETTINGS.maxPagesPerChannel){
+      const token=typeof row.continuation==='string'&&row.continuation.length<=20000?row.continuation:null;
+      const complete=row.complete===true;
+      if(token||complete)progress[row.item_id]={pages:row.pages_loaded,complete,continuation:token,tokens:token?[token]:[]};
+    }
+  }
+  return {records,lists,dates,progress};
+}
 function cachedLinkRecord(entry, records) {
   const old = records && records[entry.url];
   if (old && old.kind === entry.kind && (entry.kind === 'video' ? VIDEO_ID : CHANNEL_ID).test(old.id) && (!entry.id || old.id === entry.id)) {
@@ -661,6 +699,19 @@ async function loadApp({forceCatalog=false}={}) {
     if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
     raw = remote.list;
     approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
+    let shared={records:Object.create(null),lists:Object.create(null),dates:Object.create(null),progress:Object.create(null)};
+    try {
+      const catalog=await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=catalog');
+      if(!stillAuthorized())return;
+      if(catalog&&catalog.available!==false){
+        if(catalog.version!==remote.version||catalog.updatedAt!==remote.updatedAt)
+          throw new Error('CATALOG_AUTH_CHANGED');
+        shared=sharedCatalogSnapshot(parseLinkList(raw).entries,catalog);
+      }
+    }catch(e){
+      if(e?.message==='CATALOG_AUTH_CHANGED')throw e;
+      // Catalog unavailable is an ordinary cache miss, never a permission grant.
+    }
     {
       try {
         // Compatibility for an old JSON list pasted into the new file.
@@ -672,13 +723,14 @@ async function loadApp({forceCatalog=false}={}) {
             // decorate that same ID. A handle/legacy alias must be resolved again
             // before it grants anything to the visible catalog.
             if (!entry.id) continue;
-            const record = cachedLinkRecord(entry, previous ? previous.linkRecords : {});
+            const record = cachedLinkRecord(entry, {...(previous?.linkRecords||{}),...shared.records});
             if (record) activeLinkRecords[entry.url] = record;
           }
           config = configFromLinkRecords(entries, activeLinkRecords);
         }
       } catch (error) { invalidConfig = true; throw error; }
-      lists = pruneLists(config, previous ? previous.channelLists : {});
+      lists = pruneLists(config, {...(previous?.channelLists||{}),...shared.lists});
+      channelDates={...channelDates,...shared.dates};
       // Persist removals before metadata or channel requests can fail.
       if (!saveSnapshot(config, lists)) cacheSaved = false;
     }
@@ -689,7 +741,7 @@ async function loadApp({forceCatalog=false}={}) {
       status('מזהים את הסרטונים והערוצים…', true);
       let resolvedCount=0;
       await parallelMap(entries.filter((entry,index) => entry.kind === 'channel' || index < SETTINGS.cardsPerPage), async entry => {
-        try { const record=await resolveLink(entry,previous?.linkRecords?.[entry.url]);if(!stillAuthorized())return;activeLinkRecords[entry.url]=record; }
+        try { const record=await resolveLink(entry,shared.records[entry.url]||previous?.linkRecords?.[entry.url]);if(!stillAuthorized())return;activeLinkRecords[entry.url]=record; }
         catch (_) { if(!stillAuthorized())return;linkFailures++; }
         if(!stillAuthorized())return;
         // Render the first useful result and then batches, not each late title.
@@ -706,7 +758,7 @@ async function loadApp({forceCatalog=false}={}) {
       render(config,lists);
     }
     catalogMetrics.metadataMs=Date.now()-metadataStarted;
-    const restoredChannels=forceCatalog?0:restoreChannelProgress(config,lists,previous);
+    const restoredChannels=forceCatalog?0:restoreChannelProgress(config,lists,{channelProgress:{...(previous?.channelProgress||{}),...shared.progress},channelDates:{...(previous?.channelDates||{}),...shared.dates}});
     catalogMetrics.channelCacheHits+=restoredChannels;
     const channelsStarted=Date.now();
     let finished = 0, failures = 0, limited = 0;
