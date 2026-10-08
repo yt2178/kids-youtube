@@ -1230,7 +1230,7 @@ test('slow optional content completion shows spinner only while active and stops
  a.run('pendingChannelRetry.add('+JSON.stringify(A)+')');
  const pending=a.run('retryCatalogContents()');
  await until(()=>typeof complete==='function');
- await new Promise(r=>setTimeout(r,15));
+ await until(()=>a.elements.spinner.hidden===false);
  assert.equal(a.elements.spinner.hidden,false);
  complete(json({videos:[row(1),row(2)],continuation:null}));
  await pending;
