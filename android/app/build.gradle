@@ -9,7 +9,7 @@ android {
         versionCode 3
         versionName '0.3-beta'
         def candidateSha=System.getenv('KIDS_BUILD_SHA') ?: 'local'
-        resValue 'string','kids_build_sha',candidateSha ==~ /[a-f0-9]{40}/ ? candidateSha : 'local'
+        resValue 'string','kids_build_sha',(candidateSha ==~ /[a-f0-9]{40}/ ? candidateSha : 'local')
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
