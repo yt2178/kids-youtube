@@ -5,12 +5,7 @@ def outputRes = layout.buildDirectory.dir('generated/kidsRes')
 tasks.register('prepareKidsAssets') {
     inputs.files(['index.html','app.js','providers.js','manifest.json','android/native-adapter.js',
         'android/LICENSE','android/THIRD_PARTY_NOTICES.md'].collect { new File(webRoot,it) })
-    inputs.files(fileTree(new File(webRoot,'icons')) { include '*.png' })
-    // Staging and production produce different WebView assets. The backend URL
-    // and build mode must invalidate Gradle's input/output cache.
-    inputs.property('kidsStaging',project.findProperty('kidsStaging')?.toString() ?: 'false')
-    inputs.property('kidsBackendUrl',project.findProperty('kidsBackendUrl')?.toString() ?: '')
-    outputs.dir outputAssets
+    inputs.files(fileTree(new File(webRoot,'icons')) { include '*.png' })    outputs.dir outputAssets
     outputs.dir outputRes
     doLast {
         def once = { String text, String needle, String replacement ->
@@ -52,20 +47,7 @@ const providers = KidsNative.createManager();''')
         app = once(app,'function openPlayer(id) {\n  const video = displayed.get(id);',
             'function openPlayer(id) {\n  const video = displayed.get(id);\n  if (video && (getApprovedVideos().has(id) || getApprovedChannels().has(video.channelId))) KidsNative.openPlayer(id);\n  return;\n  // Browser player remains in the source for website regression checks.')
         html = once(html,'''<meta id="app-csp" http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https://img.youtube.com https://i.ytimg.com https://yt3.ggpht.com https://yt3.googleusercontent.com https://invidious.f5.si https://invidious.tiekoetter.com https://yt.chocolatemoo53.com; connect-src 'self' https://jxhelpxhrmwvzrrfrjuh.supabase.co https://invidious.f5.si https://invidious.tiekoetter.com https://yt.chocolatemoo53.com; font-src 'self'; media-src 'none'; frame-src 'none'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">''','''<meta id="app-csp" http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https://img.youtube.com https://i.ytimg.com https://yt3.ggpht.com https://yt3.googleusercontent.com; connect-src 'self' https://jxhelpxhrmwvzrrfrjuh.supabase.co; font-src 'self'; media-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">''')
-        if(project.findProperty('kidsStaging')?.toString() == 'true') {
-            String stagingUrl=project.findProperty('kidsBackendUrl')?.toString()
-            String productionUrl='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube'
-            if(!stagingUrl || stagingUrl==productionUrl ||
-                    !(stagingUrl ==~ /^https:\/\/[a-z0-9-]+\.supabase\.co\/functions\/v1\/kids-youtube(?:-staging)?$/))
-                throw new GradleException('Non-production Supabase endpoint required for staging')
-            def stagingHost=new URI(stagingUrl).host
-            app=app.replace(productionUrl,stagingUrl)
-            app=app.replace('kidsYoutube','kidsStagingYoutube')
-            app=app.replace('kidsParentToken','kidsStagingParentToken')
-            html=html.replace('jxhelpxhrmwvzrrfrjuh.supabase.co',stagingHost)
-            if(app.split(java.util.regex.Pattern.quote(productionUrl),-1).drop(1).any { !it.startsWith('-staging') })
-                throw new GradleException('Production endpoint leaked into staging assets')
-        }
+
         new File(target,'index.html').setText(html,'UTF-8')
         new File(target,'app.js').setText(app,'UTF-8')
         ['android/LICENSE':'LICENSE.txt','android/THIRD_PARTY_NOTICES.md':'THIRD_PARTY_NOTICES.txt',
