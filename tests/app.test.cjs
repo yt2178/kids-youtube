@@ -53,7 +53,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   const context=vm.createContext({URL,AbortController,Response,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console,history,
     navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/',origin:new URL(options.href||'https://example.test/kids-youtube/').origin},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
-    fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.offline?fail():json({list:raw});if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
+    fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
     addEventListener:(k,fn)=>(listeners[k]??=[]).push(fn),removeEventListener:(k,fn)=>listeners[k]=(listeners[k]||[]).filter(f=>f!==fn)});
   context.window=context;
   if(options.parentWindow){
@@ -840,4 +840,33 @@ test('an automatic retry postponed in background resumes on foreground with fres
   await until(()=>a.calls.filter(x=>x.url.includes('action=list')).length>previous);
   assert.equal(a.run('catalogRetryPending'),false);
   assert.ok(a.run('catalogMetrics.retries')>=1);
+});
+
+test('new device with empty storage renders shared server-prepared video and channel after live authorization',async()=>{
+  const now=new Date().toISOString(),list='https://www.youtube.com/watch?v='+id(1)+'\nhttps://www.youtube.com/channel/'+A+'\n';
+  const catalog={version:7,updatedAt:'stable',entries:[
+    {approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',item_id:id(1),
+      title:'שם מוכן מהשרת',thumbnail:'https://img.youtube.com/vi/'+id(1)+'/hqdefault.jpg',published:1234,channel_id:A,checked_at:now},
+    {approval_url:'https://www.youtube.com/channel/'+A,kind:'channel',item_id:A,title:'ערוץ מוכן מהשרת',
+      thumbnail:'https://yt3.googleusercontent.com/example',page:[{id:id(2),videoId:id(2),title:'סרטון מהערוץ',channelId:A,authorId:A}],
+      pages_loaded:1,continuation:null,complete:true,checked_at:now}
+  ]};
+  const a=await app(list,()=>{throw Error('No provider discovery expected on prepared first opening');},new Map(),{sharedCatalog:catalog});
+  assert.equal(a.run('displayed.size'),2);
+  assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם מוכן מהשרת');
+  assert.equal(a.run(`displayed.get('${id(2)}').title`),'סרטון מהערוץ');
+  assert.equal(a.run('catalogMetrics.providerCalls'),0);
+  assert.equal(a.calls.length,2,'one live authorization plus one catalog read');
+});
+test('server catalog is never a grant after the same content has been removed',async()=>{
+  const catalog={version:7,updatedAt:'stable',entries:[{approval_url:'https://www.youtube.com/watch?v='+id(1),
+    kind:'video',item_id:id(1),title:'אסור',checked_at:new Date().toISOString()}]};
+  const a=await app('',()=>{throw Error('No provider needed');},new Map(),{sharedCatalog:catalog});
+  assert.equal(a.run('displayed.size'),0);assert.equal(a.elements.grid.children.length,0);
+});
+test('shared catalog with a mismatched grant version fails closed even if it has valid metadata',async()=>{
+  const catalog={version:6,updatedAt:'stable',entries:[{approval_url:'https://www.youtube.com/watch?v='+id(1),
+    kind:'video',item_id:id(1),title:'ישן',checked_at:new Date().toISOString()}]};
+  const a=await app('https://www.youtube.com/watch?v='+id(1),()=>{throw Error('No provider');},new Map(),{sharedCatalog:catalog});
+  assert.equal(a.run('displayed.size'),0);assert.equal(a.run('approvalMarker'),'');
 });
