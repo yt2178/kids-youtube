@@ -93,6 +93,10 @@ let catalogRetryTimer = null;
 let catalogRetryAttempts = 0;
 let catalogRetryPending = false;
 const catalogMetrics = {startedAt:0,authorizationMs:0,metadataMs:0,channelsMs:0,firstUsefulMs:0,completedMs:0,requests:0,providerCalls:0,renderCalls:0,displayCacheHits:0,channelCacheHits:0,retries:0};
+function debugCatalog(event,details={}){
+  if(!NATIVE_MODE)return;
+  try{console.log('KidsCatalog '+event+' '+JSON.stringify(details));}catch(_){}
+}
 const savedView = storageGet(VIEW_KEY);
 let viewStyle = savedView === 'list' ? 'list' : 'grid';
 function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
@@ -702,6 +706,7 @@ async function loadApp({forceCatalog=false}={}) {
     const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
     if(!stillAuthorized())return;
     catalogMetrics.authorizationMs=Date.now()-startedAt;
+    debugCatalog('authorization-ok',{ms:catalogMetrics.authorizationMs,version:remote&&remote.version,catalogVersion:remote&&remote.catalogVersion});
     if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
     raw = remote.list;
     approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
@@ -713,8 +718,10 @@ async function loadApp({forceCatalog=false}={}) {
         if(catalog.version!==remote.version||catalog.updatedAt!==remote.updatedAt)
           throw new Error('CATALOG_AUTH_CHANGED');
         shared=sharedCatalogSnapshot(parseLinkList(raw).entries,catalog);
+        debugCatalog('shared-catalog-ok',{entries:catalog.entries.length,records:Object.keys(shared.records).length,channelLists:Object.keys(shared.lists).length});
       }
     }catch(e){
+      debugCatalog('shared-catalog-miss',{error:String(e&&e.message||'UNKNOWN')});
       if(e?.message==='CATALOG_AUTH_CHANGED')throw e;
       // Catalog unavailable is an ordinary cache miss, never a permission grant.
     }
@@ -748,7 +755,7 @@ async function loadApp({forceCatalog=false}={}) {
       let resolvedCount=0;
       await parallelMap(entries.filter((entry,index) => entry.kind === 'channel' || index < SETTINGS.cardsPerPage), async entry => {
         try { const record=await resolveLink(entry,shared.records[entry.url]||previous?.linkRecords?.[entry.url]);if(!stillAuthorized())return;activeLinkRecords[entry.url]=record; }
-        catch (_) { if(!stillAuthorized())return;linkFailures++; }
+        catch (error) { if(!stillAuthorized())return;linkFailures++;debugCatalog('metadata-failed',{kind:entry.kind,hasId:!!entry.id,error:String(error&&error.message||'UNKNOWN')}); }
         if(!stillAuthorized())return;
         // Render the first useful result and then batches, not each late title.
         if(++resolvedCount===1 || resolvedCount%3===0){
@@ -773,7 +780,7 @@ async function loadApp({forceCatalog=false}={}) {
       const restored=channelProgress.get(channel.id);
       const result=restored ? {videos:restored.videos,complete:restored.complete,limited:!!restored.continuation,failed:false} : await loadChannel(channel,1,forceCatalog);
       if(!stillAuthorized())return;
-      if (result.failed) failures++;
+      if (result.failed){failures++;debugCatalog('channel-page-failed',{channel:channel.id.slice(0,8),cached:(lists[channel.id]||[]).length});}
       if (result.limited) limited++;
       lists[channel.id] = result.complete ? result.videos : cleanChannelVideos([...result.videos, ...(lists[channel.id] || [])], channel);
       if (!saveSnapshot(config, lists)) cacheSaved = false;
@@ -793,9 +800,11 @@ async function loadApp({forceCatalog=false}={}) {
     if (!cacheSaved) messages.push('לא הצלחנו לשמור נתונים זמניים במכשיר. התוכן עדיין זמין כל עוד יש חיבור לאינטרנט.');
     if(linkFailures||failures){messages.push('המערכת תנסה להשלים את הפרטים שוב באופן אוטומטי.');scheduleCatalogRetry();}
     else {catalogRetryAttempts=0;catalogRetryPending=false;}
+    debugCatalog('load-complete',{displayed:displayed.size,linksFailed:linkFailures,channelsFailed:failures,metrics:{...catalogMetrics}});
     status(messages.join(' '));
-  } catch (_) {
+  } catch (error) {
     if(!stillAuthorized())return;
+    debugCatalog('load-fatal',{error:String(error&&error.message||'UNKNOWN'),metrics:{...catalogMetrics}});
     loadError=true;
     activeConfig = {videos:[], channels:[]}; activeLists = Object.create(null);
     displayed = new Map(); ui.grid.replaceChildren(); ui.count.textContent = ''; ui.more.hidden = true;
