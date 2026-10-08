@@ -375,7 +375,7 @@ Deno.serve(async(req)=>{
       try{return json({version:s.version,updatedAt:s.updated_at,entries:await catalogRows(allowed)},200,origin);}
       catch{return json({version:s.version,updatedAt:s.updated_at,entries:[],available:false},200,origin);}
     }
-    if(req.method==="GET"&&action==="list"){ if(url.searchParams.get("format")==="text") return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}}); return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,setupRequired:!s.password_hash},200,origin); }
+    if(req.method==="GET"&&action==="list"){ if(url.searchParams.get("format")==="text") return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}}); return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,setupRequired:!s.password_hash},200,origin); }
     if(req.method!=="POST")return json({error:"METHOD"},405,origin);
     const declared=Number(req.headers.get("content-length")||0);
     if(Number.isFinite(declared)&&declared>MAX_BODY_BYTES)return json({error:"TOO_LARGE"},413,origin);
