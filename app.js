@@ -89,15 +89,19 @@ let approvalMarker = '';
 let authorizationReloadPending = false;
 let authorizationGeneration = 0;
 let pendingOnlineRefresh = false;
+let catalogRetryTimer = null;
+let catalogRetryAttempts = 0;
+const catalogMetrics = {startedAt:0,authorizationMs:0,metadataMs:0,channelsMs:0,requests:0,providerCalls:0,renderCalls:0,displayCacheHits:0,channelCacheHits:0,retries:0};
 const savedView = storageGet(VIEW_KEY);
 let viewStyle = savedView === 'list' ? 'list' : 'grid';
 function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
 function parentToken(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
 async function providerFetch(input,options={}) {
-  if(!PARENT_CATALOG)return fetch(input,options);
+  if(!PARENT_CATALOG){catalogMetrics.providerCalls++;return fetch(input,options);}
   let target;try{target=new URL(String(input),location.href);}catch(_){throw new Error('INVALID_PARENT_PROVIDER');}
   if(!INVIDIOUS_INSTANCES.includes(target.origin))throw new Error('INVALID_PARENT_PROVIDER');
   const value=parentToken(),headers={...(options.headers||{}),...(value?{Authorization:'Bearer '+value}:{})};
+  catalogMetrics.providerCalls++;
   const response=await fetch(PARENT_API+'?action=provider&target='+encodeURIComponent(target.href),{...options,headers});
   if(response.status===401){
     try{window.parent.postMessage({type:'kids-parent-auth-expired'},location.origin);}catch(_){}
@@ -124,7 +128,7 @@ function audit() {
   if (!diagnosticsEnabled) return;
   for(const {base,index,button} of providerButtons)button.textContent=providers.snapshot().health[base].api.pausedUntil>Date.now()?'הפעלת מקור '+(index+1)+' מחדש':'השהיית מקור '+(index+1)+' ל־5 דקות';
   const resources = typeof performance !== 'undefined' ? performance.getEntriesByType('resource').slice(-150).map(r => ({url:r.name,ms:Math.round(r.duration),bytes:r.transferSize,type:r.initiatorType})) : [];
-  ui.diagnostics.textContent = JSON.stringify({providers:providers.snapshot(),approvedVideos:activeConfig.videos.length,approvedChannels:activeConfig.channels.length,loadedVideos:displayed.size,renderedCards:ui.grid.children.length,resources},null,2);
+  ui.diagnostics.textContent = JSON.stringify({providers:providers.snapshot(),approvedVideos:activeConfig.videos.length,approvedChannels:activeConfig.channels.length,loadedVideos:displayed.size,renderedCards:ui.grid.children.length,catalogMetrics,resources},null,2);
 }
 function normalizeVideo(raw, channelId = '') {
   const id = raw && (raw.id || raw.videoId);
@@ -256,6 +260,7 @@ function clearSearch() {
 }
 function render(config, lists) {
   activeConfig = config;
+  catalogMetrics.renderCalls++;
   ui.grid.dataset.view=viewStyle;
   ui['view-grid'].setAttribute('aria-pressed',String(viewStyle==='grid'));
   ui['view-list'].setAttribute('aria-pressed',String(viewStyle==='list'));
@@ -394,6 +399,7 @@ function orderedInstances() {
 }
 function rememberInstance(url) { storageSet(INSTANCE_KEY, {scope:SCOPE, url}); }
 function fetchData(url, timeout = SETTINGS.requestTimeoutMs, signal, format = 'json') {
+  catalogMetrics.requests++;
   return KidsProviders.fetchJSON(fetch,url,{timeout,signal,format});
 }
 function fetchJson(url, timeout = SETTINGS.requestTimeoutMs, signal) { return fetchData(url, timeout, signal, 'json'); }
@@ -460,6 +466,7 @@ function safeChannelImage(value, base) {
 function cachedLinkRecord(entry, records) {
   const old = records && records[entry.url];
   if (old && old.kind === entry.kind && (entry.kind === 'video' ? VIDEO_ID : CHANNEL_ID).test(old.id) && (!entry.id || old.id === entry.id)) {
+    catalogMetrics.displayCacheHits++;
     return {kind:old.kind, id:old.id, title:cleanTitle(old.title), name:typeof old.name === 'string' ? old.name.slice(0,300) : '', author:typeof old.author === 'string' ? old.author.slice(0,300) : '', authorId:CHANNEL_ID.test(old.authorId) ? old.authorId : '', published:Number.isFinite(old.published) ? old.published : 0, thumbnail:safeChannelImage(old.thumbnail)};
   }
   return entry.id ? {kind:entry.kind, id:entry.id, title:entry.kind==='video' ? cleanTitle(entry.label||'סרטון מאושר') : 'סרטון מאושר', name:entry.kind==='channel' ? cleanTitle(entry.label||'ערוץ מאושר') : 'ערוץ מאושר', author:''} : null;
@@ -518,6 +525,7 @@ async function loadChannel(channel, pagesToLoad = 1) {
   for (let page = 0; page < pagesToLoad && progress.pages < SETTINGS.maxPagesPerChannel; page++) {
     try {
       const data = await channelPage(channel.id,progress.continuation,deadline);
+      if(!providers.isNetworkData(data))catalogMetrics.channelCacheHits++;
       progress.pages++;
       if (providers.isNetworkData(data)) channelDates[channel.id]=Date.now();
       for (const row of data.videos) {
@@ -580,8 +588,25 @@ async function parallelMap(items, worker) {
     while (index < items.length) { const item = items[index++]; await worker(item); }
   }));
 }
+function scheduleCatalogRetry(){
+  if(catalogRetryTimer||catalogRetryAttempts>=3||navigator.onLine===false)return;
+  const delays=[35000,90000,180000],delay=delays[catalogRetryAttempts++];
+  catalogRetryTimer=setTimeout(()=>{
+    catalogRetryTimer=null;
+    if(document.hidden||playback||loading||paginationBusy||navigator.onLine===false)return;
+    catalogMetrics.retries++;
+    loadApp();
+  },delay);
+  // Tests running with Node timers must not be held open by a browser retry.
+  if(catalogRetryTimer&&typeof catalogRetryTimer.unref==='function')catalogRetryTimer.unref();
+}
 async function loadApp() {
   if (loading || paginationBusy || !ui.player.hidden) return;
+  clearTimeout(catalogRetryTimer);catalogRetryTimer=null;
+  const startedAt=Date.now();catalogMetrics.startedAt=startedAt;
+  catalogMetrics.requests=0;catalogMetrics.providerCalls=0;catalogMetrics.renderCalls=0;
+  catalogMetrics.displayCacheHits=0;catalogMetrics.channelCacheHits=0;
+  catalogMetrics.authorizationMs=0;catalogMetrics.metadataMs=0;catalogMetrics.channelsMs=0;
   loadError=false;
   channelProgress.clear(); verifiedChannelVideos.clear();
   loading = true; lastLoad = Date.now();
@@ -604,6 +629,7 @@ async function loadApp() {
     let raw;
     const remote = await fetchJson('https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube?action=list');
     if(!stillAuthorized())return;
+    catalogMetrics.authorizationMs=Date.now()-startedAt;
     if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
     raw = remote.list;
     approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
@@ -630,18 +656,29 @@ async function loadApp() {
     }
     // Manual approvals appear immediately; cached channels only after fresh config validation.
     render(config, lists);
+    const metadataStarted=Date.now();
     if (entries && entries.length) {
       status('מזהים את הסרטונים והערוצים…', true);
+      let resolvedCount=0;
       await parallelMap(entries.filter((entry,index) => entry.kind === 'channel' || index < SETTINGS.cardsPerPage), async entry => {
         try { const record=await resolveLink(entry,previous?.linkRecords?.[entry.url]);if(!stillAuthorized())return;activeLinkRecords[entry.url]=record; }
         catch (_) { if(!stillAuthorized())return;linkFailures++; }
         if(!stillAuthorized())return;
-        config = configFromLinkRecords(entries, activeLinkRecords);
-        lists = pruneLists(config, lists);
-        if (!saveSnapshot(config, lists)) cacheSaved = false;
-        render(config, lists);
+        // Render the first useful result and then batches, not each late title.
+        if(++resolvedCount===1 || resolvedCount%3===0){
+          config=configFromLinkRecords(entries,activeLinkRecords);
+          lists=pruneLists(config,lists);
+          render(config,lists);
+        }
       });
+      if(!stillAuthorized())return;
+      config=configFromLinkRecords(entries,activeLinkRecords);
+      lists=pruneLists(config,lists);
+      if(!saveSnapshot(config,lists))cacheSaved=false;
+      render(config,lists);
     }
+    catalogMetrics.metadataMs=Date.now()-metadataStarted;
+    const channelsStarted=Date.now();
     let finished = 0, failures = 0, limited = 0;
     if (config.channels.length) status('טוענים את הסרטונים מהערוצים…', true);
     await parallelMap(config.channels, async channel => {
@@ -655,6 +692,7 @@ async function loadApp() {
       status('טוענים את הסרטונים מהערוצים… ' + (++finished) + ' מתוך ' + config.channels.length, true);
     });
     if(!stillAuthorized())return;
+    catalogMetrics.channelsMs=Date.now()-channelsStarted;
     if (!saveSnapshot(config, lists)) cacheSaved = false;
     const messages = [];
     if (invalidLines.length) messages.push('חלק מהקישורים ברשימה זקוקים לבדיקה של ההורה.');
@@ -664,6 +702,8 @@ async function loadApp() {
     else if (failures) messages.push('הסרטונים אינם זמינים כרגע. נסו שוב מאוחר יותר.');
     if (limited) messages.push('אפשר ללחוץ על ״עוד סרטונים״ להמשך הרשימה.');
     if (!cacheSaved) messages.push('לא הצלחנו לשמור נתונים זמניים במכשיר. התוכן עדיין זמין כל עוד יש חיבור לאינטרנט.');
+    if(linkFailures||failures){messages.push('המערכת תנסה להשלים את הפרטים שוב באופן אוטומטי.');scheduleCatalogRetry();}
+    else catalogRetryAttempts=0;
     status(messages.join(' '));
   } catch (_) {
     if(!stillAuthorized())return;
@@ -673,7 +713,7 @@ async function loadApp() {
     activeLinkRecords = Object.create(null);approvalMarker='';
     // Any authority failure clears the local grant snapshot too.
     saveSnapshot({videos:[], channels:[]}, {});
-    status('');
+    status('');scheduleCatalogRetry();
   } finally {
     loading = false; ui.grid.removeAttribute('aria-busy');
     if(stillAuthorized())render(activeConfig, activeLists);
@@ -682,6 +722,7 @@ async function loadApp() {
 }
 
 function failClosedAuthorization(message='לא הצלחנו לאמת כרגע את רשימת ההורה.') {
+  clearTimeout(catalogRetryTimer);catalogRetryTimer=null;
   authorizationGeneration++;loadError=true;approvalMarker='';activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
   displayed=new Map();ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;saveSnapshot(activeConfig,{});
   status(message);render(activeConfig,activeLists);
@@ -987,7 +1028,7 @@ ui.install.addEventListener('click', async () => {
 });
 window.addEventListener('appinstalled', () => { installPrompt = null; ui.install.hidden = true; });
 window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
-window.addEventListener('online', () => {providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp();});
+window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp();});
 document.addEventListener('visibilitychange', () => {
   if(document.hidden||navigator.onLine===false)return;
   if(Date.now()-lastLoad>SETTINGS.refreshOnReturnMs){loadApp();return;}
