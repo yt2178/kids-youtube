@@ -26,7 +26,7 @@ class ParentElement{
 function memoryStorage(map){return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,String(v)),removeItem:k=>map.delete(k)};}
 async function parentApp(handler,{local=new Map(),session=new Map()}={}){
   const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
-  const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements.preview.hidden=true;elements.remember.checked=true;
+  const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements.preview.hidden=true;elements['manual-editor'].hidden=true;elements.remember.checked=true;
   let reloads=0;const calls=[],windowListeners={};const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(local),sessionStorage:memoryStorage(session),
     KidsParentLinks:links,URL,Map,Object,String,JSON,Error,AbortController,encodeURIComponent,setTimeout,clearTimeout,confirm:()=>true,location:{origin:'https://example.test',reload(){reloads++;}},addEventListener:(k,fn)=>(windowListeners[k]??=[]).push(fn),
@@ -164,7 +164,7 @@ test('existing approved video is identified before save and duplicate add is dis
 
 test('manual editor replaces the whole approved list through authenticated backend',async()=>{
   const local=new Map([['kidsParentToken','token']]);
-  const app=await parentApp(async(action)=>{if(action==='list')return {list:video+'\n',setupRequired:false};if(action==='status')return {authenticated:true};if(action==='replace')return {changed:true,list:channel+' // ערוץ מאיר\n'};throw Error(action);},{local});
+  const app=await parentApp(async(action)=>{if(action==='list')return {list:video+'\n',version:7,setupRequired:false};if(action==='status')return {authenticated:true};if(action==='replace')return {changed:true,list:channel+' // ערוץ מאיר\n',version:8};throw Error(action);},{local});
   await app.fire('manual-mode');assert.equal(app.elements['manual-editor'].hidden,false);app.elements['approved-text'].value=channel+' // ערוץ מאיר\n';await app.fire('save-list');
   assert.equal(app.elements['manual-editor'].hidden,true);assert.equal(app.elements['approved-cards'].children[0].children[0].textContent,'ערוץ מאיר');
 });
@@ -206,4 +206,83 @@ test('invalid remembered session is cleared and logout clears both stores',async
   const local=new Map([['kidsParentToken','bad']]),session=new Map([['kidsParentToken','other']]);
   const app=await parentApp(async action=>{if(action==='list')return {list:'',setupRequired:false};if(action==='status')return {authenticated:false};throw Error(action);},{local,session});
   assert.equal(local.has('kidsParentToken'),false);assert.equal(session.has('kidsParentToken'),false);local.set('kidsParentToken','x');session.set('kidsParentToken','y');await app.fire('logout');assert.equal(local.has('kidsParentToken'),false);assert.equal(session.has('kidsParentToken'),false);assert.equal(app.reloads(),1);
+});
+
+test('manual save sends exact expectedVersion and conflict preserves edit',async()=>{
+  const local=new Map([['kidsParentToken','token']]);
+  const a=await parentApp(async(action,options)=>{
+    if(action==='list')return {list:video+'\n',version:8,setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    if(action==='replace'){
+      const body=JSON.parse(options.body);
+      assert.equal(body.expectedVersion,8);
+      assert.equal(body.list,channel+' // proposed\n');
+      return {status:409,body:{error:'CONFLICT'}};
+    }
+    throw Error(action);
+  },{local});
+  await a.fire('manual-mode');a.elements['approved-text'].value=channel+' // proposed\n';
+  await a.fire('save-list');
+  assert.equal(a.elements['manual-editor'].hidden,false);
+  assert.equal(a.elements['approved-text'].value,channel+' // proposed\n');
+  assert.match(a.elements['list-status'].textContent,/מכשיר אחר/);
+});
+test('late metadata after editing link must not create a stale preview',async()=>{
+  let complete;const local=new Map([['kidsParentToken','token']]);
+  const a=await parentApp(async action=>{
+    if(action==='list')return {list:'',version:3,setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    if(action==='metadata')return new Promise(resolve=>complete=resolve);
+    throw Error(action);
+  },{local});
+  a.elements.link.value=video;
+  const pending=a.elements.inspect.listeners.click[0]();await new Promise(r=>setImmediate(r));
+  a.elements.link.value=channel;await a.fire('link','input');
+  complete({url:video,kind:'video',id:'mVTlbvQ_010',title:'STALE CONTENT'});
+  await pending;
+  assert.equal(a.elements.preview.hidden,true);
+  assert.equal(a.elements['youtube-player'].src,'');
+});
+test('logout aborts pending requests without reviving preview',async()=>{
+  let finish;const local=new Map([['kidsParentToken','token']]);
+  const a=await parentApp(async action=>{
+    if(action==='list')return {list:'',version:2,setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    if(action==='metadata')return new Promise(resolve=>finish=resolve);
+    throw Error(action);
+  },{local});
+  a.elements.link.value=video;
+  const pending=a.elements.inspect.listeners.click[0]();await new Promise(r=>setImmediate(r));
+  await a.fire('logout');finish({url:video,kind:'video',id:'mVTlbvQ_010',title:'LATE'});
+  await pending;assert.equal(local.has('kidsParentToken'),false);assert.equal(a.elements.preview.hidden,true);
+});
+test('two rapid save clicks create only one mutation request',async()=>{
+  let complete,calls=0;const local=new Map([['kidsParentToken','token']]);
+  const a=await parentApp(async action=>{
+    if(action==='list')return {list:'',version:2,setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    if(action==='metadata')return {url:video,kind:'video',id:'mVTlbvQ_010',title:'Approved'};
+    if(action==='mutate'){calls++;return new Promise(resolve=>complete=resolve);}
+    throw Error(action);
+  },{local});
+  a.elements.link.value=video;await a.fire('inspect');
+  const first=a.elements.save.listeners.click[0]();
+  const second=a.elements.save.listeners.click[0]();
+  await new Promise(r=>setImmediate(r));assert.equal(calls,1);
+  complete({changed:true,list:video+'\n',version:3});await Promise.all([first,second]);
+});
+test('leaving management during metadata loading prevents hidden iframe from appearing',async()=>{
+  let finish;const local=new Map([['kidsParentToken','token']]);
+  const a=await parentApp(async action=>{
+    if(action==='list')return {list:'',version:2,setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    if(action==='metadata')return new Promise(resolve=>finish=resolve);
+    throw Error(action);
+  },{local});
+  a.elements.link.value=video;
+  const pending=a.elements.inspect.listeners.click[0]();await new Promise(r=>setImmediate(r));
+  await a.fire('catalog-tab');
+  finish({url:video,kind:'video',id:'mVTlbvQ_010',title:'STALE'});
+  await pending;assert.equal(a.elements['youtube-player'].src,'');
+  assert.equal(a.elements.preview.hidden,true);
 });
