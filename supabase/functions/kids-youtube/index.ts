@@ -457,17 +457,26 @@ Deno.serve(async(req)=>{
         // Single coherent parent-state snapshot and server-pinned channel mapping.
         // Missing catalog means no alias grants; direct video/UC approvals remain.
         const pins:any[]=[];
+        let preparedCatalog:any=null;
         try{
           const approved=approvedCatalogUrls(s.list_text);
-          for(const row of await catalogRows(approved)){
+          // The pins and the optional display cache come from the SAME
+          // already-performed catalog query. No extra HTTP connection, no
+          // provider scraping and no dependency of approval on metadata.
+          const rows=await catalogRows(approved);
+          for(const row of rows){
             if(row.kind!=="channel"||!/^UC[A-Za-z0-9_-]{22}$/.test(row.item_id))continue;
             const time=Date.parse(row.checked_at||"");
             if(!Number.isFinite(time)||time>Date.now()+300000)continue;
             if(!/^https:\/\/www\.youtube\.com\/(?:@|c\/|user\/)/.test(row.approval_url))continue;
             pins.push({url:row.approval_url,id:row.item_id});
           }
+          const candidate={version:s.version,updatedAt:s.updated_at,entries:rows};
+          // The native list endpoint has a bounded 1 MB response contract.
+          // A large catalog is optional and must never prevent fresh grants.
+          if(JSON.stringify(candidate).length<=400000)preparedCatalog=candidate;
         }catch{}
-        return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,pinnedChannels:pins},200,origin);
+        return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,pinnedChannels:pins,...(preparedCatalog?{preparedCatalog}:{})},200,origin);
       }
       return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,setupRequired:!s.password_hash},200,origin);
     }
