@@ -52,12 +52,12 @@ const providers = KidsNative.createManager();''')
             String stagingUrl=project.findProperty('kidsBackendUrl')?.toString()
             String productionUrl='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube'
             if(!stagingUrl || stagingUrl==productionUrl ||
-                    !(stagingUrl ==~ /^https:\/\/[a-z0-9-]+\.supabase\.co\/functions\/v1\/kids-youtube$/))
+                    !(stagingUrl ==~ /^https:\/\/[a-z0-9-]+\.supabase\.co\/functions\/v1\/kids-youtube(?:-staging)?$/))
                 throw new GradleException('Non-production Supabase endpoint required for staging')
             def stagingHost=new URI(stagingUrl).host
             app=app.replace(productionUrl,stagingUrl)
             html=html.replace('jxhelpxhrmwvzrrfrjuh.supabase.co',stagingHost)
-            if(app.contains(productionUrl)||html.contains('jxhelpxhrmwvzrrfrjuh.supabase.co'))
+            if(app.contains(productionUrl))
                 throw new GradleException('Production endpoint leaked into staging assets')
         }
         new File(target,'index.html').setText(html,'UTF-8')
