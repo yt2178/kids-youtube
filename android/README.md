@@ -1,4 +1,4 @@
-# פתיחת הפרויקט ב־Android Studio
+> **התקנה ועדכון:** משכו את main באמצעות `git pull`, פתחו את תיקיית `android` ב־Android Studio והפעילו Run. אין עוד הפצת APK/ZIP, Releases או תגי family-beta אוטומטיים. אתר GitHub Pages מיועד להורים בלבד; קטלוג הילדים זמין באפליקציית Android.\n\n# פתיחת הפרויקט ב־Android Studio
 
 כל הפרויקט נמצא בריפו **yt2178/kids-youtube**, והפרויקט של אפליקציית הילדים בתיקיית **android**.
 
