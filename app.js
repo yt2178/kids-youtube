@@ -467,7 +467,7 @@ function cachedLinkRecord(entry, records) {
   const old = records && records[entry.url];
   if (old && old.kind === entry.kind && (entry.kind === 'video' ? VIDEO_ID : CHANNEL_ID).test(old.id) && (!entry.id || old.id === entry.id)) {
     catalogMetrics.displayCacheHits++;
-    return {kind:old.kind, id:old.id, title:cleanTitle(old.title), name:typeof old.name === 'string' ? old.name.slice(0,300) : '', author:typeof old.author === 'string' ? old.author.slice(0,300) : '', authorId:CHANNEL_ID.test(old.authorId) ? old.authorId : '', published:Number.isFinite(old.published) ? old.published : 0, thumbnail:safeChannelImage(old.thumbnail)};
+    return {kind:old.kind, id:old.id, title:cleanTitle(old.title), name:typeof old.name === 'string' ? old.name.slice(0,300) : '', author:typeof old.author === 'string' ? old.author.slice(0,300) : '', authorId:CHANNEL_ID.test(old.authorId) ? old.authorId : '', published:Number.isFinite(old.published) ? old.published : 0, verifiedAt:Number.isFinite(old.verifiedAt) ? old.verifiedAt : 0, thumbnail:safeChannelImage(old.thumbnail)};
   }
   return entry.id ? {kind:entry.kind, id:entry.id, title:entry.kind==='video' ? cleanTitle(entry.label||'סרטון מאושר') : 'סרטון מאושר', name:entry.kind==='channel' ? cleanTitle(entry.label||'ערוץ מאושר') : 'ערוץ מאושר', author:''} : null;
 }
@@ -497,18 +497,20 @@ async function resolveLink(entry, savedRecord) {
     id = data.ucid || data.browseId;
   }
   const verifiedDisplay = savedRecord && savedRecord.kind===entry.kind && savedRecord.id===id;
+  const freshMetadata=verifiedDisplay && Number.isFinite(savedRecord.verifiedAt)
+    && savedRecord.verifiedAt<=Date.now() && Date.now()-savedRecord.verifiedAt<24*60*60*1000;
   if (entry.kind === 'video') {
-    if(verifiedDisplay && savedRecord.title && savedRecord.title!=='סרטון מאושר')
-      return {kind:'video',...normalizeVideo(savedRecord)};
+    if(freshMetadata && savedRecord.title && savedRecord.title!=='סרטון מאושר')
+      return {kind:'video',...normalizeVideo(savedRecord),verifiedAt:savedRecord.verifiedAt};
     const data = await getVideoMetadata(id);
-    return {kind:'video',...normalizeVideo(data)};
+    return {kind:'video',...normalizeVideo(data),verifiedAt:Date.now()};
   }
-  if(verifiedDisplay && savedRecord.name && savedRecord.name!=='ערוץ מאושר' && safeChannelImage(savedRecord.thumbnail))
-    return {kind:'channel',id,name:savedRecord.name,thumbnail:safeChannelImage(savedRecord.thumbnail)};
+  if(freshMetadata && savedRecord.name && savedRecord.name!=='ערוץ מאושר' && safeChannelImage(savedRecord.thumbnail))
+    return {kind:'channel',id,name:savedRecord.name,thumbnail:safeChannelImage(savedRecord.thumbnail),verifiedAt:savedRecord.verifiedAt};
   const data = await getChannelMetadata(id);
   const images = Array.isArray(data.authorThumbnails) ? data.authorThumbnails : [];
   const image = images.find(item => item && item.width >= 128 && safeChannelImage(item.url)) || images.find(item => item && safeChannelImage(item.url));
-  return {kind:'channel',id,name:cleanTitle(data.author),thumbnail:image ? safeChannelImage(image.url) : ''};
+  return {kind:'channel',id,name:cleanTitle(data.author),thumbnail:image ? safeChannelImage(image.url) : '',verifiedAt:Date.now()};
 }
 async function channelPage(channelId, continuation, deadline) {
   let path = '/api/v1/channels/' + channelId + '/videos';
