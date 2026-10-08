@@ -818,16 +818,13 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
           && Array.isArray(bundled.entries)){
         catalog=bundled;
         debugCatalog('shared-catalog-from-authorization',{loadCycle:thisCycle,entries:bundled.entries.length});
-      }else try {
+      }else if(NATIVE_MODE){
+        // The catalog is optional display data. Never issue another catalog
+        // request from WebView (or via the native bridge) after a successful
+        // authoritative native list. A missing bundle is a cache miss only.
+        debugCatalog('shared-catalog-not-bundled',{loadCycle:thisCycle});
+      }else{
         catalog=await fetchJson(PARENT_API+'?action=catalog',4000);
-      }catch(webError){
-        // A timed-out optional display catalog may be retried ONCE over the
-        // already configured native OkHttp path. This does not grant access.
-        const retryable=webError?.code==='TIMEOUT'||webError?.code==='NETWORK_OR_CORS'||webError?.message==='TIMEOUT';
-        if(!NATIVE_MODE||!retryable||typeof window.KidsNative.fetchCatalog!=='function')throw webError;
-        debugCatalog('catalog-native-fallback-start',{loadCycle:thisCycle,error:webError?.code||'TIMEOUT'});
-        catalog=await window.KidsNative.fetchCatalog({version:remote.version,updatedAt:remote.updatedAt});
-        debugCatalog('catalog-native-fallback-end',{loadCycle:thisCycle,entries:Array.isArray(catalog?.entries)?catalog.entries.length:0});
       }
       if(!stillAuthorized())return;
       if(catalog&&catalog.available!==false&&Array.isArray(catalog.entries)){
