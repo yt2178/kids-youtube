@@ -724,3 +724,45 @@ test('late Invidious channel response cannot revive cards after fail-closed',asy
   finish(json({videos:[row(8)],continuation:null}));
   await pending;assert.equal(a.run('displayed.size'),0);assert.equal(a.elements.grid.children.length,0);
 });
+
+test('warm canonical-video startup uses saved display metadata without provider rediscovery',async()=>{
+  const videoUrl='https://www.youtube.com/watch?v='+id(1);
+  const store=new Map(),config=videoUrl+'\n';
+  const first=await app(config,()=>json({videoId:id(1),title:'כותרת מוכנה',author:'ערוץ מאיר',authorId:A}),store);
+  assert.equal(first.run(`displayed.get('${id(1)}').title`),'כותרת מוכנה');
+  // Deliberately remove the provider cache, leaving only the approved-ID
+  // display snapshot, to prove it is the app's own persistence that saves work.
+  for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
+  const warm=await app(config,()=>{throw Error('Should not fetch provider metadata');},store);
+  assert.equal(warm.run(`displayed.get('${id(1)}').title`),'כותרת מוכנה');
+  assert.equal(warm.calls.length,1);
+  assert.equal(warm.run('catalogMetrics.providerCalls'),0);
+  assert.ok(warm.run('catalogMetrics.displayCacheHits')>=1);
+});
+test('approved explicit note is a safe visible title until metadata arrives',async()=>{
+  const videoUrl='https://www.youtube.com/watch?v='+id(1);
+  const a=await app(videoUrl+' // השם שההורה בחר\n',()=>json({videoId:id(1),title:'כותרת אמיתית',authorId:A}));
+  assert.equal(a.run(`displayed.get('${id(1)}').title`),'כותרת אמיתית');
+  const parsed=a.run(`parseLinkList('${videoUrl} // השם שההורה בחר').entries[0].label`);
+  assert.equal(parsed,'השם שההורה בחר');
+  const fallback=a.run(`cachedLinkRecord(parseLinkList('${videoUrl} // השם שההורה בחר').entries[0],{}).title`);
+  assert.equal(fallback,'השם שההורה בחר');
+});
+test('startup renders a batch of incoming metadata rather than a card rebuild per link',async()=>{
+  const rows=Array.from({length:12},(_,i)=>'https://www.youtube.com/watch?v='+id(i+1)).join('\n');
+  const a=await app(rows,url=>{
+    const m=url.match(/\/api\/v1\/videos\/([A-Za-z0-9_-]{11})/);
+    return json({videoId:m?.[1],title:'מוכן '+m?.[1],authorId:A});
+  });
+  assert.equal(a.run('displayed.size'),12);
+  const count=a.run('catalogMetrics.renderCalls');
+  assert.ok(count<=9,'renderCalls='+count+' should be fewer than 12 metadata results');
+  assert.equal(a.run('catalogMetrics.providerCalls'),12);
+});
+test('partial provider failures schedule bounded automatic retries with no rapid polling',async()=>{
+  const a=await app({videos:[],channels:[{id:A}]},()=>{throw Error('offline provider');},new Map(),{timerCap:5});
+  await until(()=>a.run('catalogRetryAttempts')===3);
+  assert.equal(a.run('catalogRetryAttempts'),3);
+  assert.ok(a.run('catalogMetrics.retries')>=2);
+  assert.equal(a.run('displayed.size'),0);
+});
