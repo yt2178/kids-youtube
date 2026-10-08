@@ -160,7 +160,7 @@ test('native bridge exposes one versioned fresh authorization request without le
  assert.match(source,/whitelist\(true\)/);
  assert.match(source,/lastAuthorization=doc/);
  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
- assert.match(activity,/api\.displayAuthorization\(\)/);
+ assert.match(activity,/api\.tracedDisplayAuthorization\(\)/);
  assert.match(activity,/Set\.of\("whitelist","authorization","catalog","api","clear"\)/);
 });
 test('native WebView is detached before destroy and debug native traces omit arguments and tokens',()=>{
@@ -207,7 +207,7 @@ test('native catalog fallback is display-only, version-pinned, scope-cancellable
  assert.match(native,/lastAuthorization\.optInt\("version",-2\)!=version/);
  assert.match(native,/CATALOG_AUTH_CHANGED/);assert.match(native,/scope\.add\(call\)/);
  assert.match(activity,/method\.equals\("catalog"\)\)result=api\.sharedCatalog/);
- assert.match(activity,/new RequestScope\(14000\)/);
+ assert.match(activity,/new RequestScope\(14000,id,jsCycle,jsRequestId\)/);
 });
 test('debug native network trace is limited to phase timings and does not log URLs or signed streams',()=>{
  const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/ExtractorDownloader.java'),'utf8');
@@ -285,7 +285,7 @@ test('one JS cycle joins native worker queue, lock wait and OkHttp phases withou
   assert.match(api,/scope\.phase\("authorization-lock-wait"/);
   assert.match(downloader,/RequestScope scope=RequestScope\.CURRENT\.get\(\)/);
   assert.match(downloader,/trace=scope==null\?/);
-  assert.match(downloader,/kind=\+kind\+trace\+" phase="/);
+  assert.match(downloader,/kind\+trace\+" phase="/);
   // Do not print untrusted WebView sourceId, console messages or signed URLs.
   assert.doesNotMatch(activity,/message\.sourceId\(\)/);
   assert.match(activity,/logWebDiagnostic\(message\.message\(\)\)/);
