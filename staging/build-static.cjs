@@ -25,7 +25,7 @@ function build(url=process.env.STAGING_BACKEND_URL,out=path.join(root,'staging-d
       const manifest=JSON.parse(text);manifest.name+=' — בדיקה';manifest.short_name+=' בדיקה';
       text=JSON.stringify(manifest,null,2);
     }
-    if(text.includes(production))
+    if(text.split(production).slice(1).some(suffix=>!suffix.startsWith('-staging')))
       throw Error('Production backend remains in staging file '+name);
     fs.writeFileSync(path.join(out,name),text);
   }
