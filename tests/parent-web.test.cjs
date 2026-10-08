@@ -11,8 +11,8 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   const html=fs.readFileSync('parents.html','utf8'),script=fs.readFileSync('parents.js','utf8');
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
-  assert.match(html,/font-src 'self';/);assert.doesNotMatch(html,/fonts\.gstatic\.com|https:\/\/\*\./);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
-  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
+  assert.match(html,/font-src 'self';/);assert.doesNotMatch(html,/web-share|clipboard-write/);assert.doesNotMatch(html,/fonts\.gstatic\.com|https:\/\/\*\./);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
+  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261008c/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
@@ -29,22 +29,22 @@ async function parentApp(handler,{local=new Map(),session=new Map()}={}){
   const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements.preview.hidden=true;elements.remember.checked=true;
   let reloads=0;const calls=[],windowListeners={};const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(local),sessionStorage:memoryStorage(session),
-    KidsParentLinks:links,URL,Map,Object,String,JSON,Error,encodeURIComponent,setTimeout,clearTimeout,confirm:()=>true,location:{origin:'https://example.test',reload(){reloads++;}},addEventListener:(k,fn)=>(windowListeners[k]??=[]).push(fn),
-    fetch:async(url,options={})=>{const action=new URL(String(url)).searchParams.get('action');calls.push({action,options});const result=await handler(action,options);return {ok:result.status===undefined||result.status<400,status:result.status??200,json:async()=>result.body??result};}
+    KidsParentLinks:links,URL,Map,Object,String,JSON,Error,AbortController,encodeURIComponent,setTimeout,clearTimeout,confirm:()=>true,location:{origin:'https://example.test',reload(){reloads++;}},addEventListener:(k,fn)=>(windowListeners[k]??=[]).push(fn),
+    fetch:async(url,options={})=>{const action=new URL(String(url)).searchParams.get('action');calls.push({action,options});const work=Promise.resolve().then(()=>handler(action,options));const result=options.signal?await Promise.race([work,new Promise((_,reject)=>{if(options.signal.aborted){const e=Error('aborted');e.name='AbortError';reject(e);return;}options.signal.addEventListener('abort',()=>{const e=Error('aborted');e.name='AbortError';reject(e);},{once:true});})]):await work;return {ok:result.status===undefined||result.status<400,status:result.status??200,json:async()=>result.body??result};}
   });
   context.window=context;context.top=context;vm.runInContext(fs.readFileSync('parents.js','utf8'),context,{filename:'parents.js'});await new Promise(r=>setImmediate(r));
   async function fire(id,type='click'){for(const fn of elements[id].listeners[type]||[])await fn();await new Promise(r=>setImmediate(r));}
   return {elements,calls,local,session,windowListeners,fire,reloads:()=>reloads};
 }
 
-test('parent management refuses to boot when framed by another origin',async()=>{
+test('parent management refuses to boot when framed, including by the same origin',async()=>{
   const local=new Map([['kidsParentToken','secret']]);let requests=0;
   const elements={};
   const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
   for(const id of ids)elements[id]=new ParentElement();
   const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},
-    localStorage:memoryStorage(local),sessionStorage:memoryStorage(new Map()),KidsParentLinks:links,URL,Map,Object,String,JSON,Error,encodeURIComponent,setTimeout,clearTimeout,
+    localStorage:memoryStorage(local),sessionStorage:memoryStorage(new Map()),KidsParentLinks:links,URL,Map,Object,String,JSON,Error,AbortController,encodeURIComponent,setTimeout,clearTimeout,
     confirm:()=>true,location:{origin:'https://example.test',reload(){}},fetch:async()=>{requests++;return {ok:true,status:200,json:async()=>({})};},addEventListener(){},
   });
   context.window=context;context.top={location:{get origin(){throw new Error('cross-origin');}}};
@@ -52,6 +52,34 @@ test('parent management refuses to boot when framed by another origin',async()=>
   await new Promise(r=>setImmediate(r));
   assert.equal(requests,0);assert.equal(elements.login.disabled,true);assert.match(elements['auth-status'].textContent,/לפתוח את אתר ההורים ישירות/);
   assert.equal(local.get('kidsParentToken'),'secret');
+});
+
+test('parent management trust boundary is top-level only',()=>{
+  const source=fs.readFileSync('parents.js','utf8');assert.match(source,/const TRUSTED_FRAME=window\.top===window/);
+});
+
+test('parent Supabase requests have a finite browser-side deadline and abort signal',async()=>{
+  const source=fs.readFileSync('parents.js','utf8');
+  assert.match(source,/PARENT_REQUEST_TIMEOUT_MS=12000/);assert.match(source,/new AbortController\(\)/);assert.match(source,/signal:controller\.signal/);
+  assert.match(source,/error&&error\.name==='AbortError'/);
+});
+
+test('stalled parent Supabase request is actually aborted by the browser deadline',async()=>{
+  const source=fs.readFileSync('parents.js','utf8').replace('PARENT_REQUEST_TIMEOUT_MS=12000','PARENT_REQUEST_TIMEOUT_MS=5');
+  const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements['auth-spinner'].hidden=true;
+  let aborted=false;
+  const context=vm.createContext({document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(new Map()),sessionStorage:memoryStorage(new Map()),KidsParentLinks:links,URL,Map,Object,String,JSON,Error,AbortController,encodeURIComponent,setTimeout,clearTimeout,confirm:()=>true,location:{origin:'https://example.test',reload(){}},addEventListener(){},fetch:(_url,options)=>new Promise((_resolve,reject)=>{options.signal.addEventListener('abort',()=>{aborted=true;const e=Error('aborted');e.name='AbortError';reject(e);},{once:true});})});
+  context.window=context;context.top=context;vm.runInContext(source,context,{filename:'parents-timeout.js'});
+  await new Promise(r=>setTimeout(r,20));
+  assert.equal(aborted,true);assert.match(elements['auth-status'].textContent,/לא הצלחנו להתחבר כרגע/);assert.equal(elements['auth-spinner'].hidden,true);
+});
+
+test('channel image loading has a finite deadline and falls back cleanly',()=>{
+  const source=fs.readFileSync('parents.js','utf8');
+  assert.match(source,/CHANNEL_IMAGE_TIMEOUT_MS=8000/);
+  assert.match(source,/channelImageDeadline=setTimeout/);
+  assert.match(source,/removeAttribute\('src'\);ui\['channel-symbol'\]\.hidden=false/);
 });
 
 test('remembered parent session renders approved cards',async()=>{
@@ -104,6 +132,18 @@ test('hidden parent views unload YouTube iframes and restore preview only when n
   app.elements.link.value=video;await app.fire('inspect');assert.match(app.elements['youtube-player'].src,/youtube\.com\/embed/);
   await app.fire('catalog-tab');assert.equal(app.elements['youtube-player'].src,'');assert.match(app.elements['parent-catalog'].src,/parentCatalog=1/);
   await app.fire('management-tab');assert.equal(app.elements['parent-catalog'].src,'');assert.match(app.elements['youtube-player'].src,/youtube\.com\/embed/);
+});
+
+test('existing approved channel is detected through equivalent canonical channel URLs',async()=>{
+  const local=new Map([['kidsParentToken','token']]);
+  const app=await parentApp(async action=>{
+    if(action==='list')return {list:'https://www.youtube.com/@meirshows // ערוץ מאיר\n',setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    if(action==='metadata')return {url:'https://www.youtube.com/@meirshows',kind:'channel',id:null,title:'ערוץ מאיר',author:'',thumbnail:''};
+    throw Error(action);
+  },{local});
+  app.elements.link.value='https://youtube.com/@meirshows/videos';await app.fire('inspect');
+  assert.match(app.elements.status.textContent,/כבר קיים ברשימה/);assert.equal(app.elements.save.disabled,true);
 });
 
 test('existing approved video is identified before save and duplicate add is disabled',async()=>{
