@@ -26,7 +26,6 @@ import org.json.*;
 public final class MainActivity extends Activity {
     static final String ORIGIN="https://appassets.androidplatform.net";
     static final String HOME=ORIGIN+"/assets/index.html";
-    static final String SUPABASE_HOST="jxhelpxhrmwvzrrfrjuh.supabase.co";
     private String effectiveSupabaseHost;
     static final String SUPABASE_PATH="/functions/v1/kids-youtube";
     private final Handler handler=new Handler(Looper.getMainLooper());
