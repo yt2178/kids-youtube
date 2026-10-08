@@ -121,7 +121,7 @@ public final class MainActivity extends Activity {
     }
     private void handleDeepLink(android.content.Intent intent) {
         Uri data=intent==null?null:intent.getData();
-        if(data==null || !"kidsyoutube".equals(data.getScheme()) || !"video".equals(data.getHost()))return;
+        if(data==null || !getString(R.string.kids_deep_link_scheme).equals(data.getScheme()) || !"video".equals(data.getHost()))return;
         List<String> parts=data.getPathSegments();
         String id=parts.size()==1?parts.get(0):"";
         if(ApprovalPolicy.VIDEO.matcher(id).matches())openPlayer(id);
