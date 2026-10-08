@@ -766,3 +766,22 @@ test('partial provider failures schedule bounded automatic retries with no rapid
   assert.ok(a.run('catalogMetrics.retries')>=2);
   assert.equal(a.run('displayed.size'),0);
 });
+
+test('measured warm startup reduces provider requests and metadata phase duration',async()=>{
+  const list=Array.from({length:9},(_,i)=>'https://www.youtube.com/watch?v='+id(i+1)).join('\n');
+  const store=new Map();
+  const cold=await app(list,async url=>{
+    await new Promise(resolve=>setTimeout(resolve,25));
+    const match=url.match(/\/api\/v1\/videos\/([A-Za-z0-9_-]{11})/);
+    return json({videoId:match?.[1],title:'מוכן',authorId:A});
+  },store);
+  const coldProvider=cold.run('catalogMetrics.providerCalls'),coldMetadataMs=cold.run('catalogMetrics.metadataMs');
+  for(const key of [...store.keys()])if(key.startsWith('kidsYoutubeData:'))store.delete(key);
+  const warm=await app(list,()=>{throw Error('No rediscovery expected')},store);
+  const warmProvider=warm.run('catalogMetrics.providerCalls'),warmMetadataMs=warm.run('catalogMetrics.metadataMs');
+  assert.equal(coldProvider,9);assert.equal(warmProvider,0);
+  assert.ok(coldMetadataMs>=45,'expected a measurable simulated cold metadata phase: '+coldMetadataMs);
+  assert.ok(warmMetadataMs<coldMetadataMs,'warm '+warmMetadataMs+' vs cold '+coldMetadataMs);
+  console.log('SIMULATED_CATALOG_BENCHMARK coldProviders='+coldProvider+
+    ' warmProviders='+warmProvider+' coldMetadataMs='+coldMetadataMs+' warmMetadataMs='+warmMetadataMs);
+});
