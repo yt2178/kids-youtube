@@ -1,0 +1,38 @@
+name: Isolated Kids YouTube staging smoke
+on:
+  push:
+    branches: [system-audit-stability-security-ux]
+    paths:
+      - 'staging/**'
+      - '.github/workflows/staging-smoke.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      STAGING_BACKEND_URL: https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube-staging
+      KIDS_BUILD_SHA: 0d7ad9a6e9e2eff173eba148ebf5df3e67aa51c4
+      STAGING_SITE: https://kids-youtube-audit-staging.onrender.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build isolated staging assets
+        run: node staging/build-static.cjs
+      - name: Verify deployed staging frontend identifies the exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if curl --fail --silent --show-error "$STAGING_SITE/build.json" -o /tmp/build.json; then break; fi
+            sleep 3
+          done
+          node -e "const j=require('/tmp/build.json'); if(j.candidateSha!==process.env.KIDS_BUILD_SHA||j.staging!==true) { console.error(j); process.exit(1) }"
+          curl --fail --silent --show-error "$STAGING_SITE/parents.html" -o /tmp/parents.html
+          grep -q 'kids-youtube-staging' staging-dist/parents.js
+      - name: Live isolated auth and server-catalog acceptance
+        run: node staging/live-smoke.cjs
