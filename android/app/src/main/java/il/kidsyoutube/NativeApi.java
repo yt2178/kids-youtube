@@ -75,6 +75,9 @@ final class NativeApi {
         }
     }
     String whitelist(boolean force) throws Exception {
+        return whitelist(force,true);
+    }
+    private String whitelist(boolean force,boolean withDisplayCatalog) throws Exception {
         // Only state reads and commits hold this monitor. TCP/TLS, response
         // headers and body must never hold the shared authorization lock.
         synchronized(this){
@@ -84,9 +87,11 @@ final class NativeApi {
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
         final long generation=authorizationGeneration.incrementAndGet();
         if(force)synchronized(this){checkedAt=0;lastAuthorization=null;}
-        okhttp3.Request request=new okhttp3.Request.Builder().url(listUrl)
+        okhttp3.HttpUrl endpoint=Objects.requireNonNull(okhttp3.HttpUrl.parse(listUrl));
+        if(!withDisplayCatalog)endpoint=endpoint.newBuilder().addQueryParameter("detail","grants").build();
+        okhttp3.Request request=new okhttp3.Request.Builder().url(endpoint)
                 .header("Cache-Control","no-cache").tag(String.class,"authorization").build();
-        Call call=downloader.client.newCall(request);
+        Call call=downloader.authorizationClient.newCall(request);
         if(scope!=null)scope.add(call);
         try(okhttp3.Response response=call.execute()){
             if(!response.isSuccessful())throw new IOException("WHITELIST_UNAVAILABLE");
@@ -167,7 +172,7 @@ final class NativeApi {
     JSONObject displayAuthorization() throws Exception {
         // Fail closed on transport errors, then copy only a committed fresh
         // document under a short state lock (never around network I/O).
-        whitelist(true);
+        whitelist(true,true);
         synchronized(this){
             if(lastAuthorization==null || !lastAuthorization.has("updatedAt")
                     || !lastAuthorization.has("version")
@@ -210,7 +215,7 @@ final class NativeApi {
         cache.put(key,new Cache(value,ttl,policy.fingerprint));
     }
     Object request(String path) throws Exception {
-        whitelist(false);
+        whitelist(false,false);
         ensureExtractor();
         if(path==null || path.length()>22000)throw new IOException("INVALID_REQUEST");
         Cache hit=cache.get(path);if(valid(hit))return hit.data;
@@ -322,7 +327,22 @@ final class NativeApi {
     }
     static final class Source {
         final String video,audio;
-        Source(String video,String audio){this.video=video;this.audio=audio;}
+        final int height,bitrate;
+        Source(String video,String audio){this(video,audio,0,0);}
+        Source(String video,String audio,int height,int bitrate){
+            this.video=video;this.audio=audio;this.height=height;this.bitrate=bitrate;
+        }
+    }
+    static int streamBitrate(VideoStream video){
+        int b=video.getBitrate();
+        if(b>0)return b;
+        int h=resolution(video);
+        // Unknown bitrate is an estimate, never presented as a measured value.
+        if(h<=144)return 180000;
+        if(h<=240)return 350000;
+        if(h<=360)return 700000;
+        if(h<=480)return 1200000;
+        return 2100000;
     }
     static final class Playback {
         final String id,title;
@@ -337,7 +357,7 @@ final class NativeApi {
     }
     Playback playback(String id,long requestId) throws Exception {
         // Every playback starts from a fresh authoritative parent list.
-        whitelist(true);
+        whitelist(true,false);
         debugPlaybackAuthorization(requestId,"auth-before-extraction-ok");
         ensureExtractor();
         try {
@@ -352,33 +372,30 @@ final class NativeApi {
             }
             if(!policy.allows(id,author,approvedChannels()))throw new IOException("NOT_APPROVED");
             if(extractor.getAgeLimit()>0)throw new IOException("VIDEO_UNAVAILABLE");
+            // NewPipe provides fixed-quality progressive MP4 links here, not adaptive HLS/DASH.
             List<Source> sources=new ArrayList<>();
-            List<VideoStream> combined=new ArrayList<>(extractor.getVideoStreams());
-            combined.sort(Comparator.comparingInt(NativeApi::resolution).reversed());
             Set<String> seen=new HashSet<>();
-            for(VideoStream video:combined) {
-                if(compatible(video) && !video.isVideoOnly() && seen.add(video.getContent()))
-                    sources.add(new Source(video.getContent(),null));
-                if(sources.size()==2)break;
+            for(VideoStream video:extractor.getVideoStreams()){
+                if(compatible(video)&&!video.isVideoOnly()&&seen.add(video.getContent()))
+                    sources.add(new Source(video.getContent(),null,resolution(video),streamBitrate(video)));
             }
-            // Native Media3 can join separate video/audio tracks, unlike a plain
-            // <video src> MP4. No SABR protocol or authorization bypass is added.
-            List<VideoStream> only=new ArrayList<>(extractor.getVideoOnlyStreams());
-            only.sort(Comparator.comparingInt(NativeApi::resolution).reversed());
             AudioStream audio=null;
             for(AudioStream candidate:extractor.getAudioStreams())
                 if(candidate.getFormat()==MediaFormat.M4A && candidate.isUrl()
                         && candidate.getDeliveryMethod()==DeliveryMethod.PROGRESSIVE_HTTP
                         && ApprovalPolicy.safeMedia(candidate.getContent())) {audio=candidate;break;}
-            if(audio!=null)for(VideoStream video:only)
-                if(compatible(video) && video.isVideoOnly() && seen.add(video.getContent())) {
-                    sources.add(new Source(video.getContent(),audio.getContent()));break;
-                }
+            if(audio!=null)for(VideoStream video:extractor.getVideoOnlyStreams()){
+                if(compatible(video)&&video.isVideoOnly()&&seen.add(video.getContent()))
+                    sources.add(new Source(video.getContent(),audio.getContent(),resolution(video),streamBitrate(video)+128000));
+            }
+            sources.sort(Comparator.comparingInt((Source item)->item.bitrate)
+                    .thenComparingInt(item->item.height));
+            if(sources.size()>10)sources=new ArrayList<>(sources.subList(0,10));
             if(sources.isEmpty())throw new IOException("NO_SUPPORTED_STREAM");
             RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
             // Re-read the authoritative list after extraction too. A parent may
             // revoke access while network extraction is still in progress.
-            whitelist(true);
+            whitelist(true,false);
             if(!policy.allows(id,author,approvedChannels()))throw new IOException("NOT_APPROVED");
             debugPlaybackAuthorization(requestId,"auth-after-extraction-ok");
             return new Playback(id,clean(extractor.getName()),sources);
@@ -407,6 +424,7 @@ final class NativeApi {
             if(cause instanceof javax.net.ssl.SSLException)return "TLS_ERROR";
             if(cause instanceof java.net.ConnectException || cause instanceof java.net.NoRouteToHostException)
                 return "CONNECT_ERROR";
+            if(cause instanceof java.net.SocketException)return "NETWORK_ERROR";
             if(cause instanceof java.io.InterruptedIOException)return "TIMEOUT";
             if(cause instanceof IOException && (text.contains("WHITELIST_UNAVAILABLE")
                     ||text.contains("CATALOG_UNAVAILABLE")||text.contains("unexpected end of stream")
