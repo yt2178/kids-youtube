@@ -13,6 +13,8 @@ import androidx.media3.common.*;
 import androidx.media3.datasource.*;
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter;
 import androidx.media3.exoplayer.source.*;
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy;
 import androidx.media3.ui.PlayerView;
@@ -41,7 +43,13 @@ public final class MainActivity extends Activity {
     private LinearLayout overlay;
     private TextView title,message;
     private ProgressBar loading;
-    private Button retry;
+    private Button retry,quality;
+    private String qualityMode="auto";
+    private List<Integer> sourceOrder=List.of();
+    private long observedBandwidthBps=-1;
+    private long playbackStartedAt;
+    private DefaultBandwidthMeter bandwidthMeter;
+    private androidx.media3.exoplayer.upstream.BandwidthMeter.EventListener bandwidthListener;
     private PlayerView playerView;
     private ExoPlayer player;
     private long mediaOwnerGeneration;
@@ -104,6 +112,13 @@ public final class MainActivity extends Activity {
         debugStartup("onCreate-start");
         effectiveSupabaseHost=Uri.parse(getString(R.string.kids_backend_url)).getHost();
         api=new NativeApi(this);
+        qualityMode=getSharedPreferences("kids_prefs",MODE_PRIVATE).getString("quality","auto");
+        bandwidthMeter=DefaultBandwidthMeter.getSingletonInstance(this);
+        bandwidthListener=(elapsedMs,bytes,bitrateEstimate)->{
+            if(elapsedMs>=250 && bytes>=8192 && bitrateEstimate>0)
+                observedBandwidthBps=bitrateEstimate;
+        };
+        bandwidthMeter.addEventListener(handler,bandwidthListener);
         debugStartup("native-api-created");
         FrameLayout root=new FrameLayout(this);root.setBackgroundColor(Color.rgb(26,26,46));
         if(Build.VERSION.SDK_INT>=30){
@@ -138,6 +153,10 @@ public final class MainActivity extends Activity {
         retry=button("נסו שוב");retry.setVisibility(View.GONE);
         retry.setOnClickListener(v->{if(active!=null)openPlayer(active.id,title.getText().toString());});
         overlay.addView(retry,new LinearLayout.LayoutParams(-1,dp(64)));
+        quality=button("איכות: אוטומטי");quality.setTextSize(16);
+        quality.setOnClickListener(v->showQualityMenu());
+        overlay.addView(quality,new LinearLayout.LayoutParams(-1,dp(48)));
+        updateQualityLabel();
         playerView=new PlayerView(this);
         playerView.setShowNextButton(false);playerView.setShowPreviousButton(false);
         playerView.setShowFastForwardButton(true);playerView.setShowRewindButton(true);
@@ -324,7 +343,41 @@ public final class MainActivity extends Activity {
             default:return "UNKNOWN";
         }
     }
-    private void openPlayer(String id,String displayTitle) {
+    private void updateQualityLabel(){
+        if(quality==null)return;
+        quality.setText("איכות: "+("save".equals(qualityMode)?"חיסכון בנתונים":
+                qualityMode.startsWith("manual:")?qualityMode.substring(7)+"p":"אוטומטי"));
+    }
+    private void selectQuality(String next){
+        if(next.equals(qualityMode))return;
+        long position=player!=null?player.getCurrentPosition():resumeAt;
+        qualityMode=next;
+        getSharedPreferences("kids_prefs",MODE_PRIVATE).edit().putString("quality",next).apply();
+        updateQualityLabel();
+        if(active!=null&&!active.sources.isEmpty())
+            openPlayer(active.id,title.getText().toString(),Math.max(0,position));
+    }
+    private void showQualityMenu(){
+        PopupMenu menu=new PopupMenu(this,quality);
+        menu.getMenu().add(0,1,0,"אוטומטי");
+        menu.getMenu().add(0,2,1,"חיסכון בנתונים");
+        if(active!=null){
+            SortedSet<Integer> resolutions=new TreeSet<>();
+            for(NativeApi.Source source:active.sources)if(source.height>0)resolutions.add(source.height);
+            int n=2;
+            for(int height:resolutions)menu.getMenu().add(0,100+height,++n,height+"p");
+        }
+        menu.setOnMenuItemClickListener(item->{
+            int id=item.getItemId();
+            selectQuality(id==1?"auto":id==2?"save":"manual:"+(id-100));
+            return true;
+        });
+        menu.show();
+    }
+    private void openPlayer(String id,String displayTitle){
+        openPlayer(id,displayTitle,0);
+    }
+    private void openPlayer(String id,String displayTitle,long resumePosition) {
         android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
         if(keyboard!=null)keyboard.hideSoftInputFromWindow(web.getWindowToken(),0);
         long generation=++playerGeneration;
@@ -335,11 +388,13 @@ public final class MainActivity extends Activity {
             : "טוענים את פרטי הסרטון…";
         active=new NativeApi.Playback(id,initialTitle,List.of());
         logPlayback(generation,"request",null);
-        sourceIndex=0;resumeAt=0;
+        sourceIndex=0;sourceOrder=List.of();resumeAt=Math.max(0,resumePosition);
+        playbackStartedAt=android.os.SystemClock.elapsedRealtime();
         overlay.setVisibility(View.VISIBLE);web.setVisibility(View.INVISIBLE);
         title.setText(initialTitle);showLoading(true);showMessage("מתחבר...");retry.setVisibility(View.GONE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        RequestScope scope=new RequestScope(20000);
+        // Two fresh grant checks still bracket extraction on slow links.
+        RequestScope scope=new RequestScope(85000);
         playTask=new Task("player",scope,()->{
             scope.enter();
             try {
@@ -351,6 +406,10 @@ public final class MainActivity extends Activity {
                 handler.post(()->{
                     if(destroyed || generation!=playerGeneration || scope.cancelled)return;
                     active=result;
+                    List<Integer> rates=new ArrayList<>(),heights=new ArrayList<>();
+                    for(NativeApi.Source source:result.sources){rates.add(source.bitrate);heights.add(source.height);}
+                    sourceOrder=PlaybackChoices.order(rates,heights,qualityMode,observedBandwidthBps);
+                    sourceIndex=0;
                     if(result.title!=null&&!result.title.isBlank()&&!result.title.equals("סרטון מאושר"))
                         title.setText(result.title);
                     trySource(generation);
@@ -374,6 +433,10 @@ public final class MainActivity extends Activity {
         // media URLs can redirect between HTTPS media hosts. Follow those redirects
         // ourselves so every Location target is validated before connecting to it.
         return base.newBuilder()
+                // Progressive media transfers must not inherit the extractor 12s call cap.
+                .callTimeout(0,TimeUnit.MILLISECONDS)
+                .connectTimeout(8,TimeUnit.SECONDS)
+                .readTimeout(20,TimeUnit.SECONDS)
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .addInterceptor(chain->{
