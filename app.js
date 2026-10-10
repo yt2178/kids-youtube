@@ -13,8 +13,8 @@ const SETTINGS = Object.freeze({
   channelBudgetMs: 12500,
   maxPagesPerChannel: 100,
   maxVideosWithoutLimit: 5000,
-  parallelChannels: 3,
-  cardsPerPage: 60,
+  parallelChannels: 3, // Browser only; native metadata is throttled below
+  cardsPerPage: 24, // Do not start 60 thumbnail transfers on a weak connection
   playerWaitMs: 6000,
   playerBudgetMs: 18500,
   metadataTTL: 6 * 60 * 60 * 1000,
@@ -383,7 +383,7 @@ function render(config, lists) {
       card.setAttribute('aria-label', (PARENT_CATALOG ? 'צפייה בסרטון: ' : 'פתיחה באפליקציה: ') + item.title);
       const thumb = document.createElement('span'); thumb.className = 'thumb';
       const image = document.createElement('img');
-      image.src = 'https://img.youtube.com/vi/' + item.id + '/hqdefault.jpg';
+      image.src = 'https://img.youtube.com/vi/' + item.id + '/mqdefault.jpg';
       image.alt = ''; image.loading = PARENT_CATALOG ? 'eager' : 'lazy'; image.decoding = 'async'; image.referrerPolicy = 'no-referrer';
       image.addEventListener('error', () => { image.hidden = true; }, {once:true});
       const play = document.createElement('span'); play.className = 'play'; play.setAttribute('aria-hidden','true');
@@ -454,7 +454,7 @@ async function fetchAuthorization(source='initial'){
   if(NATIVE_MODE && typeof window.KidsNative.fetchAuthorization==='function'){
     const requestId=++debugRequestSerial,started=Date.now();
     catalogMetrics.requests++;
-    debugCatalog('request-start',{requestId,loadCycle,kind:'list',source,transport:'native',timeoutMs:15000});
+    debugCatalog('request-start',{requestId,loadCycle,kind:'list',source,transport:'native',timeoutMs:36000});
     try{
       const doc=await window.KidsNative.fetchAuthorization({loadCycle,requestId,source});
       if(!doc||typeof doc.list!=='string'||!Number.isSafeInteger(doc.version)
@@ -702,7 +702,7 @@ async function loadMoreVideos() {
 }
 async function parallelMap(items, worker) {
   let index = 0;
-  await Promise.all(Array.from({length:Math.min(SETTINGS.parallelChannels, items.length)}, async () => {
+  await Promise.all(Array.from({length:Math.min(NATIVE_MODE?1:SETTINGS.parallelChannels, items.length)}, async () => {
     while (index < items.length) { const item = items[index++]; await worker(item); }
   }));
 }
