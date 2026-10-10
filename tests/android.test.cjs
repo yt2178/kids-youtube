@@ -259,7 +259,7 @@ test('native authorization distinguishes generic list failure from video availab
   assert.match(source,/return "NETWORK_ERROR"/);
   assert.match(source,/return "VIDEO_UNAVAILABLE"/);
   assert.match(activity,/reason=scope\.cancelled\?"CANCELLED":NativeApi\.errorCode\(e\)/);
-  assert.match(source,/JSONObject displayAuthorization\(\) throws Exception[\s\S]*?whitelist\(true,true\)/);
+  assert.match(source,/JSONObject displayAuthorization\(boolean withDisplayCatalog\) throws Exception[\s\S]*?whitelist\(true,withDisplayCatalog\)/);
   assert.match(source,/AUTH_SUPERSEDED/);
   assert.match(source,/authorizationGeneration\.incrementAndGet\(\)/);
 });
