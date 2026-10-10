@@ -379,3 +379,29 @@ test('native snapshot is bounded and serves catalog in one client request',async
  assert.equal(f.stateReads()-before,2,'two internal authority reads, one external response');
  assert.equal(f.catalogReads()-beforeCatalog,1);
 });
+
+test('runtime: compact native polls retain fresh permissions and pins without display payload',async()=>{
+  const f=await createFixture(),handle='https://www.youtube.com/@meirshows';
+  const id='UC'+'A'.repeat(22);
+  f.db.list_text=handle+'\n'+A+'\n';
+  f.catalog.set(handle,{approval_url:handle,kind:'channel',item_id:id,
+    title:'בדיקת ערוץ',checked_at:new Date().toISOString(),page:[],pages_loaded:1,complete:false});
+  const full=await f.request('list',{method:'GET',query:{format:'native'}});
+  const compact=await f.request('list',{method:'GET',query:{format:'native',detail:'grants'}});
+  assert.equal(full.status,200);
+  assert.equal(compact.status,200);
+  assert.ok(full.data.preparedCatalog);
+  assert.equal(compact.data.preparedCatalog,undefined);
+  assert.equal(compact.data.version,full.data.version);
+  assert.equal(compact.data.updatedAt,full.data.updatedAt);
+  assert.equal(compact.data.list,full.data.list);
+  assert.deepEqual(JSON.parse(JSON.stringify(compact.data.pinnedChannels)),
+    JSON.parse(JSON.stringify(full.data.pinnedChannels)));
+  // Parent revocation must be reflected on the next compact check.
+  f.db.version++;
+  f.db.list_text=A+'\n';
+  const revoked=await f.request('list',{method:'GET',query:{format:'native',detail:'grants'}});
+  assert.equal(revoked.data.version,f.db.version);
+  assert.equal(revoked.data.list,A+'\n');
+  assert.equal(revoked.data.pinnedChannels.length,0);
+});

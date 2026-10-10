@@ -88,7 +88,7 @@ test('native authorization fails closed, persists no approval snapshot, and play
   const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
   assert.match(source,/String displayWhitelist\(\) throws Exception \{[\s\S]*return whitelist\(true\);/);
   const playback=source.slice(source.indexOf('Playback playback(String id)'));
-  assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+  assert.ok((playback.match(/whitelist\(true,false\)/g)||[]).length>=2);
   assert.doesNotMatch(source,/getSharedPreferences|native-list|putString\("display"/);
 });
 test('native player shows a real loading indicator until playback is ready or fails',()=>{
@@ -162,7 +162,7 @@ test('native bridge exposes one versioned fresh authorization request without le
  assert.match(source,/whitelist\(true\)/);
  assert.match(source,/lastAuthorization=doc/);
  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
- assert.match(activity,/api\.tracedDisplayAuthorization\(\)/);
+ assert.match(activity,/api\.tracedDisplayAuthorization\(/);
  assert.match(activity,/Set\.of\("whitelist","authorization","catalog","api","clear"\)/);
 });
 test('native WebView is detached before destroy and debug native traces omit arguments and tokens',()=>{
@@ -190,7 +190,7 @@ test('debug Media3 diagnostics record states, playing, first frame and release r
   assert.match(native,/auth-after-extraction-ok/);
   assert.match(main,/api\.playback\(id,generation\)/);
   const playback=native.slice(native.indexOf('Playback playback(String id,long requestId)'));
-  assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+  assert.ok((playback.match(/whitelist\(true,false\)/g)||[]).length>=2);
 });
 
 test('native display catalog fallback uses a separate bridge method and matching expected version',async()=>{
@@ -209,7 +209,7 @@ test('native catalog fallback is display-only, version-pinned, scope-cancellable
  assert.match(native,/lastAuthorization\.optInt\("version",-2\)!=version/);
  assert.match(native,/CATALOG_AUTH_CHANGED/);assert.match(native,/scope\.add\(call\)/);
  assert.match(activity,/method\.equals\("catalog"\)\)result=api\.sharedCatalog/);
- assert.match(activity,/new RequestScope\(14000,id,jsCycle,jsRequestId\)/);
+ assert.match(activity,/new RequestScope\(\(method\.equals\("authorization"\)\|\|method\.equals\("whitelist"\)\)\?34000:14000,id,jsCycle,jsRequestId\)/);
 });
 test('debug native network trace is limited to phase timings and does not log URLs or signed streams',()=>{
  const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/ExtractorDownloader.java'),'utf8');
@@ -225,7 +225,7 @@ test('debug native network trace is limited to phase timings and does not log UR
 test('Android double fresh playback validation is unchanged after catalog transport addition',()=>{
  const native=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
  const playback=native.slice(native.indexOf('Playback playback(String id,long requestId)'));
- assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+ assert.ok((playback.match(/whitelist\(true,false\)/g)||[]).length>=2);
  assert.match(playback,/auth-before-extraction-ok/);
  assert.match(playback,/auth-after-extraction-ok/);
 });
@@ -259,7 +259,7 @@ test('native authorization distinguishes generic list failure from video availab
   assert.match(source,/return "NETWORK_ERROR"/);
   assert.match(source,/return "VIDEO_UNAVAILABLE"/);
   assert.match(activity,/reason=scope\.cancelled\?"CANCELLED":NativeApi\.errorCode\(e\)/);
-  assert.match(source,/JSONObject displayAuthorization\(\) throws Exception[\s\S]*?whitelist\(true\)/);
+  assert.match(source,/JSONObject displayAuthorization\(boolean withDisplayCatalog\) throws Exception[\s\S]*?whitelist\(true,withDisplayCatalog\)/);
   assert.match(source,/AUTH_SUPERSEDED/);
   assert.match(source,/authorizationGeneration\.incrementAndGet\(\)/);
 });
@@ -282,9 +282,9 @@ test('one JS cycle joins native worker queue, lock wait and OkHttp phases withou
   const api=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
   const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
   assert.match(app,/fetchAuthorization\(\{loadCycle,requestId,source\}\)/);
-  assert.match(activity,/new RequestScope\(14000,id,jsCycle,jsRequestId\)/);
+  assert.match(activity,/new RequestScope\(\(method\.equals\("authorization"\)\|\|method\.equals\("whitelist"\)\)\?34000:14000,id,jsCycle,jsRequestId\)/);
   assert.match(activity,/scope\.phase\("worker-queue-wait",started-scope\.queuedAtMs\)/);
-  assert.match(activity,/result=api\.tracedDisplayAuthorization\(\)/);
+  assert.match(activity,/result=api\.tracedDisplayAuthorization\(/);
   assert.match(scope,/String trace\(\)\{return " bridgeId="\+bridgeId\+" loadCycle="\+loadCycle\+" jsRequestId="\+jsRequestId;/);
   assert.match(api,/scope\.phase\("authorization-state-lock-wait"/);
   assert.match(downloader,/RequestScope scope=RequestScope\.CURRENT\.get\(\)/);
@@ -294,7 +294,7 @@ test('one JS cycle joins native worker queue, lock wait and OkHttp phases withou
   assert.doesNotMatch(activity,/message\.sourceId\(\)/);
   assert.match(activity,/logWebDiagnostic\(message\.message\(\)\)/);
   const playback=api.slice(api.indexOf('Playback playback(String id,long requestId)'));
-  assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+  assert.ok((playback.match(/whitelist\(true,false\)/g)||[]).length>=2);
 });
 
 test('ADB capture refuses ambiguous targets and requires evidence from two periodic checks',()=>{

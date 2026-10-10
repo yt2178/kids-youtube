@@ -42,7 +42,7 @@ test('proxy is authenticated, exact-host/path limited, bounded and does not foll
 
 test('native playback remains fail-closed with fresh checks before and after extraction',()=>{
   const playback=native.slice(native.indexOf('Playback playback(String id)'));
-  assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+  assert.ok((playback.match(/whitelist\(true,false\)/g)||[]).length>=2);
   assert.doesNotMatch(native,/native-list|getSharedPreferences/);
   assert.match(policy,/googlevideo\.com/);assert.match(policy,/u\.getRawUserInfo\(\)==null/);
   assert.match(activity,/kidsyoutube/);assert.match(activity,/ApprovalPolicy\.VIDEO\.matcher\(id\)\.matches\(\)\)openPlayer\(id,/);
@@ -58,7 +58,7 @@ test('parent UI keeps official YouTube iframe, exact requested label and no exte
 test('cache-bust version and service-worker shell version are audited together',()=>{
   const appVersion=(html.match(/app\.js\?v=([^"']+)/)||[])[1];
   assert.ok(appVersion);assert.match(sw,new RegExp("app\\.js\\?v="+appVersion.replace(/[.*+?^$()|[\]\\]/g,'\\$&')));
-  assert.match(sw,/SHELL_CACHE = CACHE_PREFIX \+ 'v25'/);
+  assert.match(sw,/SHELL_CACHE = CACHE_PREFIX \+ 'v26'/);
 });
 
 

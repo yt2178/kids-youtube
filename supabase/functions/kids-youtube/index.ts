@@ -283,10 +283,11 @@ async function catalogReadThrough(rows:any[],snapshot:any){
   }catch{return rows;}
 }
 function approvedCatalogUrls(list:string):Set<string>{return existingUrls(list);}
-async function catalogRows(approved:Set<string>){
+async function catalogRows(approved:Set<string>,pinsOnly=false){
   if(!approved.size)return [];
   return timed(STATE_TIMEOUT_MS,async signal=>{
-    const url=CATALOG_TABLE+"?select=approval_url,kind,item_id,title,thumbnail,published,channel_id,page,continuation,pages_loaded,complete,updated_at,checked_at&limit=500";
+    const fields=pinsOnly?"approval_url,kind,item_id,checked_at":"approval_url,kind,item_id,title,thumbnail,published,channel_id,page,continuation,pages_loaded,complete,updated_at,checked_at";
+    const url=CATALOG_TABLE+"?select="+fields+"&limit=500";
     const r=await fetch(url,{signal,headers:{apikey:SERVICE,Authorization:"Bearer "+SERVICE}});
     if(!r.ok)throw Error("CATALOG_UNAVAILABLE");
     const rows=await r.json();
@@ -454,6 +455,9 @@ Deno.serve(async(req)=>{
       const format=url.searchParams.get("format");
       if(format==="text")return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}});
       if(format==="native"){
+        // detail=grants retains fresh parent grants and server-pinned @handles,
+        // but deliberately omits display metadata on polls and playback checks.
+        const grantsOnly=url.searchParams.get("detail")==="grants";
         // Single coherent parent-state snapshot and server-pinned channel mapping.
         // Missing catalog means no alias grants; direct video/UC approvals remain.
         const pins:any[]=[];
@@ -463,7 +467,7 @@ Deno.serve(async(req)=>{
           // The pins and the optional display cache come from the SAME
           // already-performed catalog query. No extra HTTP connection, no
           // provider scraping and no dependency of approval on metadata.
-          const rows=await catalogRows(approved);
+          const rows=await catalogRows(approved,grantsOnly);
           for(const row of rows){
             if(row.kind!=="channel"||!/^UC[A-Za-z0-9_-]{22}$/.test(row.item_id))continue;
             const time=Date.parse(row.checked_at||"");
@@ -471,10 +475,11 @@ Deno.serve(async(req)=>{
             if(!/^https:\/\/www\.youtube\.com\/(?:@|c\/|user\/)/.test(row.approval_url))continue;
             pins.push({url:row.approval_url,id:row.item_id});
           }
-          const candidate={version:s.version,updatedAt:s.updated_at,entries:rows};
-          // The native list endpoint has a bounded 1 MB response contract.
-          // A large catalog is optional and must never prevent fresh grants.
-          if(JSON.stringify(candidate).length<=400000)preparedCatalog=candidate;
+          if(!grantsOnly){
+            const candidate={version:s.version,updatedAt:s.updated_at,entries:rows};
+            // Only startup receives display metadata. Authority is never based on it.
+            if(JSON.stringify(candidate).length<=400000)preparedCatalog=candidate;
+          }
         }catch{}
         // Catalog metadata is optional, but a changed parent grant while
         // reading it is NOT optional. Never return an old grant version paired

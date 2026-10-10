@@ -13,6 +13,8 @@ import androidx.media3.common.*;
 import androidx.media3.datasource.*;
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter;
 import androidx.media3.exoplayer.source.*;
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy;
 import androidx.media3.ui.PlayerView;
@@ -35,13 +37,21 @@ public final class MainActivity extends Activity {
     // authorization. Keep this separate, bounded and cancellable.
     private final ThreadPoolExecutor authorizationWorkers=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(8),new ThreadPoolExecutor.AbortPolicy());
+    private final ThreadPoolExecutor playbackWorkers=new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(2),new ThreadPoolExecutor.AbortPolicy());
     private final Map<String,Task> tasks=new HashMap<>();
     private WebView web;
     private NativeApi api;
     private LinearLayout overlay;
     private TextView title,message;
     private ProgressBar loading;
-    private Button retry;
+    private Button retry,quality;
+    private String qualityMode="auto";
+    private List<Integer> sourceOrder=List.of();
+    private long observedBandwidthBps=-1;
+    private long playbackStartedAt;
+    private DefaultBandwidthMeter bandwidthMeter;
+    private androidx.media3.exoplayer.upstream.BandwidthMeter.EventListener bandwidthListener;
     private PlayerView playerView;
     private ExoPlayer player;
     private long mediaOwnerGeneration;
@@ -94,6 +104,7 @@ public final class MainActivity extends Activity {
     private final class Task extends FutureTask<Void> {
         final String id;
         final RequestScope scope;
+        boolean optionalApi;
         Task(String id,RequestScope scope,Callable<Void> action) {super(action);this.id=id;this.scope=scope;}
         void abort(){scope.cancel();cancel(true);}
         @Override protected void done(){handler.post(()->{if(tasks.get(id)==this)tasks.remove(id);});}
@@ -104,6 +115,13 @@ public final class MainActivity extends Activity {
         debugStartup("onCreate-start");
         effectiveSupabaseHost=Uri.parse(getString(R.string.kids_backend_url)).getHost();
         api=new NativeApi(this);
+        qualityMode=getSharedPreferences("kids_prefs",MODE_PRIVATE).getString("quality","auto");
+        bandwidthMeter=DefaultBandwidthMeter.getSingletonInstance(this);
+        bandwidthListener=(elapsedMs,bytes,bitrateEstimate)->{
+            if(elapsedMs>=250 && bytes>=8192 && bitrateEstimate>0)
+                observedBandwidthBps=bitrateEstimate;
+        };
+        bandwidthMeter.addEventListener(handler,bandwidthListener);
         debugStartup("native-api-created");
         FrameLayout root=new FrameLayout(this);root.setBackgroundColor(Color.rgb(26,26,46));
         if(Build.VERSION.SDK_INT>=30){
@@ -138,6 +156,10 @@ public final class MainActivity extends Activity {
         retry=button("נסו שוב");retry.setVisibility(View.GONE);
         retry.setOnClickListener(v->{if(active!=null)openPlayer(active.id,title.getText().toString());});
         overlay.addView(retry,new LinearLayout.LayoutParams(-1,dp(64)));
+        quality=button("איכות: אוטומטי");quality.setTextSize(16);
+        quality.setOnClickListener(v->showQualityMenu());
+        overlay.addView(quality,new LinearLayout.LayoutParams(-1,dp(48)));
+        updateQualityLabel();
         playerView=new PlayerView(this);
         playerView.setShowNextButton(false);playerView.setShowPreviousButton(false);
         playerView.setShowFastForwardButton(true);playerView.setShowRewindButton(true);
@@ -251,13 +273,14 @@ public final class MainActivity extends Activity {
             if(!Set.of("whitelist","authorization","catalog","api","clear").contains(method)){
                 respond(reply,id,null,"INVALID_REQUEST");return;
             }
+            if(method.equals("api")&&active!=null){respond(reply,id,null,"BUSY");return;}
             JSONObject traceArg=method.equals("authorization")?data.optJSONObject("argument"):null;
             long jsCycle=traceArg==null?0:traceArg.optLong("loadCycle",0);
             long jsRequestId=traceArg==null?0:traceArg.optLong("requestId",0);
             if(jsCycle<0||jsCycle>1000000000L||jsRequestId<0||jsRequestId>1000000000L){
                 respond(reply,id,null,"INVALID_REQUEST");return;
             }
-            RequestScope scope=new RequestScope(14000,id,jsCycle,jsRequestId);
+            RequestScope scope=new RequestScope((method.equals("authorization")||method.equals("whitelist"))?34000:14000,id,jsCycle,jsRequestId);
             String argument=data.optString("argument","");
             Task task=new Task(id,scope,()->{
                 scope.enter();
@@ -268,7 +291,8 @@ public final class MainActivity extends Activity {
                 try {
                     Object result;
                     if(method.equals("whitelist"))result=api.displayWhitelist();
-                    else if(method.equals("authorization"))result=api.tracedDisplayAuthorization();
+                    else if(method.equals("authorization"))result=api.tracedDisplayAuthorization(
+                            traceArg==null || "load".equals(traceArg.optString("source","")));
                     else if(method.equals("catalog"))result=api.sharedCatalog(data.optJSONObject("argument"));
                     else if(method.equals("clear")){api.clear();result=Boolean.TRUE;}
                     else result=api.request(argument);
@@ -286,6 +310,7 @@ public final class MainActivity extends Activity {
                 }finally{scope.close();}
                 return null;
             });
+            task.optionalApi=method.equals("api");
             tasks.put(id,task);
             try{
                 (method.equals("authorization")||method.equals("whitelist")?
@@ -324,22 +349,60 @@ public final class MainActivity extends Activity {
             default:return "UNKNOWN";
         }
     }
-    private void openPlayer(String id,String displayTitle) {
+    private void updateQualityLabel(){
+        if(quality==null)return;
+        quality.setText("איכות: "+("save".equals(qualityMode)?"חיסכון בנתונים":
+                qualityMode.startsWith("manual:")?qualityMode.substring(7)+"p":"אוטומטי"));
+    }
+    private void selectQuality(String next){
+        if(next.equals(qualityMode))return;
+        long position=player!=null?player.getCurrentPosition():resumeAt;
+        qualityMode=next;
+        getSharedPreferences("kids_prefs",MODE_PRIVATE).edit().putString("quality",next).apply();
+        updateQualityLabel();
+        if(active!=null&&!active.sources.isEmpty())
+            openPlayer(active.id,title.getText().toString(),Math.max(0,position));
+    }
+    private void showQualityMenu(){
+        PopupMenu menu=new PopupMenu(this,quality);
+        menu.getMenu().add(0,1,0,"אוטומטי");
+        menu.getMenu().add(0,2,1,"חיסכון בנתונים");
+        if(active!=null){
+            SortedSet<Integer> resolutions=new TreeSet<>();
+            for(NativeApi.Source source:active.sources)if(source.height>0)resolutions.add(source.height);
+            int n=2;
+            for(int height:resolutions)menu.getMenu().add(0,100+height,++n,height+"p");
+        }
+        menu.setOnMenuItemClickListener(item->{
+            int id=item.getItemId();
+            selectQuality(id==1?"auto":id==2?"save":"manual:"+(id-100));
+            return true;
+        });
+        menu.show();
+    }
+    private void openPlayer(String id,String displayTitle){
+        openPlayer(id,displayTitle,0);
+    }
+    private void openPlayer(String id,String displayTitle,long resumePosition) {
         android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
         if(keyboard!=null)keyboard.hideSoftInputFromWindow(web.getWindowToken(),0);
         long generation=++playerGeneration;
         if(playTask!=null)playTask.abort();
+        // Stop optional NewPipe metadata competing with an explicit play action.
+        for(Task task:new ArrayList<>(tasks.values()))if(task.optionalApi)task.abort();
         stopMedia("new-request");
         String initialTitle=displayTitle!=null&&!displayTitle.trim().isEmpty()
             ? displayTitle.trim().substring(0,Math.min(200,displayTitle.trim().length()))
             : "טוענים את פרטי הסרטון…";
         active=new NativeApi.Playback(id,initialTitle,List.of());
         logPlayback(generation,"request",null);
-        sourceIndex=0;resumeAt=0;
+        sourceIndex=0;sourceOrder=List.of();resumeAt=Math.max(0,resumePosition);
+        playbackStartedAt=android.os.SystemClock.elapsedRealtime();
         overlay.setVisibility(View.VISIBLE);web.setVisibility(View.INVISIBLE);
         title.setText(initialTitle);showLoading(true);showMessage("מתחבר...");retry.setVisibility(View.GONE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        RequestScope scope=new RequestScope(20000);
+        // Two fresh grant checks still bracket extraction on slow links.
+        RequestScope scope=new RequestScope(85000);
         playTask=new Task("player",scope,()->{
             scope.enter();
             try {
@@ -351,6 +414,10 @@ public final class MainActivity extends Activity {
                 handler.post(()->{
                     if(destroyed || generation!=playerGeneration || scope.cancelled)return;
                     active=result;
+                    List<Integer> rates=new ArrayList<>(),heights=new ArrayList<>();
+                    for(NativeApi.Source source:result.sources){rates.add(source.bitrate);heights.add(source.height);}
+                    sourceOrder=PlaybackChoices.order(rates,heights,qualityMode,observedBandwidthBps);
+                    sourceIndex=0;
                     if(result.title!=null&&!result.title.isBlank()&&!result.title.equals("סרטון מאושר"))
                         title.setText(result.title);
                     trySource(generation);
@@ -367,13 +434,17 @@ public final class MainActivity extends Activity {
             }
             return null;
         });
-        try{workers.execute(playTask);}catch(RejectedExecutionException e){playTask.abort();unavailable();}
+        try{playbackWorkers.execute(playTask);}catch(RejectedExecutionException e){playTask.abort();unavailable();}
     }
     static OkHttpClient mediaClient(OkHttpClient base) {
         // Extractor requests intentionally keep redirects disabled. Signed Googlevideo
         // media URLs can redirect between HTTPS media hosts. Follow those redirects
         // ourselves so every Location target is validated before connecting to it.
         return base.newBuilder()
+                // Progressive media transfers must not inherit the extractor 12s call cap.
+                .callTimeout(0,TimeUnit.MILLISECONDS)
+                .connectTimeout(8,TimeUnit.SECONDS)
+                .readTimeout(20,TimeUnit.SECONDS)
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .addInterceptor(chain->{
@@ -411,18 +482,25 @@ public final class MainActivity extends Activity {
     private void trySource(long generation) {
         if(destroyed || generation!=playerGeneration || active==null)return;
         stopMedia("switch-source");
-        if(sourceIndex>=active.sources.size()){unavailable();return;}
-        showLoading(true);showMessage(sourceIndex==0?"מתחבר...":"מחפש מקור חלופי...");
-        NativeApi.Source source=active.sources.get(sourceIndex++);
-        logPlayback(generation,"media-source-"+sourceIndex+" of "+active.sources.size(),null);
+        if(sourceIndex>=Math.min(sourceOrder.size(),6)
+                || android.os.SystemClock.elapsedRealtime()-playbackStartedAt>120000){unavailable("SLOW_CONNECTION");return;}
+        showLoading(true);showMessage(sourceIndex==0?"מתחבר בחיבור איטי…":"מנסה איכות חלופית…");
+        NativeApi.Source source=active.sources.get(sourceOrder.get(sourceIndex++));
+        logPlayback(generation,"media-source-"+sourceIndex+" of "+sourceOrder.size()+
+                " height="+source.height+" bitrate="+source.bitrate,null);
         OkHttpClient mediaClient=mediaClient(api.downloader.client);
-        OkHttpDataSource.Factory dataSource=new OkHttpDataSource.Factory(mediaClient);
+        OkHttpDataSource.Factory dataSource=new OkHttpDataSource.Factory(mediaClient)
+                .setTransferListener(bandwidthMeter.getTransferListener());
         ProgressiveMediaSource.Factory factory=new ProgressiveMediaSource.Factory(dataSource)
                 .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(0));
         MediaSource video=factory.createMediaSource(MediaItem.fromUri(source.video));
         MediaSource media=source.audio==null?video:new MergingMediaSource(video,
                 factory.createMediaSource(MediaItem.fromUri(source.audio)));
-        ExoPlayer attempt=new ExoPlayer.Builder(this).build();player=attempt;mediaOwnerGeneration=generation;
+        DefaultLoadControl buffer=new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(16000,45000,2500,5500)
+                .setTargetBufferBytes(12*1024*1024).build();
+        ExoPlayer attempt=new ExoPlayer.Builder(this).setLoadControl(buffer).build();
+        player=attempt;mediaOwnerGeneration=generation;
         final int playingSourceIndex=sourceIndex;
         final long mediaStarted=android.os.SystemClock.elapsedRealtime();
         attempt.setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
@@ -430,6 +508,29 @@ public final class MainActivity extends Activity {
         playerView.setPlayer(attempt);
         attempt.addListener(new Player.Listener(){
             private boolean failed,ready;
+            private long lastBuffered;
+            private void watchBuffer(){
+                cancelPlayerTimeout();
+                lastBuffered=attempt.getBufferedPosition();
+                playerTimeout=()->{
+                    if(failed||generation!=playerGeneration||player!=attempt||
+                            attempt.getPlaybackState()!=Player.STATE_BUFFERING)return;
+                    long elapsed=android.os.SystemClock.elapsedRealtime()-playbackStartedAt;
+                    long buffered=attempt.getBufferedPosition();
+                    int next=sourceIndex<sourceOrder.size()?sourceOrder.get(sourceIndex):-1;
+                    boolean lower=next>=0&&active!=null&&active.sources.get(next).bitrate<source.bitrate;
+                    boolean sustainedSlow=observedBandwidthBps>0
+                            &&observedBandwidthBps<source.bitrate*7L/10L;
+                    if(lower&&(sustainedSlow||buffered-lastBuffered<6000)){
+                        // One 20s buffering sample is not a short network fluctuation.
+                        // Move down, never oscillate upward on a slow-link stall.
+                        advance(new IOException("SLOW_LINK_DOWNGRADE"));
+                    }else if(buffered>lastBuffered+1000&&elapsed<110000){
+                        watchBuffer();
+                    }else advance(new IOException("TIMEOUT"));
+                };
+                handler.postDelayed(playerTimeout,20000);
+            }
             private void advance(Throwable error){
                 if(failed || generation!=playerGeneration || player!=attempt)return;
                 failed=true;resumeAt=Math.max(resumeAt,attempt.getCurrentPosition());
@@ -439,6 +540,10 @@ public final class MainActivity extends Activity {
                     : "media-source-failed",error);
                 if(code.equals("UPSTREAM_BLOCKED") || code.equals("RATE_LIMITED")){
                     api.recordFailure(error);unavailable(code);
+                }else if(error instanceof IOException && "TIMEOUT".equals(error.getMessage())
+                        && (sourceIndex>=sourceOrder.size()
+                        || active.sources.get(sourceOrder.get(sourceIndex)).bitrate>=source.bitrate)){
+                    unavailable("SLOW_CONNECTION");
                 }else trySource(generation);
             }
             @Override public void onPlayerError(PlaybackException error){advance(error);}
@@ -460,17 +565,13 @@ public final class MainActivity extends Activity {
                 }else if(state==Player.STATE_ENDED){
                     cancelPlayerTimeout();showMessage("הסרטון הסתיים. אפשר לחזור ולבחור סרטון אחר.");
                     getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                }else if(state==Player.STATE_BUFFERING && ready && attempt.getPlayWhenReady()){
-                    cancelPlayerTimeout();
-                    playerTimeout=()->advance(new IOException("TIMEOUT"));
-                    handler.postDelayed(playerTimeout,8000);
+                }else if(state==Player.STATE_BUFFERING && attempt.getPlayWhenReady()){
+                    showLoading(true);
+                    showMessage(ready?"ממתין לעוד נתונים…":"טוען וידאו, החיבור עשוי להיות איטי…");
+                    watchBuffer();
                 }
             }
         });
-        playerTimeout=()->{
-            if(generation==playerGeneration && player==attempt){resumeAt=Math.max(resumeAt,attempt.getCurrentPosition());trySource(generation);}
-        };
-        handler.postDelayed(playerTimeout,8000);
         attempt.setMediaSource(media);
         if(resumeAt>0)attempt.seekTo(resumeAt);
         attempt.prepare();attempt.play();
@@ -494,12 +595,14 @@ public final class MainActivity extends Activity {
         else if("UPSTREAM_BLOCKED".equals(code))reason="YouTube חסם את בקשת הניגון. נסו שוב מאוחר יותר.";
         else if("RATE_LIMITED".equals(code))reason="שירות הסרטונים הגביל בקשות. נסו שוב מאוחר יותר.";
         else if("TIMEOUT".equals(code))reason="הטעינה ארכה יותר מדי זמן. בדקו את החיבור ונסו שוב.";
+        else if("SLOW_CONNECTION".equals(code)||"DNS_ERROR".equals(code)||"NETWORK_ERROR".equals(code))
+            reason="החיבור איטי או לא יציב. נסו שוב כשיש קליטה טובה יותר.";
         showMessage(reason);
         retry.setVisibility(View.VISIBLE);getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     private void closePlayer(){
         ++playerGeneration;if(playTask!=null){playTask.abort();playTask=null;}
-        stopMedia("close-player");showLoading(false);active=null;overlay.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);
+        stopMedia("close-player");showLoading(false);active=null;sourceOrder=List.of();overlay.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     @Override public void onBackPressed(){if(active!=null)closePlayer();else super.onBackPressed();}
@@ -508,8 +611,9 @@ public final class MainActivity extends Activity {
         super.onStop();
     }
     @Override protected void onDestroy(){
+        if(bandwidthMeter!=null&&bandwidthListener!=null)bandwidthMeter.removeEventListener(bandwidthListener);
         destroyed=true;closePlayer();
-        for(Task task:tasks.values())task.abort();tasks.clear();workers.shutdownNow();authorizationWorkers.shutdownNow();api.cancelAll();
+        for(Task task:tasks.values())task.abort();tasks.clear();workers.shutdownNow();authorizationWorkers.shutdownNow();playbackWorkers.shutdownNow();api.cancelAll();
         if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
             WebViewCompat.removeWebMessageListener(web,"KidsAndroid");
         // Chromium requires detaching a WebView from its parent before destroy().

@@ -69,3 +69,12 @@ test('stream abort stays a timeout and malformed mutations return explicit clien
   assert.match(source,/return json\(\{error:"INVALID_OPERATION"\},400,origin\)/);
   assert.match(source,/return json\(\{error:"INVALID_LINK"\},400,origin\)/);
 });
+
+test('native grants-only response omits large display catalog but keeps server pins and version recheck',()=>{
+  assert.match(source,/url\.searchParams\.get\("detail"\)==="grants"/);
+  assert.match(source,/catalogRows\(approved,grantsOnly\)/);
+  assert.match(source,/const fields=pinsOnly\?/);
+  assert.match(source,/if\(!grantsOnly\)\{/);
+  assert.match(source,/if\(latest\.version!==s\.version\|\|latest\.updated_at!==s\.updated_at\|\|latest\.list_text!==s\.list_text\)/);
+  assert.match(source,/pinnedChannels:pins/);
+});
