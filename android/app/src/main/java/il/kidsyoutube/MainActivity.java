@@ -291,7 +291,8 @@ public final class MainActivity extends Activity {
                 try {
                     Object result;
                     if(method.equals("whitelist"))result=api.displayWhitelist();
-                    else if(method.equals("authorization"))result=api.tracedDisplayAuthorization();
+                    else if(method.equals("authorization"))result=api.tracedDisplayAuthorization(
+                            traceArg==null || "load".equals(traceArg.optString("source","")));
                     else if(method.equals("catalog"))result=api.sharedCatalog(data.optJSONObject("argument"));
                     else if(method.equals("clear")){api.clear();result=Boolean.TRUE;}
                     else result=api.request(argument);
