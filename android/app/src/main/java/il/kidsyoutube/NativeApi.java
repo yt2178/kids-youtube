@@ -77,7 +77,7 @@ final class NativeApi {
     String whitelist(boolean force) throws Exception {
         return whitelist(force,true);
     }
-    private String whitelist(boolean force,boolean withDisplayCatalog) throws Exception {
+    String whitelist(boolean force,boolean withDisplayCatalog) throws Exception {
         // Only state reads and commits hold this monitor. TCP/TLS, response
         // headers and body must never hold the shared authorization lock.
         synchronized(this){
