@@ -37,6 +37,8 @@ public final class MainActivity extends Activity {
     // authorization. Keep this separate, bounded and cancellable.
     private final ThreadPoolExecutor authorizationWorkers=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(8),new ThreadPoolExecutor.AbortPolicy());
+    private final ThreadPoolExecutor playbackWorkers=new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(2),new ThreadPoolExecutor.AbortPolicy());
     private final Map<String,Task> tasks=new HashMap<>();
     private WebView web;
     private NativeApi api;
@@ -102,6 +104,7 @@ public final class MainActivity extends Activity {
     private final class Task extends FutureTask<Void> {
         final String id;
         final RequestScope scope;
+        boolean optionalApi;
         Task(String id,RequestScope scope,Callable<Void> action) {super(action);this.id=id;this.scope=scope;}
         void abort(){scope.cancel();cancel(true);}
         @Override protected void done(){handler.post(()->{if(tasks.get(id)==this)tasks.remove(id);});}
@@ -270,6 +273,7 @@ public final class MainActivity extends Activity {
             if(!Set.of("whitelist","authorization","catalog","api","clear").contains(method)){
                 respond(reply,id,null,"INVALID_REQUEST");return;
             }
+            if(method.equals("api")&&active!=null){respond(reply,id,null,"BUSY");return;}
             JSONObject traceArg=method.equals("authorization")?data.optJSONObject("argument"):null;
             long jsCycle=traceArg==null?0:traceArg.optLong("loadCycle",0);
             long jsRequestId=traceArg==null?0:traceArg.optLong("requestId",0);
@@ -305,6 +309,7 @@ public final class MainActivity extends Activity {
                 }finally{scope.close();}
                 return null;
             });
+            task.optionalApi=method.equals("api");
             tasks.put(id,task);
             try{
                 (method.equals("authorization")||method.equals("whitelist")?
@@ -382,6 +387,8 @@ public final class MainActivity extends Activity {
         if(keyboard!=null)keyboard.hideSoftInputFromWindow(web.getWindowToken(),0);
         long generation=++playerGeneration;
         if(playTask!=null)playTask.abort();
+        // Stop optional NewPipe metadata competing with an explicit play action.
+        for(Task task:new ArrayList<>(tasks.values()))if(task.optionalApi)task.abort();
         stopMedia("new-request");
         String initialTitle=displayTitle!=null&&!displayTitle.trim().isEmpty()
             ? displayTitle.trim().substring(0,Math.min(200,displayTitle.trim().length()))
@@ -426,7 +433,7 @@ public final class MainActivity extends Activity {
             }
             return null;
         });
-        try{workers.execute(playTask);}catch(RejectedExecutionException e){playTask.abort();unavailable();}
+        try{playbackWorkers.execute(playTask);}catch(RejectedExecutionException e){playTask.abort();unavailable();}
     }
     static OkHttpClient mediaClient(OkHttpClient base) {
         // Extractor requests intentionally keep redirects disabled. Signed Googlevideo
@@ -594,7 +601,7 @@ public final class MainActivity extends Activity {
     @Override protected void onDestroy(){
         if(bandwidthMeter!=null&&bandwidthListener!=null)bandwidthMeter.removeEventListener(bandwidthListener);
         destroyed=true;closePlayer();
-        for(Task task:tasks.values())task.abort();tasks.clear();workers.shutdownNow();authorizationWorkers.shutdownNow();api.cancelAll();
+        for(Task task:tasks.values())task.abort();tasks.clear();workers.shutdownNow();authorizationWorkers.shutdownNow();playbackWorkers.shutdownNow();api.cancelAll();
         if(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
             WebViewCompat.removeWebMessageListener(web,"KidsAndroid");
         // Chromium requires detaching a WebView from its parent before destroy().
