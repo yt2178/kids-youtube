@@ -257,7 +257,7 @@ public final class MainActivity extends Activity {
             if(jsCycle<0||jsCycle>1000000000L||jsRequestId<0||jsRequestId>1000000000L){
                 respond(reply,id,null,"INVALID_REQUEST");return;
             }
-            RequestScope scope=new RequestScope(14000,id,jsCycle,jsRequestId);
+            RequestScope scope=new RequestScope((method.equals("authorization")||method.equals("whitelist"))?34000:14000,id,jsCycle,jsRequestId);
             String argument=data.optString("argument","");
             Task task=new Task(id,scope,()->{
                 scope.enter();
