@@ -64,7 +64,7 @@
   }
   window.KidsNative = {
     createManager,
-    fetchAuthorization:trace=>call('authorization',trace&&Number.isSafeInteger(trace.loadCycle)&&Number.isSafeInteger(trace.requestId)?{loadCycle:trace.loadCycle,requestId:trace.requestId,source:String(trace.source||'').slice(0,32)}:null,undefined,15000),
+    fetchAuthorization:trace=>call('authorization',trace&&Number.isSafeInteger(trace.loadCycle)&&Number.isSafeInteger(trace.requestId)?{loadCycle:trace.loadCycle,requestId:trace.requestId,source:String(trace.source||'').slice(0,32)}:null,undefined,36000),
     fetchCatalog:({version,updatedAt})=>call('catalog',{version,updatedAt},undefined,14000),
     openPlayer:(id,title)=>call('play',{id,title:typeof title==='string'?title.slice(0,200):''},undefined,30000).catch(()=>{}),
     call
