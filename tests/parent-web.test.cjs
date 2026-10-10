@@ -60,12 +60,12 @@ test('parent management trust boundary is top-level only',()=>{
 
 test('parent Supabase requests have a finite browser-side deadline and abort signal',async()=>{
   const source=fs.readFileSync('parents.js','utf8');
-  assert.match(source,/PARENT_REQUEST_TIMEOUT_MS=12000/);assert.match(source,/new AbortController\(\)/);assert.match(source,/signal:controller\.signal/);
+  assert.match(source,/PARENT_REQUEST_TIMEOUT_MS=20000/);assert.match(source,/new AbortController\(\)/);assert.match(source,/signal:controller\.signal/);
   assert.match(source,/error&&error\.name==='AbortError'/);
 });
 
 test('stalled parent Supabase request is actually aborted by the browser deadline',async()=>{
-  const source=fs.readFileSync('parents.js','utf8').replace('PARENT_REQUEST_TIMEOUT_MS=12000','PARENT_REQUEST_TIMEOUT_MS=5');
+  const source=fs.readFileSync('parents.js','utf8').replace('PARENT_REQUEST_TIMEOUT_MS=20000','PARENT_REQUEST_TIMEOUT_MS=5');
   const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
   const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements['auth-spinner'].hidden=true;
   let aborted=false;
