@@ -167,12 +167,17 @@ final class NativeApi {
     }
 
     JSONObject tracedDisplayAuthorization() throws Exception {
-        return displayAuthorization();
+        return displayAuthorization(true);
+    }
+    JSONObject tracedDisplayAuthorization(boolean withDisplayCatalog) throws Exception {
+        return displayAuthorization(withDisplayCatalog);
     }
     JSONObject displayAuthorization() throws Exception {
-        // Fail closed on transport errors, then copy only a committed fresh
-        // document under a short state lock (never around network I/O).
-        whitelist(true,true);
+        return displayAuthorization(true);
+    }
+    JSONObject displayAuthorization(boolean withDisplayCatalog) throws Exception {
+        // Full catalog on initial load only. Polling still fetches fresh grants.
+        whitelist(true,withDisplayCatalog);
         synchronized(this){
             if(lastAuthorization==null || !lastAuthorization.has("updatedAt")
                     || !lastAuthorization.has("version")
