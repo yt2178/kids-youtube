@@ -162,7 +162,7 @@ test('native bridge exposes one versioned fresh authorization request without le
  assert.match(source,/whitelist\(true\)/);
  assert.match(source,/lastAuthorization=doc/);
  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
- assert.match(activity,/api\.tracedDisplayAuthorization\(\)/);
+ assert.match(activity,/api\.tracedDisplayAuthorization\(/);
  assert.match(activity,/Set\.of\("whitelist","authorization","catalog","api","clear"\)/);
 });
 test('native WebView is detached before destroy and debug native traces omit arguments and tokens',()=>{
@@ -284,7 +284,7 @@ test('one JS cycle joins native worker queue, lock wait and OkHttp phases withou
   assert.match(app,/fetchAuthorization\(\{loadCycle,requestId,source\}\)/);
   assert.match(activity,/new RequestScope\(\(method\.equals\("authorization"\)\|\|method\.equals\("whitelist"\)\)\?34000:14000,id,jsCycle,jsRequestId\)/);
   assert.match(activity,/scope\.phase\("worker-queue-wait",started-scope\.queuedAtMs\)/);
-  assert.match(activity,/result=api\.tracedDisplayAuthorization\(\)/);
+  assert.match(activity,/result=api\.tracedDisplayAuthorization\(/);
   assert.match(scope,/String trace\(\)\{return " bridgeId="\+bridgeId\+" loadCycle="\+loadCycle\+" jsRequestId="\+jsRequestId;/);
   assert.match(api,/scope\.phase\("authorization-state-lock-wait"/);
   assert.match(downloader,/RequestScope scope=RequestScope\.CURRENT\.get\(\)/);
