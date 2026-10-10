@@ -517,8 +517,15 @@ public final class MainActivity extends Activity {
                             attempt.getPlaybackState()!=Player.STATE_BUFFERING)return;
                     long elapsed=android.os.SystemClock.elapsedRealtime()-playbackStartedAt;
                     long buffered=attempt.getBufferedPosition();
-                    if(buffered>lastBuffered+1000&&elapsed<110000){
-                        // The buffer is progressing; keep this valid signed source.
+                    int next=sourceIndex<sourceOrder.size()?sourceOrder.get(sourceIndex):-1;
+                    boolean lower=next>=0&&active!=null&&active.sources.get(next).bitrate<source.bitrate;
+                    boolean sustainedSlow=observedBandwidthBps>0
+                            &&observedBandwidthBps<source.bitrate*7L/10L;
+                    if(lower&&(sustainedSlow||buffered-lastBuffered<6000)){
+                        // One 20s buffering sample is not a short network fluctuation.
+                        // Move down, never oscillate upward on a slow-link stall.
+                        advance(new IOException("SLOW_LINK_DOWNGRADE"));
+                    }else if(buffered>lastBuffered+1000&&elapsed<110000){
                         watchBuffer();
                     }else advance(new IOException("TIMEOUT"));
                 };
@@ -533,6 +540,10 @@ public final class MainActivity extends Activity {
                     : "media-source-failed",error);
                 if(code.equals("UPSTREAM_BLOCKED") || code.equals("RATE_LIMITED")){
                     api.recordFailure(error);unavailable(code);
+                }else if(error instanceof IOException && "TIMEOUT".equals(error.getMessage())
+                        && (sourceIndex>=sourceOrder.size()
+                        || active.sources.get(sourceOrder.get(sourceIndex)).bitrate>=source.bitrate)){
+                    unavailable("SLOW_CONNECTION");
                 }else trySource(generation);
             }
             @Override public void onPlayerError(PlaybackException error){advance(error);}
