@@ -13,6 +13,7 @@ import org.schabi.newpipe.extractor.exceptions.ReCaptchaException;
 
 final class ExtractorDownloader extends Downloader {
     final OkHttpClient client;
+    final OkHttpClient authorizationClient;
     // Keep the optional legacy parent companion source-compatible.
     ExtractorDownloader(){this(false);}
     ExtractorDownloader(boolean debugBuild) {
@@ -22,6 +23,10 @@ final class ExtractorDownloader extends Downloader {
                 .retryOnConnectionFailure(false);
         if(debugBuild)builder.eventListenerFactory(call -> new NetworkTrace(call));
         client=builder.build();
+        // Give grant responses their own budget without multiplying extractor retries.
+        authorizationClient=client.newBuilder()
+                .connectTimeout(8,TimeUnit.SECONDS).readTimeout(14,TimeUnit.SECONDS)
+                .callTimeout(32,TimeUnit.SECONDS).build();
     }
     // No hostname, IP, URL, cookies, credentials, or signed media URI is logged.
     private static final class NetworkTrace extends okhttp3.EventListener {
