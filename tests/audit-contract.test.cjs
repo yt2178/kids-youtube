@@ -42,7 +42,7 @@ test('proxy is authenticated, exact-host/path limited, bounded and does not foll
 
 test('native playback remains fail-closed with fresh checks before and after extraction',()=>{
   const playback=native.slice(native.indexOf('Playback playback(String id)'));
-  assert.ok((playback.match(/whitelist\(true\)/g)||[]).length>=2);
+  assert.ok((playback.match(/whitelist\(true,false\)/g)||[]).length>=2);
   assert.doesNotMatch(native,/native-list|getSharedPreferences/);
   assert.match(policy,/googlevideo\.com/);assert.match(policy,/u\.getRawUserInfo\(\)==null/);
   assert.match(activity,/kidsyoutube/);assert.match(activity,/ApprovalPolicy\.VIDEO\.matcher\(id\)\.matches\(\)\)openPlayer\(id,/);
