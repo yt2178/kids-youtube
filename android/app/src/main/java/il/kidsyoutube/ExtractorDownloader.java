@@ -16,8 +16,10 @@ final class ExtractorDownloader extends Downloader {
     final OkHttpClient authorizationClient;
     // Keep the optional legacy parent companion source-compatible.
     ExtractorDownloader(){this(false);}
-    ExtractorDownloader(boolean debugBuild) {
-        OkHttpClient.Builder builder=new OkHttpClient.Builder()
+    ExtractorDownloader(boolean debugBuild){this(debugBuild,okhttp3.Dns.SYSTEM);}
+    // Test seam: same client configuration, only DNS resolution can be fault-injected.
+    ExtractorDownloader(boolean debugBuild,okhttp3.Dns dns) {
+        OkHttpClient.Builder builder=new OkHttpClient.Builder().dns(dns)
                 .connectTimeout(5,TimeUnit.SECONDS).readTimeout(8,TimeUnit.SECONDS)
                 .callTimeout(12,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
                 .retryOnConnectionFailure(false);
