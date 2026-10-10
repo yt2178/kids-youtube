@@ -14,7 +14,7 @@ const SETTINGS = Object.freeze({
   maxPagesPerChannel: 100,
   maxVideosWithoutLimit: 5000,
   parallelChannels: 3, // Browser only; native metadata is throttled below
-  cardsPerPage: 24, // Do not start 60 thumbnail transfers on a weak connection
+  cardsPerPage: 60, // Images below the viewport are already lazy-loaded
   playerWaitMs: 6000,
   playerBudgetMs: 18500,
   metadataTTL: 6 * 60 * 60 * 1000,
