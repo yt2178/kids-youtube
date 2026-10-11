@@ -12,7 +12,7 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
   assert.match(html,/font-src 'self';/);assert.doesNotMatch(html,/web-share|clipboard-write/);assert.doesNotMatch(html,/fonts\.gstatic\.com|https:\/\/\*\./);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
-  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011a/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
+  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011channels1/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
@@ -25,12 +25,12 @@ class ParentElement{
 }
 function memoryStorage(map){return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,String(v)),removeItem:k=>map.delete(k)};}
 async function parentApp(handler,{local=new Map(),session=new Map()}={}){
-  const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  const ids=['search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
   const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements.preview.hidden=true;elements['manual-editor'].hidden=true;elements.remember.checked=true;
   let reloads=0;const calls=[],windowListeners={};const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(local),sessionStorage:memoryStorage(session),
     KidsParentLinks:links,URL,Map,Object,String,JSON,Error,AbortController,encodeURIComponent,setTimeout,clearTimeout,confirm:()=>true,location:{origin:'https://example.test',reload(){reloads++;}},addEventListener:(k,fn)=>(windowListeners[k]??=[]).push(fn),
-    fetch:async(url,options={})=>{const action=new URL(String(url)).searchParams.get('action');calls.push({action,options});const work=Promise.resolve().then(()=>handler(action,options));const result=options.signal?await Promise.race([work,new Promise((_,reject)=>{if(options.signal.aborted){const e=Error('aborted');e.name='AbortError';reject(e);return;}options.signal.addEventListener('abort',()=>{const e=Error('aborted');e.name='AbortError';reject(e);},{once:true});})]):await work;return {ok:result.status===undefined||result.status<400,status:result.status??200,json:async()=>result.body??result};}
+    fetch:async(url,options={})=>{const action=new URL(String(url)).pathname.endsWith('/kids-youtube-search')?'search':new URL(String(url)).searchParams.get('action');calls.push({action,options});const work=Promise.resolve().then(()=>handler(action,options));const result=options.signal?await Promise.race([work,new Promise((_,reject)=>{if(options.signal.aborted){const e=Error('aborted');e.name='AbortError';reject(e);return;}options.signal.addEventListener('abort',()=>{const e=Error('aborted');e.name='AbortError';reject(e);},{once:true});})]):await work;return {ok:result.status===undefined||result.status<400,status:result.status??200,json:async()=>result.body??result};}
   });
   context.window=context;context.top=context;vm.runInContext(fs.readFileSync('parents.js','utf8'),context,{filename:'parents.js'});await new Promise(r=>setImmediate(r));
   async function fire(id,type='click'){for(const fn of elements[id].listeners[type]||[])await fn();await new Promise(r=>setImmediate(r));}
@@ -40,7 +40,7 @@ async function parentApp(handler,{local=new Map(),session=new Map()}={}){
 test('parent management refuses to boot when framed, including by the same origin',async()=>{
   const local=new Map([['kidsParentToken','secret']]);let requests=0;
   const elements={};
-  const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  const ids=['search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
   for(const id of ids)elements[id]=new ParentElement();
   const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},
@@ -66,7 +66,7 @@ test('parent Supabase requests have a finite browser-side deadline and abort sig
 
 test('stalled parent Supabase request is actually aborted by the browser deadline',async()=>{
   const source=fs.readFileSync('parents.js','utf8').replace('PARENT_REQUEST_TIMEOUT_MS=20000','PARENT_REQUEST_TIMEOUT_MS=5');
-  const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  const ids=['search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
   const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements['auth-spinner'].hidden=true;
   let aborted=false;
   const context=vm.createContext({document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(new Map()),sessionStorage:memoryStorage(new Map()),KidsParentLinks:links,URL,Map,Object,String,JSON,Error,AbortController,encodeURIComponent,setTimeout,clearTimeout,confirm:()=>true,location:{origin:'https://example.test',reload(){}},addEventListener(){},fetch:(_url,options)=>new Promise((_resolve,reject)=>{options.signal.addEventListener('abort',()=>{aborted=true;const e=Error('aborted');e.name='AbortError';reject(e);},{once:true});})});
@@ -285,4 +285,106 @@ test('leaving management during metadata loading prevents hidden iframe from app
   finish({url:video,kind:'video',id:'mVTlbvQ_010',title:'STALE'});
   await pending;assert.equal(a.elements['youtube-player'].src,'');
   assert.equal(a.elements.preview.hidden,true);
+});
+
+test('parent search opens the official embedded YouTube player and adds once',async()=>{
+ let finish,mutations=0;
+ const app=await parentApp(async(action,options)=>{
+  if(action==='list')return {list:'',version:7};if(action==='status')return {authenticated:true};
+  if(action==='search'){assert.equal(options.headers.Authorization,'Bearer parent');assert.equal(JSON.parse(options.body).query,'שיר');return {items:[{kind:'video',id:'mVTlbvQ_010',title:'<b>Song</b>',author:'Artist'}],nextPageToken:'next'};}
+  if(action==='mutate'){mutations++;assert.deepEqual(JSON.parse(options.body),{operation:'add',link:video,note:'<b>Song</b>'});return new Promise(resolve=>finish=resolve);}
+  throw Error(action);
+ },{local:new Map([['kidsParentToken','parent']])});
+ app.elements['search-query'].value='שיר';await app.fire('search-submit');
+ const row=app.elements['search-results'].children[0],info=row.children[1],actions=info.children[3],add=actions.children[1];
+ assert.equal(info.children[1].textContent,'<b>Song</b>');
+ assert.equal(info.children[1].type,'button');
+ await info.children[1].listeners.click[0]();
+ assert.equal(app.elements['catalog-player-dialog'].open,true);
+ assert.ok(app.elements['catalog-player'].src.includes('youtube.com/embed/mVTlbvQ_010'));
+ assert.equal(app.elements['catalog-player-title'].textContent,'<b>Song</b>');
+ assert.equal(app.elements['catalog-player-loading'].hidden,false);
+ await app.fire('catalog-player','load');assert.equal(app.elements['catalog-player-loading'].hidden,true);
+ await app.fire('catalog-player-close');assert.equal(app.elements['catalog-player'].src,'');
+ await actions.children[0].listeners.click[0]();
+ assert.equal(app.elements['catalog-player-dialog'].open,true);
+ await app.fire('catalog-player-close');
+ const first=add.listeners.click[0]();await new Promise(r=>setImmediate(r));await add.listeners.click[0]();assert.equal(mutations,1);
+ finish({list:video+'\n',version:8,changed:true});await first;assert.equal(add.disabled,true);assert.equal(add.textContent,'כבר מאושר');
+});
+test('search pagination deduplicates results and missing configuration has a clear message',async()=>{
+ let count=0;const app=await parentApp(async(action,options)=>{
+  if(action==='list')return {list:''};if(action==='status')return {authenticated:true};
+  if(action==='search'){count++;if(count===3)return {status:503,body:{error:'SEARCH_NOT_CONFIGURED'}};
+   assert.equal(JSON.parse(options.body).pageToken,count===1?'':'next');
+   return {items:[{kind:'video',id:'mVTlbvQ_010',title:'Song'},...(count===2?[{kind:'video',id:'AAAAAAAAAAA',title:'Other'}]:[])],nextPageToken:count===1?'next':''};}throw Error(action);
+ },{local:new Map([['kidsParentToken','parent']])});
+ app.elements['search-query'].value='song';await app.fire('search-submit');await app.fire('search-more');
+ assert.equal(app.elements['search-results'].children.length,2);assert.equal(app.elements['search-more'].hidden,true);
+ await app.fire('search-submit');assert.match(app.elements['search-status'].textContent,/אינו זמין/);
+});
+test('logout invalidates a pending search without showing late results',async()=>{
+ let finish;const app=await parentApp(async action=>{
+ if(action==='list')return {list:''};if(action==='status')return {authenticated:true};if(action==='search')return new Promise(r=>finish=r);throw Error(action);
+ },{local:new Map([['kidsParentToken','parent']])});
+ app.elements['search-query'].value='song';const pending=app.fire('search-submit');await new Promise(r=>setImmediate(r));await app.fire('logout');finish({items:[{id:'AAAAAAAAAAA'}]});await pending;assert.equal(app.elements['search-results'].children.length,0);
+});
+
+test('channel search comes first, marks whole-channel approval, and adds canonical UC link only once',async()=>{
+  const channelId='UCV6xoqUxJzkWwCbDmEwMSYw',channelUrl='https://www.youtube.com/channel/'+channelId;
+  let mutations=0,release;
+  const app=await parentApp(async(action,opts)=>{
+    if(action==='list')return {list:'',version:1};
+    if(action==='status')return {authenticated:true};
+    if(action==='search')return {items:[
+      {kind:'video',id:'mVTlbvQ_010',title:'ברדק שיר',author:'ברדק'},
+      {kind:'channel',id:channelId,title:'ברדק',thumbnail:'https://yt3.googleusercontent.com/baradak'}
+    ],nextPageToken:''};
+    if(action==='mutate'){
+      mutations++;
+      assert.deepEqual(JSON.parse(opts.body),{operation:'add',link:channelUrl,note:'ברדק'});
+      return new Promise(resolve=>release=resolve);
+    }
+    throw Error(action);
+  },{local:new Map([['kidsParentToken','parent']])});
+  app.elements['search-query'].value='ברדק';
+  await app.fire('search-submit');
+  const results=app.elements['search-results'].children;
+  assert.equal(results.length,2);
+  const channelRow=results[0],videoRow=results[1],info=channelRow.children[1];
+  assert.match(channelRow.className,/search-channel/);
+  assert.equal(info.children[0].textContent,'ערוץ שלם');
+  assert.equal(info.children[1].textContent,'ברדק');
+  assert.match(info.children[2].textContent,/כולל חדשים בעתיד/);
+  assert.equal(videoRow.children[1].children[0].textContent,'סרטון');
+  const channelAdd=info.children[3].children[1];
+  assert.equal(channelAdd.textContent,'הוסף את כל הערוץ');
+  // Clicking the channel title previews it without granting permission.
+  await info.children[1].listeners.click[0]();
+  assert.equal(app.elements.kind.textContent,'ערוץ שלם');
+  assert.equal(app.elements.canonical.textContent,channelUrl);
+  assert.equal(app.elements['channel-warning'].hidden,false);
+  assert.equal(mutations,0);
+  const first=channelAdd.listeners.click[0]();
+  await new Promise(resolve=>setImmediate(resolve));
+  await channelAdd.listeners.click[0]();
+  assert.equal(mutations,1);
+  release({list:channelUrl+' // ברדק\n',version:2,changed:true});
+  await first;
+  assert.equal(channelAdd.disabled,true);
+  assert.equal(channelAdd.textContent,'כבר מאושר');
+  assert.match(app.elements['search-status'].textContent,/הערוץ השלם אושר/);
+});
+test('channel thumbnail is restricted to Google image origins, not arbitrary URLs',async()=>{
+  const channelId='UCV6xoqUxJzkWwCbDmEwMSYw';
+  const app=await parentApp(async action=>{
+    if(action==='list')return {list:'',version:1};
+    if(action==='status')return {authenticated:true};
+    if(action==='search')return {items:[{kind:'channel',id:channelId,title:'ערוץ מסוים',thumbnail:'https://evil.example/spy.jpg'}]};
+    throw Error(action);
+  },{local:new Map([['kidsParentToken','parent']])});
+  app.elements['search-query'].value='ערוץ';await app.fire('search-submit');
+  const visual=app.elements['search-results'].children[0].children[0];
+  assert.equal(visual.children.length,1);
+  assert.equal(visual.children[0].textContent,'ערוץ');
 });

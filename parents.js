@@ -2,7 +2,7 @@
 'use strict';
 const API='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 const PARENT_REQUEST_TIMEOUT_MS=20000, CHANNEL_IMAGE_TIMEOUT_MS=8000; // no automatic retry of parent writes
-const ids=['auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+const ids=['search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
 const ui=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));let parentLink=null,setupRequired=false,currentList='',currentVersion=null,manualVersion=null,pendingRemove=null,channelImageTimer=null,channelImageDeadline=null,previewGeneration=0,sessionEpoch=0,listSequence=0;let catalogSupported=false,catalogBackfillStarted=false;const pendingRequests=new Set();
 const TRUSTED_FRAME=window.top===window;
 function token(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
@@ -22,7 +22,7 @@ async function api(action,options={}){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),PARENT_REQUEST_TIMEOUT_MS);
   pendingRequests.add(controller);
   try{
-    const r=await fetch(API+'?action='+encodeURIComponent(action),{method,headers,body,cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:controller.signal});
+    const r=await fetch(action==='search'?'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube-search':API+'?action='+encodeURIComponent(action),{method,headers,body,cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:controller.signal});
     let data;
     try{data=await r.json();}catch(error){if(controller.signal.aborted)throw Error('TIMEOUT');throw Error('BAD_RESPONSE');}
     if(controller.signal.aborted)throw Error('TIMEOUT');
@@ -34,7 +34,7 @@ async function api(action,options={}){
   }finally{clearTimeout(timer);pendingRequests.delete(controller);}
 }
 function entries(raw){const out=[];for(const line of String(raw||'').replace(/^\uFEFF/,'').split(/\r?\n/)){const v=line.trim();if(!v||v.startsWith('//'))continue;const parts=v.split(/\s+\/\//,2);try{const link=KidsParentLinks.classify(parts[0]);out.push({...link,note:(parts[1]||'').trim()});}catch(_){out.push({url:parts[0],kind:'unknown',note:(parts[1]||'').trim()});}}return out;}
-function renderList(raw,version){currentList=String(raw||'');if(Number.isSafeInteger(version))currentVersion=version;if(ui['manual-editor'].hidden)ui['approved-text'].value=currentList;ui['approved-cards'].replaceChildren();const list=entries(currentList);if(!list.length){const p=document.createElement('p');p.textContent='אין עדיין קישורים מאושרים.';ui['approved-cards'].append(p);return;}for(const item of list){const box=document.createElement('article');box.className='entry';const title=document.createElement('p');title.className='entry-title';title.textContent=item.note||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube');const link=document.createElement('p');link.className='entry-link';link.textContent=item.url;const remove=document.createElement('button');remove.type='button';remove.className='remove';remove.textContent='הסר';remove.addEventListener('click',()=>askRemove(item));box.append(title,link,remove);ui['approved-cards'].append(box);}}
+function renderList(raw,version){currentList=String(raw||'');syncSearchButtons();if(Number.isSafeInteger(version))currentVersion=version;if(ui['manual-editor'].hidden)ui['approved-text'].value=currentList;ui['approved-cards'].replaceChildren();const list=entries(currentList);if(!list.length){const p=document.createElement('p');p.textContent='אין עדיין קישורים מאושרים.';ui['approved-cards'].append(p);return;}for(const item of list){const box=document.createElement('article');box.className='entry';const title=document.createElement('p');title.className='entry-title';title.textContent=item.note||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube');const link=document.createElement('p');link.className='entry-link';link.textContent=item.url;const remove=document.createElement('button');remove.type='button';remove.className='remove';remove.textContent='הסר';remove.addEventListener('click',()=>askRemove(item));box.append(title,link,remove);ui['approved-cards'].append(box);}}
 async function backfillApprovedCatalog(){
   if(!catalogSupported||catalogBackfillStarted||!token())return;
   catalogBackfillStarted=true;
@@ -133,6 +133,135 @@ ui['catalog-player'].addEventListener('load',()=>{ui['catalog-player-loading'].h
 ui['channel-image'].addEventListener('load',()=>{clearTimeout(channelImageTimer);clearTimeout(channelImageDeadline);channelImageTimer=null;channelImageDeadline=null;ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=false;ui['channel-symbol'].hidden=true;});
 ui['channel-image'].addEventListener('error',()=>{clearTimeout(channelImageTimer);clearTimeout(channelImageDeadline);channelImageTimer=null;channelImageDeadline=null;ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=true;ui['channel-image'].removeAttribute('src');ui['channel-symbol'].hidden=false;});
 ui.logout.addEventListener('click',()=>{expireSession();ui['parent-catalog'].removeAttribute('src');ui['catalog-player'].removeAttribute('src');ui['youtube-player'].removeAttribute('src');location.reload();});
+
+// Search is parent-only and never grants access until the parent explicitly adds a result.
+let searchItems=[],searchQuery='',searchPage='',searchGeneration=0;
+const searchAdds=new Set(),searchButtons=new Map();
+function searchKey(item){return item.kind+':'+item.id;}
+function searchUrl(item){return item.kind==='channel'?'https://www.youtube.com/channel/'+item.id:'https://www.youtube.com/watch?v='+item.id;}
+function syncSearchButtons(){
+  const approved=new Set(entries(currentList).map(item=>item.url));
+  for(const [key,button] of searchButtons){
+    const item=searchItems.find(value=>searchKey(value)===key);
+    if(!item)continue;
+    const exists=approved.has(searchUrl(item)),busy=searchAdds.has(key);
+    button.disabled=exists||busy;
+    button.textContent=exists?'כבר מאושר':busy?'מוסיף…':item.kind==='channel'?'הוסף את כל הערוץ':'אישור הסרטון';
+  }
+}
+function openSearchVideo(item){
+  if(ui['parent-area'].hidden||!token()||!item||item.kind!=='video'||!/^[A-Za-z0-9_-]{11}$/.test(item.id))return;
+  ui['catalog-player-title'].textContent=String(item.title||'צפייה בסרטון').slice(0,300);
+  ui['catalog-player-loading'].hidden=false;
+  ui['catalog-player'].src='https://www.youtube.com/embed/'+item.id+'?playsinline=1&rel=0&autoplay=1';
+  if(typeof ui['catalog-player-dialog'].showModal==='function')ui['catalog-player-dialog'].showModal();
+}
+function previewSearchChannel(item){
+  if(ui['parent-area'].hidden||!token()||!item||item.kind!=='channel'||!/^UC[A-Za-z0-9_-]{22}$/.test(item.id))return;
+  resetPreview();
+  parentLink={kind:'channel',id:item.id,url:searchUrl(item),title:item.title,thumbnail:item.thumbnail};
+  ui.link.value=parentLink.url;ui.kind.textContent='ערוץ שלם';
+  ui['media-title'].textContent=item.title;
+  ui['media-author'].hidden=true;ui['media-author'].textContent='';
+  ui.canonical.textContent=parentLink.url;ui.note.value=item.title;
+  ui['channel-warning'].hidden=false;
+  const approved=entries(currentList).find(value=>value.url===parentLink.url);
+  ui.status.classList.toggle('exists',!!approved);
+  ui.status.textContent=approved?'הערוץ כבר קיים ברשימת הילדים.':'בחירת ערוץ שלם: כל הסרטונים שלו וגם סרטונים עתידיים יהיו מותרים לילדים.';
+  ui.save.disabled=!!approved;ui.save.textContent=approved?'כבר קיים ברשימה':'הוסף את כל הערוץ';
+  const image=safeChannelImage(item.thumbnail);
+  ui['channel-symbol'].hidden=!!image;
+  if(image){
+    ui['channel-image-loading'].hidden=true;ui['channel-image'].hidden=true;
+    ui['channel-image'].src=image;
+    channelImageDeadline=setTimeout(()=>{
+      channelImageDeadline=null;ui['channel-image-loading'].hidden=true;
+      ui['channel-image'].hidden=true;ui['channel-image'].removeAttribute('src');
+      ui['channel-symbol'].hidden=false;
+    },CHANNEL_IMAGE_TIMEOUT_MS);
+  }
+  ui.preview.hidden=false;
+  if(typeof ui.preview.scrollIntoView==='function')ui.preview.scrollIntoView({behavior:'smooth',block:'start'});
+}
+function renderSearch(){
+  ui['search-results'].replaceChildren();searchButtons.clear();
+  for(const item of searchItems){
+    const channel=item.kind==='channel',row=document.createElement('article');
+    row.className='search-row'+(channel?' search-channel':'');
+    const visual=document.createElement('div');visual.className='search-visual';
+    if(channel){
+      const fallback=document.createElement('span');fallback.className='search-avatar-fallback';fallback.textContent='ערוץ';
+      visual.append(fallback);
+      const src=safeChannelImage(item.thumbnail);
+      if(src){
+        const image=document.createElement('img');image.alt='';image.className='search-avatar';image.referrerPolicy='no-referrer';
+        image.addEventListener('load',()=>{fallback.hidden=true;image.hidden=false;});
+        image.addEventListener('error',()=>{image.hidden=true;fallback.hidden=false;});
+        image.hidden=true;image.src=src;visual.append(image);
+      }
+    }else{
+      const image=document.createElement('img');image.src='https://i.ytimg.com/vi/'+item.id+'/mqdefault.jpg';
+      image.alt='';image.loading='lazy';image.referrerPolicy='no-referrer';visual.append(image);
+    }
+    const info=document.createElement('div');info.className='search-info';
+    const badge=document.createElement('p');badge.className='search-kind';badge.textContent=channel?'ערוץ שלם':'סרטון';
+    const title=document.createElement('button');title.type='button';title.className='search-title-button';title.textContent=item.title;
+    title.addEventListener('click',()=>channel?previewSearchChannel(item):openSearchVideo(item));
+    const author=document.createElement('p');
+    author.textContent=channel?'אישור הערוץ יאפשר את כל הסרטונים שלו, כולל חדשים בעתיד.':item.author;
+    const actions=document.createElement('div');actions.className='search-actions';
+    const open=document.createElement('button');open.type='button';open.className='secondary';
+    open.textContent=channel?'פרטי הערוץ':'צפייה בסרטון';
+    open.addEventListener('click',()=>channel?previewSearchChannel(item):openSearchVideo(item));
+    const add=document.createElement('button');add.type='button';add.addEventListener('click',()=>addSearchResult(item));
+    searchButtons.set(searchKey(item),add);
+    actions.append(open,add);info.append(badge,title,author,actions);row.append(visual,info);ui['search-results'].append(row);
+  }
+  syncSearchButtons();ui['search-more'].hidden=!searchPage;
+}
+async function addSearchResult(item){
+  if(ui['parent-area'].hidden||!token()||!item)return;
+  const key=searchKey(item),url=searchUrl(item);
+  if(searchAdds.has(key)||entries(currentList).some(e=>e.url===url))return;
+  const epoch=sessionEpoch;searchAdds.add(key);syncSearchButtons();
+  try{
+    const d=await api('mutate',{method:'POST',auth:true,body:{operation:'add',link:url,note:item.title}});
+    if(epoch!==sessionEpoch)return;listSequence++;renderList(d.list,d.version);
+    ui['search-status'].textContent=d.changed?(item.kind==='channel'?'הערוץ השלם אושר לילדים ✓':'הסרטון אושר לילדים ✓'):'הפריט כבר נמצא ברשימה.';
+  }catch(e){
+    if(epoch!==sessionEpoch)return;if(e.status===401){expireSession();location.reload();return;}
+    ui['search-status'].textContent='לא הצלחנו לשמור את האישור. נסו שוב.';
+  }finally{searchAdds.delete(key);syncSearchButtons();}
+}
+async function runSearch(more=false){
+  if(ui['parent-area'].hidden||ui['search-submit'].disabled)return;
+  const query=ui['search-query'].value.trim();if(!query){ui['search-status'].textContent='הקלידו מה לחפש.';return;}
+  const append=more&&query===searchQuery;if(append&&!searchPage)return;
+  const epoch=sessionEpoch,generation=++searchGeneration;
+  if(!append){searchItems=[];searchPage='';searchQuery=query;renderSearch();}
+  setBusy(ui['search-submit'],true);ui['search-more'].disabled=true;ui['search-status'].textContent='מחפש ערוצים וסרטונים ב־YouTube…';
+  try{
+    const d=await api('search',{method:'POST',auth:true,body:{query,pageToken:append?searchPage:''}});
+    if(epoch!==sessionEpoch||generation!==searchGeneration)return;
+    const found=Array.isArray(d.items)?d.items.filter(item=>{
+      if(!item||!['video','channel'].includes(item.kind))return false;
+      return item.kind==='channel'?/^UC[A-Za-z0-9_-]{22}$/.test(item.id):/^[A-Za-z0-9_-]{11}$/.test(item.id);
+    }).map(item=>({kind:item.kind,id:item.id,title:String(item.title||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube')).slice(0,300),author:String(item.author||'').slice(0,200),thumbnail:item.kind==='channel'?safeChannelImage(item.thumbnail):''})):[];
+    const seen=new Set(searchItems.map(searchKey));for(const item of found){const key=searchKey(item);if(!seen.has(key)){seen.add(key);searchItems.push(item);}}
+    searchItems.sort((a,b)=>Number(b.kind==='channel')-Number(a.kind==='channel'));
+    searchPage=typeof d.nextPageToken==='string'?d.nextPageToken:'';renderSearch();
+    ui['search-status'].textContent=searchItems.length?
+      (d.partial?'הוצגו תוצאות חלקיות. חלק ממקורות החיפוש אינם זמינים כרגע.':'ערוצים מוצגים ראשונים, ואחריהם סרטונים. בחרו מה לאשר לילדים.'):
+      'לא נמצאו ערוצים או סרטונים. נסו חיפוש אחר.';
+  }catch(e){
+    if(epoch!==sessionEpoch||generation!==searchGeneration)return;if(e.status===401){expireSession();location.reload();return;}
+    ui['search-status'].textContent='החיפוש אינו זמין כרגע. נסו שוב מאוחר יותר.';
+  }finally{setBusy(ui['search-submit'],false);ui['search-more'].disabled=false;}
+}
+ui['search-submit'].addEventListener('click',()=>runSearch());
+ui['search-more'].addEventListener('click',()=>runSearch(true));
+ui['search-query'].addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();runSearch();}});
+
 if(TRUSTED_FRAME)boot();else{
   ui['auth-spinner'].hidden=true;ui.login.disabled=true;
   ui['auth-status'].textContent='מטעמי אבטחה, יש לפתוח את אתר ההורים ישירות ולא מתוך אתר אחר.';
