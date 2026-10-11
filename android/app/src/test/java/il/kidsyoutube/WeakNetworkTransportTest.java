@@ -201,8 +201,7 @@ public final class WeakNetworkTransportTest {
             for(String code:expected){
                 try{api.whitelist(true,false);fail("must not grant "+code);}
                 catch(IOException error){
-                    assertEquals(code,NativeApi.errorCode(error).equals("VIDEO_UNAVAILABLE")
-                        ?error.getMessage():NativeApi.errorCode(error));
+                    assertEquals(code,error.getMessage());
                 }
             }
             assertEquals("One call per HTTP response, no implicit repeated write or redirect",
