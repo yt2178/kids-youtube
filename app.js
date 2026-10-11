@@ -1219,7 +1219,7 @@ function launchNativeApp() {
 function openPlayer(id) {
   // Metadata already displayed during a fresh grant check must never be used
   // to start a new playback request until revalidation succeeds.
-  if(loading||!approvalMarker||ui.grid.inert)return;
+  if(!approvalMarker||ui.grid.inert)return;
   const video = displayed.get(id);
   if (!video || (!getApprovedVideos().has(id) && !getApprovedChannels().has(video.channelId))) return;
   if (PARENT_CATALOG) {
