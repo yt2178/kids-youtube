@@ -357,3 +357,23 @@ test('playback setup logs authorization failures distinctly from media extractio
   assert.doesNotMatch(activity,/logPlayback\(generation,"extraction-failed",e\)/);
   assert.match(api,/if\(text\.contains\("AUTH_SUPERSEDED"\)\)return "AUTH_SUPERSEDED"/);
 });
+
+test('native foreground playback explicitly gates optional catalog and polls without blocking mandatory fresh checks',()=>{
+  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  const api=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  const recovery=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/PlaybackRecovery.java'),'utf8');
+  assert.match(activity,/task\.optionalApi\|\|task\.backgroundGrant/);
+  assert.match(activity,/task\.abort\(\)/);
+  assert.match(activity,/respond\(task\.callback,task\.id,null,"PLAYBACK_BUSY"\)/);
+  assert.match(activity,/if\(active!=null&&\(method\.equals\("api"\)\|\|method\.equals\("authorization"\)/);
+  assert.match(activity,/kids-native-playback-open/);
+  assert.match(activity,/kids-native-playback-closed/);
+  assert.match(activity,/PlaybackRecovery\.run\(scope/);
+  assert.match(recovery,/attempt<=2/);
+  assert.match(recovery,/Thread\.sleep\(1400\)/);
+  assert.match(recovery,/scope\.deadline-System\.currentTimeMillis\(\)<20000/);
+  assert.match(recovery,/instanceof javax\.net\.ssl\.SSLException\)return false/);
+  const playback=api.slice(api.indexOf('Playback playback(String id,long requestId)'));
+  assert.ok((playback.match(/whitelist\(true,false\)/g)||[]).length>=2,
+    'each playback attempt must still perform TWO fresh checks');
+});
