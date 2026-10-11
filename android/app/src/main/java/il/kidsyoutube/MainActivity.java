@@ -280,8 +280,13 @@ public final class MainActivity extends Activity {
                     }
                     return true;
 
-                case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
+                    pressHandler.removeCallbacks(longPressRunnable);
+                    pressHandler.removeCallbacks(singleTapRunnable);
+                    if(isFastForwarding[0]&&player!=null)player.setPlaybackSpeed(1.0f);
+                    isFastForwarding[0]=false;
+                    return true;
+                case MotionEvent.ACTION_UP:
                     pressHandler.removeCallbacks(longPressRunnable);
                     if(isFastForwarding[0]){
                         isFastForwarding[0]=false;
