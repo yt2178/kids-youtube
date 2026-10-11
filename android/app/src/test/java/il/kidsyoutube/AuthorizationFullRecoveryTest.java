@@ -23,42 +23,68 @@ public final class AuthorizationFullRecoveryTest {
                 ",\"updatedAt\":\"2026-10-11T00:00:00Z\",\"catalogVersion\":1}";
     }
     @Test public void dnsFourThenHeadersTimeoutThenFreshSuccessSameClient() throws Exception {
-        try(MockWebServer server=new MockWebServer()){
+        // A real TCP listener is retained for the whole test. MockWebServer's
+        // queued socket teardown can interfere with a second call after a
+        // deliberate read timeout; this controlled HTTP/1.1 peer accepts two
+        // distinct connections without rebuilding the client or listener.
+        java.net.InetAddress localhost=java.net.InetAddress.getByName("127.0.0.1");
+        try(java.net.ServerSocket server=new java.net.ServerSocket(0,8,localhost)){
+            server.setSoTimeout(5000);
             AtomicInteger http=new AtomicInteger(),dns=new AtomicInteger();
-            server.setDispatcher(new Dispatcher(){
-                @Override public MockResponse dispatch(RecordedRequest request) {
-                    if(http.incrementAndGet()==1) return new MockResponse()
-                        .setHeadersDelay(650,TimeUnit.MILLISECONDS)
-                        .setBody(document(3));
-                    return new MockResponse().setBody(document(4));
-                }
+            ExecutorService peer=Executors.newSingleThreadExecutor();
+            Future<?> served=peer.submit(()->{
+                try{
+                    for(int n=0;n<2;n++){
+                        try(java.net.Socket socket=server.accept()){
+                            socket.setSoTimeout(1500);
+                            java.io.BufferedReader input=new java.io.BufferedReader(
+                                new java.io.InputStreamReader(socket.getInputStream(),
+                                java.nio.charset.StandardCharsets.US_ASCII));
+                            while(true){
+                                String line=input.readLine();
+                                if(line==null||line.isEmpty())break;
+                            }
+                            int received=http.incrementAndGet();
+                            if(received==1){Thread.sleep(650);continue;} // no status / headers
+                            byte[] body=document(4).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                            String headers="HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\n"+
+                                "Content-Length: "+body.length+"\\r\\nConnection: close\\r\\n\\r\\n";
+                            socket.getOutputStream().write(headers.getBytes(
+                                java.nio.charset.StandardCharsets.US_ASCII));
+                            socket.getOutputStream().write(body);
+                            socket.getOutputStream().flush();
+                        }
+                    }
+                }catch(Exception e){throw new RuntimeException(e);}
             });
-            server.start();
-            Dns flaky=name->{
-                if(dns.incrementAndGet()<=4)throw new UnknownHostException("intermittent resolver");
-                return Dns.SYSTEM.lookup(name);
-            };
-            NativeApi api=new NativeApi(new ExtractorDownloader(false,flaky,220),
-                    server.url("/?action=list&format=native").toString());
-            for(int cycle=0;cycle<2;cycle++){
-                try{api.whitelist(true,false);fail("two attempts must fail closed");}
-                catch(UnknownHostException expected){}
-                assertEquals(0,server.getRequestCount());
+            try{
+                Dns flaky=name->{
+                    if(dns.incrementAndGet()<=4)throw new UnknownHostException("temporary DNS");
+                    return java.util.Collections.singletonList(localhost);
+                };
+                NativeApi api=new NativeApi(new ExtractorDownloader(false,flaky,220),
+                    "http://127.0.0.1:"+server.getLocalPort()+"/?action=list&format=native");
+                for(int cycle=0;cycle<2;cycle++){
+                    try{api.whitelist(true,false);fail("two DNS failures must fail closed");}
+                    catch(UnknownHostException expected){}
+                    assertEquals(0,http.get());
+                }
+                assertEquals(4,dns.get());
+                try{api.whitelist(true,false);fail("no headers must never grant");}
+                catch(java.net.SocketTimeoutException expected){}
+                assertEquals(1,http.get());
+                assertEquals(5,dns.get());
+                Thread.sleep(700); // release deliberately stalled first connection
+                assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
+                assertEquals(6,dns.get());
+                assertEquals(2,http.get());
+                assertTrue(api.whitelist(false,false).contains("AAAAAAAAAAA"));
+                assertEquals(2,http.get()); // cache after fresh grant, no extra GET
+                served.get(2,TimeUnit.SECONDS);
+            }finally{
+                peer.shutdownNow();
+                assertTrue(peer.awaitTermination(3,TimeUnit.SECONDS));
             }
-            assertEquals(4,dns.get());
-            try{api.whitelist(true,false);fail("no HTTP headers must not grant");}
-            catch(java.net.SocketTimeoutException expected){}
-            assertEquals(1,http.get());
-            assertEquals(5,dns.get());
-            // The server remains up; allow its first deliberately delayed
-            // response to finish before trying the next fresh authorization.
-            Thread.sleep(730);
-            assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
-            assertEquals(6,dns.get());
-            assertEquals(2,http.get());
-            JSONObject response=api.displayAuthorization(); // another fresh GET
-            assertEquals(4,response.getInt("version"));
-            assertEquals(3,http.get()); // no stale grant or extra internal retry
         }
     }
 
