@@ -707,7 +707,9 @@ async function parallelMap(items, worker) {
   }));
 }
 function scheduleCatalogRetry(reason='partial'){
-  if(catalogRetryTimer)return; // Exactly one queued recovery, even after repeated failures.
+  // Only authorization needs long-lived recovery. Optional channel-completion
+  // attempts keep their previous three-try cap to avoid excess provider traffic.
+  if(catalogRetryTimer || (reason==='partial'&&catalogRetryAttempts>=3))return;
   const steps=reason==='authorization'?[6000,18000,45000,90000,180000]:
     [35000,90000,180000];
   const stage=Math.min(catalogRetryAttempts,steps.length-1);
