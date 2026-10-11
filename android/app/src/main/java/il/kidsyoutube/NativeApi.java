@@ -236,7 +236,7 @@ final class NativeApi {
             return new JSONObject(lastAuthorization.toString());
         }
     }
-    private void checkNetwork() throws IOException {
+    void checkNetwork() throws IOException { // package-private for deterministic cooldown checks
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
         cooldown.check(); // Throws COOLDOWN_ACTIVE without extending a provider block.
     }
