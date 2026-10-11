@@ -621,7 +621,7 @@ public final class MainActivity extends Activity {
         else if("COOLDOWN_ACTIVE".equals(code)){
             long remainingSec=(api.cooldownRemainingMs()+999)/1000;
             if(remainingSec>0)
-                reason="בקשות לספק הסרטונים מושהות זמנית. לא נשלחה בקשה חדשה. נשארו "
+                reason="בקשות לספק הסרטונים מושהות זמנית. לא נשלחה בקשה חדשה לספק הסרטונים. נשארו "
                         +(remainingSec/60)+" דקות ו־"+(remainingSec%60)+" שניות.";
             else reason="ההשהיה הסתיימה. אפשר לנסות לפתוח את הסרטון שוב.";
         }
