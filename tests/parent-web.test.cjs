@@ -12,7 +12,7 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
   assert.match(html,/font-src 'self';/);assert.doesNotMatch(html,/web-share|clipboard-write/);assert.doesNotMatch(html,/fonts\.gstatic\.com|https:\/\/\*\./);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
-  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011ui1/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
+  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011ui2/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
@@ -330,6 +330,7 @@ test('parent search opens the official embedded YouTube player and adds once',as
  },{local:new Map([['kidsParentToken','parent']])});
  app.elements['search-query'].value='שיר';await app.fire('search-submit');
  const row=app.elements['search-results'].children[0],info=row.children[1],actions=info.children[2],add=actions.children[1];
+ assert.equal(row.children[0].referrerPolicy,'no-referrer');
  assert.equal(info.children[0].textContent,'<b>Song</b>');
  assert.equal(info.children[0].type,'button');
  await info.children[0].listeners.click[0]();
@@ -345,6 +346,22 @@ test('parent search opens the official embedded YouTube player and adds once',as
  const first=add.listeners.click[0]();await new Promise(r=>setImmediate(r));await add.listeners.click[0]();assert.equal(mutations,1);
  finish({list:video+'\n',version:8,changed:true});await first;assert.equal(add.disabled,true);assert.equal(add.textContent,'כבר נוסף לילדים');
 });
+test('failed YouTube thumbnail uses a neutral fallback without losing search actions',async()=>{
+  const app=await parentApp(async action=>{
+    if(action==='list')return {list:'',version:1};
+    if(action==='status')return {authenticated:true};
+    if(action==='search')return {items:[{id:'mVTlbvQ_010',title:'Sample video'}]};
+    throw Error(action);
+  },{local:new Map([['kidsParentToken','parent']])});
+  app.elements['search-query'].value='sample';
+  await app.fire('search-submit');
+  const row=app.elements['search-results'].children[0];
+  const image=row.children[0];
+  for(const fn of image.listeners.error||[])fn();
+  assert.equal(image.hidden,true);
+  assert.equal(row.children[1].children[2].children.length,2);
+});
+
 test('search pagination deduplicates results and missing configuration has a clear message',async()=>{
  let count=0;const app=await parentApp(async(action,options)=>{
   if(action==='list')return {list:''};if(action==='status')return {authenticated:true};
