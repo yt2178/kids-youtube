@@ -468,3 +468,24 @@ test('channel thumbnail is restricted to Google image origins, not arbitrary URL
   assert.equal(visual.children.length,1);
   assert.equal(visual.children[0].textContent,'ערוץ');
 });
+
+test('parent search retrieves a real safe avatar when a search channel result lacks one',async()=>{
+ let metadataCalls=0;
+ const channelId='UC'+'K'.repeat(22);
+ const app=await parentApp(async action=>{
+  if(action==='list')return {list:'',version:2};
+  if(action==='status')return {authenticated:true};
+  if(action==='search')return {items:[{kind:'channel',id:channelId,title:'ערוץ מאיר',thumbnail:''}],nextPageToken:''};
+  if(action==='metadata'){metadataCalls++;return {kind:'channel',title:'ערוץ מאיר',thumbnail:'https://yt3.googleusercontent.com/meir-avatar'};}
+  throw Error(action);
+ },{local:new Map([['kidsParentToken','parent']])});
+ await app.fire('management-search-toggle');
+ app.elements['search-query'].value='מאיר';await app.fire('search-submit');
+ await new Promise(resolve=>setImmediate(resolve));
+ const visual=app.elements['search-results'].children[0].children[0];
+ assert.equal(metadataCalls,1);
+ assert.equal(visual.children[1].src,'https://yt3.googleusercontent.com/meir-avatar');
+ await visual.children[1].listeners.load[0]();
+ assert.equal(visual.children[0].hidden,true);
+ assert.equal(visual.children[1].hidden,false);
+});
