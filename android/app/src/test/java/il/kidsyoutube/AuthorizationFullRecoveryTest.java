@@ -47,8 +47,8 @@ public final class AuthorizationFullRecoveryTest {
                             int received=http.incrementAndGet();
                             if(received==1){Thread.sleep(650);continue;} // no status / headers
                             byte[] body=document(4).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                            String headers="HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\n"+
-                                "Content-Length: "+body.length+"\\r\\nConnection: close\\r\\n\\r\\n";
+                            String headers="HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"+
+                                "Content-Length: "+body.length+"\r\nConnection: close\r\n\r\n";
                             socket.getOutputStream().write(headers.getBytes(
                                 java.nio.charset.StandardCharsets.US_ASCII));
                             socket.getOutputStream().write(body);
