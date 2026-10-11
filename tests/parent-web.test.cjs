@@ -12,7 +12,7 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
   assert.match(html,/font-src 'self';/);assert.doesNotMatch(html,/web-share|clipboard-write/);assert.doesNotMatch(html,/fonts\.gstatic\.com|https:\/\/\*\./);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
-  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011search2/);assert.match(html,/id="management-search-panel"[^>]*hidden/);assert.match(html,/id="management-search-toggle"[^>]*aria-expanded="false"/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
+  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011search3/);assert.match(html,/id="management-search-panel"[^>]*hidden/);assert.match(html,/id="management-search-toggle"[^>]*aria-expanded="false"/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
@@ -287,11 +287,14 @@ test('leaving management during metadata loading prevents hidden iframe from app
   assert.equal(a.elements.preview.hidden,true);
 });
 
-test('catalog search shares the top tab row and sort stays beside grid/list buttons',()=>{
+test('search is a compact labelled action beside, not inside, the category tabs',()=>{
   const html=fs.readFileSync('index.html','utf8');
   const nav=html.slice(html.indexOf('<nav class="tabs"'),html.indexOf('</nav>'));
   assert.ok(nav.includes('id="videos-tab"')&&nav.includes('id="channels-tab"')&&nav.includes('id="all-tab"'));
-  assert.ok(nav.includes('id="search-toggle"'),'search button must be in same nav row');
+  assert.ok(!nav.includes('id="search-toggle"'),'search must not look like a fourth category tab');
+  const row=html.slice(html.indexOf('<div class="browse-main-row">'),html.indexOf('</div>',html.indexOf('<div class="browse-main-row">')));
+  assert.ok(row.includes('id="search-toggle"'),'search must be beside categories and clearly labelled');
+  assert.match(html,/class="search-shortcut" id="search-toggle"[^>]*aria-controls="search-row"/);
   assert.equal(html.split('id="search-toggle"').length-1,1);
   const toolbar=html.slice(html.indexOf('<div class="toolbar">'),html.indexOf('<div class="status"'));
   assert.ok(toolbar.includes('id="sort-options"')&&toolbar.includes('id="view-grid"')&&toolbar.includes('id="view-list"'));
@@ -464,4 +467,39 @@ test('channel thumbnail is restricted to Google image origins, not arbitrary URL
   const visual=app.elements['search-results'].children[0].children[0];
   assert.equal(visual.children.length,1);
   assert.equal(visual.children[0].textContent,'ערוץ');
+});
+
+test('parent search retrieves a real safe avatar when a search channel result lacks one',async()=>{
+ let metadataCalls=0;
+ const channelId='UC'+'K'.repeat(22);
+ const app=await parentApp(async action=>{
+  if(action==='list')return {list:'',version:2};
+  if(action==='status')return {authenticated:true};
+  if(action==='search')return {items:[{kind:'channel',id:channelId,title:'ערוץ מאיר',thumbnail:''}],nextPageToken:''};
+  if(action==='metadata'){metadataCalls++;return {kind:'channel',title:'ערוץ מאיר',thumbnail:'https://yt3.googleusercontent.com/meir-avatar'};}
+  throw Error(action);
+ },{local:new Map([['kidsParentToken','parent']])});
+ await app.fire('management-search-toggle');
+ app.elements['search-query'].value='מאיר';await app.fire('search-submit');
+ await new Promise(resolve=>setImmediate(resolve));
+ const visual=app.elements['search-results'].children[0].children[0];
+ assert.equal(metadataCalls,1);
+ assert.equal(visual.children[1].src,'https://yt3.googleusercontent.com/meir-avatar');
+ await visual.children[1].listeners.load[0]();
+ assert.equal(visual.children[0].hidden,true);
+ assert.equal(visual.children[1].hidden,false);
+});
+
+test('refreshing an unchanged parent list preserves rendered row nodes and edit state',async()=>{
+  const local=new Map([['kidsParentToken','token']]);
+  const a=await parentApp(async action=>{
+    if(action==='list')return {list:video+'\\n',version:3,setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    throw Error('Unexpected '+action);
+  },{local});
+  const first=a.elements['approved-cards'].children[0];
+  assert.ok(first);
+  await a.fire('refresh-list');
+  assert.equal(a.elements['approved-cards'].children[0],first,'unchanged approval cards are not rebuilt');
+  assert.equal(a.elements['approved-text'].value,video+'\\n');
 });

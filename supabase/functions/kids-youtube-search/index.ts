@@ -23,9 +23,23 @@ function safeImage(raw:unknown){
  }catch{return "";}
 }
 function channelThumbnail(node:any){
- const thumbs=node.author?.thumbnails||node.thumbnails||node.metadata?.thumbnails||[];
- if(!Array.isArray(thumbs))return "";
- for(let i=thumbs.length-1;i>=0;i--){const image=safeImage(thumbs[i]?.url);if(image)return image;}
+ // YouTube.js returns several distinct Channel/GridChannel shapes; an empty
+ // author.thumbnails array must NOT suppress avatar/thumbnail alternatives.
+ const sources=[
+   node.author?.best_thumbnail,node.best_thumbnail,
+   node.author?.thumbnails,node.thumbnails,node.thumbnail,
+   node.avatar,node.author?.avatar,node.metadata?.avatar,
+   node.metadata?.thumbnails,node.metadata?.thumbnail
+ ];
+ for(const value of sources){
+   const thumbs=Array.isArray(value)?value:
+     Array.isArray(value?.thumbnails)?value.thumbnails:
+     Array.isArray(value?.image)?value.image:[value];
+   for(let i=thumbs.length-1;i>=0;i--){
+     const image=safeImage(typeof thumbs[i]==="string"?thumbs[i]:thumbs[i]?.url);
+     if(image)return image;
+   }
+ }
  return "";
 }
 function normalizeChannels(results:any){

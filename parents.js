@@ -34,7 +34,7 @@ async function api(action,options={}){
   }finally{clearTimeout(timer);pendingRequests.delete(controller);}
 }
 function entries(raw){const out=[];for(const line of String(raw||'').replace(/^\uFEFF/,'').split(/\r?\n/)){const v=line.trim();if(!v||v.startsWith('//'))continue;const parts=v.split(/\s+\/\//,2);try{const link=KidsParentLinks.classify(parts[0]);out.push({...link,note:(parts[1]||'').trim()});}catch(_){out.push({url:parts[0],kind:'unknown',note:(parts[1]||'').trim()});}}return out;}
-function renderList(raw,version){currentList=String(raw||'');syncSearchButtons();if(Number.isSafeInteger(version))currentVersion=version;if(ui['manual-editor'].hidden)ui['approved-text'].value=currentList;ui['approved-cards'].replaceChildren();const list=entries(currentList);if(!list.length){const p=document.createElement('p');p.textContent='אין עדיין קישורים מאושרים.';ui['approved-cards'].append(p);return;}for(const item of list){const box=document.createElement('article');box.className='entry';const title=document.createElement('p');title.className='entry-title';title.textContent=item.note||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube');const link=document.createElement('p');link.className='entry-link';link.textContent=item.url;const remove=document.createElement('button');remove.type='button';remove.className='remove';remove.textContent='הסר';remove.addEventListener('click',()=>askRemove(item));box.append(title,link,remove);ui['approved-cards'].append(box);}}
+function renderList(raw,version){const next=String(raw||''),unchanged=next===currentList&&ui['approved-cards'].children.length>0;currentList=next;syncSearchButtons();if(Number.isSafeInteger(version))currentVersion=version;if(ui['manual-editor'].hidden)ui['approved-text'].value=currentList;if(unchanged)return;ui['approved-cards'].replaceChildren();const list=entries(currentList);if(!list.length){const p=document.createElement('p');p.textContent='אין עדיין קישורים מאושרים.';ui['approved-cards'].append(p);return;}for(const item of list){const box=document.createElement('article');box.className='entry';const title=document.createElement('p');title.className='entry-title';title.textContent=item.note||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube');const link=document.createElement('p');link.className='entry-link';link.textContent=item.url;const remove=document.createElement('button');remove.type='button';remove.className='remove';remove.textContent='הסר';remove.addEventListener('click',()=>askRemove(item));box.append(title,link,remove);ui['approved-cards'].append(box);}}
 async function backfillApprovedCatalog(){
   if(!catalogSupported||catalogBackfillStarted||!token())return;
   catalogBackfillStarted=true;
@@ -204,6 +204,18 @@ function previewSearchChannel(item){
   ui.preview.hidden=false;
   if(typeof ui.preview.scrollIntoView==='function')ui.preview.scrollIntoView({behavior:'smooth',block:'start'});
 }
+let searchAvatarLookups=0;
+async function resolveMissingSearchAvatar(item,image,fallback,generation){
+  if(searchAvatarLookups>=3 || !token())return;
+  searchAvatarLookups++;
+  const epoch=sessionEpoch;
+  try{
+    const meta=await api('metadata',{method:'POST',auth:true,body:{link:searchUrl(item)}});
+    if(epoch!==sessionEpoch||generation!==searchGeneration||!searchItems.includes(item))return;
+    const src=safeChannelImage(meta.thumbnail);
+    if(src){item.thumbnail=src;image.src=src;}
+  }catch(_){/* An unavailable thumbnail is not a grant or a search failure. */}
+}
 function renderSearch(){
   ui['search-results'].replaceChildren();searchButtons.clear();
   for(const item of searchItems){
@@ -214,11 +226,15 @@ function renderSearch(){
       const fallback=document.createElement('span');fallback.className='search-avatar-fallback';fallback.textContent='ערוץ';
       visual.append(fallback);
       const src=safeChannelImage(item.thumbnail);
-      if(src){
+      // Reject explicit third-party image URLs entirely. For missing images
+      // only, use a bounded authenticated metadata lookup as a fallback.
+      if(src||(!item.thumbnail&&!item.thumbnailRejected)){
         const image=document.createElement('img');image.alt='';image.className='search-avatar';image.referrerPolicy='no-referrer';
         image.addEventListener('load',()=>{fallback.hidden=true;image.hidden=false;});
         image.addEventListener('error',()=>{image.hidden=true;fallback.hidden=false;});
-        image.hidden=true;image.src=src;visual.append(image);
+        image.hidden=true;visual.append(image);
+        if(src)image.src=src;
+        else resolveMissingSearchAvatar(item,image,fallback,searchGeneration);
       }
     }else{
       const image=document.createElement('img');image.src='https://i.ytimg.com/vi/'+item.id+'/mqdefault.jpg';
@@ -259,7 +275,7 @@ async function runSearch(more=false){
   const query=ui['search-query'].value.trim();if(!query){ui['search-status'].textContent='הקלידו מה לחפש.';return;}
   const append=more&&query===searchQuery;if(append&&!searchPage)return;
   const epoch=sessionEpoch,generation=++searchGeneration;
-  if(!append){searchItems=[];searchPage='';searchQuery=query;renderSearch();}
+  if(!append){searchItems=[];searchPage='';searchQuery=query;searchAvatarLookups=0;renderSearch();}
   setBusy(ui['search-submit'],true);ui['search-more'].disabled=true;ui['search-status'].textContent='מחפש ערוצים וסרטונים ב־YouTube…';
   try{
     const d=await api('search',{method:'POST',auth:true,body:{query,pageToken:append?searchPage:''}});
@@ -267,7 +283,7 @@ async function runSearch(more=false){
     const found=Array.isArray(d.items)?d.items.filter(item=>{
       if(!item||!['video','channel'].includes(item.kind))return false;
       return item.kind==='channel'?/^UC[A-Za-z0-9_-]{22}$/.test(item.id):/^[A-Za-z0-9_-]{11}$/.test(item.id);
-    }).map(item=>({kind:item.kind,id:item.id,title:String(item.title||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube')).slice(0,300),author:String(item.author||'').slice(0,200),thumbnail:item.kind==='channel'?safeChannelImage(item.thumbnail):''})):[];
+    }).map(item=>({kind:item.kind,id:item.id,title:String(item.title||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube')).slice(0,300),author:String(item.author||'').slice(0,200),thumbnail:item.kind==='channel'?safeChannelImage(item.thumbnail):'',thumbnailRejected:item.kind==='channel'&&!!item.thumbnail&&!safeChannelImage(item.thumbnail)})):[];
     const seen=new Set(searchItems.map(searchKey));for(const item of found){const key=searchKey(item);if(!seen.has(key)){seen.add(key);searchItems.push(item);}}
     // Rank the closest channel first and then its matching videos, rather
     // than interleaving that channel's videos with unrelated results.

@@ -46,9 +46,11 @@ public final class MainActivity extends Activity {
     private LinearLayout overlay,bar;
     private TextView title,message,hudToast;
     private final Handler hudHandler=new Handler(Looper.getMainLooper());
+    private final Handler pressHandler=new Handler(Looper.getMainLooper());
     private final Runnable hideHudRunnable=()->{if(hudToast!=null)hudToast.setVisibility(View.GONE);};
     private final Runnable hideControlsRunnable=this::hidePlayerControls;
     private boolean controlsVisible=true;
+    private boolean routingMedia3Touch;
     private ProgressBar loading;
     private Button retry,quality;
     private String qualityMode="auto";
@@ -168,6 +170,12 @@ public final class MainActivity extends Activity {
         overlay.addView(quality,new LinearLayout.LayoutParams(-1,dp(48)));
         updateQualityLabel();
         playerView=new PlayerView(this);
+        // The app controls all chrome from one single-tap/timeout state.
+        // Media3 must not hide its seek bar independently or consume taps.
+        playerView.setControllerAutoShow(false);
+        playerView.setControllerHideOnTouch(false);
+        playerView.setControllerShowTimeoutMs(0);
+        playerView.setControllerAnimationEnabled(false);
         playerView.setShowNextButton(false);playerView.setShowPreviousButton(false);
         playerView.setShowFastForwardButton(true);playerView.setShowRewindButton(true);
         
@@ -198,7 +206,6 @@ public final class MainActivity extends Activity {
         final float[] startBright=new float[1];
         int touchSlop=ViewConfiguration.get(this).getScaledTouchSlop();
 
-        final Handler pressHandler=new Handler(Looper.getMainLooper());
         final boolean[] isFastForwarding=new boolean[1];
         final long[] lastTapTime=new long[1];
         final Runnable singleTapRunnable=()->togglePlayerControls();
@@ -212,6 +219,20 @@ public final class MainActivity extends Activity {
         };
 
         gestureOverlay.setOnTouchListener((v,event)->{
+            // The gesture layer sits above PlayerView. Route a gesture that
+            // starts on a REAL Media3 button/time bar through to PlayerView.
+            // Empty video-area taps continue to use the unified app handler.
+            if(event.getActionMasked()==MotionEvent.ACTION_DOWN)
+                routingMedia3Touch=controlsVisible && isMedia3ControlHit(
+                        playerView.findViewById(androidx.media3.ui.R.id.exo_controller),
+                        event.getRawX(),event.getRawY());
+            if(routingMedia3Touch){
+                playerView.dispatchTouchEvent(event);
+                if(event.getActionMasked()==MotionEvent.ACTION_UP ||
+                   event.getActionMasked()==MotionEvent.ACTION_CANCEL)
+                    routingMedia3Touch=false;
+                return true;
+            }
             switch(event.getAction()){
                 case MotionEvent.ACTION_DOWN:
                     downX[0]=event.getX();downY[0]=event.getY();
@@ -259,8 +280,13 @@ public final class MainActivity extends Activity {
                     }
                     return true;
 
-                case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
+                    pressHandler.removeCallbacks(longPressRunnable);
+                    pressHandler.removeCallbacks(singleTapRunnable);
+                    if(isFastForwarding[0]&&player!=null)player.setPlaybackSpeed(1.0f);
+                    isFastForwarding[0]=false;
+                    return true;
+                case MotionEvent.ACTION_UP:
                     pressHandler.removeCallbacks(longPressRunnable);
                     if(isFastForwarding[0]){
                         isFastForwarding[0]=false;
@@ -336,6 +362,21 @@ public final class MainActivity extends Activity {
         hudHandler.removeCallbacks(hideHudRunnable);
         hudHandler.postDelayed(hideHudRunnable,1200);
     }
+    private static boolean isMedia3ControlHit(View view,float rawX,float rawY){
+        if(view==null||!view.isShown())return false;
+        if(view instanceof ViewGroup){
+            ViewGroup group=(ViewGroup)view;
+            for(int i=group.getChildCount()-1;i>=0;i--)
+                if(isMedia3ControlHit(group.getChildAt(i),rawX,rawY))return true;
+        }
+        // The full-screen controller itself is not an actionable button:
+        // touches on its empty areas must still toggle the shared controls.
+        if(view.getId()==androidx.media3.ui.R.id.exo_controller)return false;
+        if(!view.isClickable()&&!view.isLongClickable()
+                &&view.getId()!=androidx.media3.ui.R.id.exo_progress)return false;
+        android.graphics.Rect hit=new android.graphics.Rect();
+        return view.getGlobalVisibleRect(hit)&&hit.contains((int)rawX,(int)rawY);
+    }
     private void scheduleHideControls(){
         hudHandler.removeCallbacks(hideControlsRunnable);
         hudHandler.postDelayed(hideControlsRunnable,3500);
@@ -355,6 +396,7 @@ public final class MainActivity extends Activity {
         if(playerView!=null)playerView.hideController();
     }
     private void togglePlayerControls(){
+        if(active==null)return;
         if(controlsVisible)hidePlayerControls();
         else showPlayerControls();
     }
@@ -561,6 +603,8 @@ public final class MainActivity extends Activity {
         openPlayer(id,displayTitle,0);
     }
     private void openPlayer(String id,String displayTitle,long resumePosition) {
+        pressHandler.removeCallbacksAndMessages(null);
+        routingMedia3Touch=false;
         android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
         if(keyboard!=null)keyboard.hideSoftInputFromWindow(web.getWindowToken(),0);
         long generation=++playerGeneration;
@@ -851,6 +895,8 @@ public final class MainActivity extends Activity {
         retry.setVisibility(View.VISIBLE);getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     private void closePlayer(){
+        pressHandler.removeCallbacksAndMessages(null);
+        routingMedia3Touch=false;
         ++playerGeneration;if(playTask!=null){playTask.abort();playTask=null;}
         hudHandler.removeCallbacks(hideHudRunnable);
         hudHandler.removeCallbacks(hideControlsRunnable);

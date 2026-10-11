@@ -187,7 +187,11 @@ test('successful empty channel response removes obsolete cached videos',async()=
 test('invalid current whitelist fails closed rather than reviving old cache',async()=>{
   const store=new Map();await app({videos:[{id:id(1)}],channels:[]},undefined,store);
   const a=await app({videos:'invalid',channels:[]},undefined,store);assert.equal(a.run('displayed.size'),0);
-  assert.equal(JSON.parse(store.get('kidsYoutubeVideos')).config.videos.length,0);
+  assert.equal(a.elements.grid.children.length,0);
+  assert.equal(a.run('approvalMarker'),'');
+  // Invalid authorization must not destroy already collected display metadata.
+  // The snapshot remains inert and can be reused only after another fresh grant.
+  assert.equal(JSON.parse(store.get('kidsYoutubeVideos')).config.videos.length,1);
 });
 test('cache is isolated across GitHub Pages repository paths',async()=>{
   const store=new Map();await app({videos:[{id:id(1)}],channels:[]},undefined,store);
@@ -1567,4 +1571,65 @@ test('in-flight background grant cancelled for native play cannot hide usable ca
   for(const fn of a.listeners['kids-native-playback-closed'])fn();
   await until(()=>calls===3);
   assert.equal(a.run('displayed.size'),1,'fresh grants unchanged, no blank catalog');
+});
+
+test('in-session refresh keeps verified cards visible and blocks clicks until fresh authorization',async()=>{
+  const current={videos:[{id:id(1),title:'סרטון מקורי'}],channels:[]};
+  let paused=false,complete;
+  const a=await app(current,undefined,new Map(),{
+    listFetch:({raw})=>paused?new Promise(resolve=>{complete=resolve;}):json({list:raw,updatedAt:'v1'})
+  });
+  const firstCard=a.elements.grid.children[0];
+  assert.ok(firstCard);
+  const cardsBefore=a.elements.grid.children.length;
+  paused=true;
+  const pending=a.run("loadApp({trigger:'in-session-regression'})");
+  assert.equal(a.elements.grid.children.length,cardsBefore,'verified cards remain while authorization is pending');
+  assert.equal(a.elements.grid.children[0],firstCard,'existing card is not recreated');
+  assert.equal(a.elements.grid.inert,true,'no new playback while grants are revalidating');
+  a.run(`openPlayer('${id(1)}')`);
+  assert.equal(a.elements.player.hidden,true,'a stale on-screen button cannot start playback during revalidation');
+  complete(json({list:JSON.stringify(current),updatedAt:'v1'}));
+  await pending;
+  assert.equal(a.elements.grid.inert,false);
+  assert.equal(a.run('displayed.size'),1);
+  assert.equal(a.elements.grid.children[0],firstCard);
+});
+test('a revoked approval disappears immediately after the new authority reply',async()=>{
+  const config={videos:[{id:id(1)}],channels:[]};
+  let paused=false,complete;
+  const a=await app(config,undefined,new Map(),{
+    listFetch:({raw})=>paused?new Promise(resolve=>{complete=resolve;}):json({list:raw,updatedAt:'v1'})
+  });
+  paused=true;
+  const pending=a.run("loadApp({trigger:'revoke-test'})");
+  assert.equal(a.elements.grid.children.length,1);
+  assert.equal(a.elements.grid.inert,true);
+  complete(json({list:JSON.stringify(empty),updatedAt:'v2'}));
+  await pending;
+  assert.equal(a.elements.grid.children.length,0);
+  assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.run('activeConfig.videos.length'),0);
+  assert.equal(a.elements.grid.inert,false);
+});
+test('a failed fresh authorization clears visible cards and cached grants',async()=>{
+  const store=new Map(), config={videos:[{id:id(1)}],channels:[]};
+  let offline=false;
+  const a=await app(config,undefined,store,{
+    listFetch:({raw})=>offline?Promise.reject(new Error('offline')):json({list:raw,updatedAt:'v1'})
+  });
+  assert.equal(a.run('displayed.size'),1);
+  offline=true;
+  await a.run("loadApp({trigger:'offline-revalidation'})");
+  assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.elements.grid.children.length,0);
+  assert.equal(a.run('approvalMarker'),'');
+  assert.equal(a.elements.grid.inert,false);
+  const snapshot=JSON.parse(store.get('kidsYoutubeVideos'));
+  assert.equal(snapshot.config.videos.length,1,'metadata can survive without granting visibility');
+  const stillOffline=await app(empty,fail,store,{offline:true});
+  assert.equal(stillOffline.run('displayed.size'),0,'offline cached metadata grants no access');
+  assert.equal(stillOffline.elements.grid.children.length,0);
+  const reverified=await app(config,undefined,store);
+  assert.equal(reverified.run('displayed.size'),1,'metadata can return after an authoritative grant');
 });

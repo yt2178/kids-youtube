@@ -46,7 +46,12 @@
     .install { margin:0; }
     main { min-width:0; }
     .browse-controls { position:sticky; top:0; z-index:10; background:#171725f4; backdrop-filter:blur(12px); padding:9px; border:1px solid #3d394f; border-radius:18px; margin-bottom:12px; }
-    .tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)) 52px; gap:7px; margin-bottom:9px; }
+    .browse-main-row{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+    .tabs { display:grid; flex:1;min-width:0; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; margin:0; }
+    .search-shortcut{width:auto;min-width:0;min-height:44px;flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid #73627e;border-radius:11px;padding:7px 10px;background:transparent;color:#f7ebfa;font-size:13px;font-weight:650;white-space:nowrap}
+    .search-shortcut[aria-expanded="true"]{border-color:var(--accent);background:#e9456022;color:#fff}
+    .search-shortcut .search-icon{font-size:18px;line-height:1}
+    @media(max-width:370px){.search-shortcut{padding:7px 8px;font-size:12px}.search-shortcut .search-icon{font-size:16px}}
     .tab { min-height:52px; border-radius:13px; padding:7px 8px; display:flex; align-items:center; justify-content:center; gap:7px; font-size:clamp(14px,2.2vw,17px); white-space:nowrap; }
     .tab span { font-size:20px; line-height:1; }
     .tab[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); box-shadow:0 5px 18px #e9456030; }
@@ -155,12 +160,14 @@
     <main>
       <div id="pull-refresh" class="pull-refresh" aria-hidden="true">משכו למטה לרענון</div>
       <div class="browse-controls">
-        <nav class="tabs" aria-label="בחירת תוכן מאושר">
-          <button class="button tab" id="videos-tab" type="button" aria-pressed="false"><span aria-hidden="true">▶</span> סרטונים</button>
-          <button class="button tab" id="channels-tab" type="button" aria-pressed="false"><span aria-hidden="true">📺</span> ערוצים</button>
-          <button class="button tab" id="all-tab" type="button" aria-pressed="true"><span aria-hidden="true">★</span> הכול</button>
-          <button class="button tab" id="search-toggle" type="button" aria-expanded="false" aria-controls="search-row" aria-label="חיפוש"><span aria-hidden="true">🔍</span></button>
-        </nav>
+        <div class="browse-main-row">
+          <nav class="tabs" aria-label="בחירת תוכן מאושר">
+            <button class="button tab" id="videos-tab" type="button" aria-pressed="false"><span aria-hidden="true">▶</span> סרטונים</button>
+            <button class="button tab" id="channels-tab" type="button" aria-pressed="false"><span aria-hidden="true">📺</span> ערוצים</button>
+            <button class="button tab" id="all-tab" type="button" aria-pressed="true"><span aria-hidden="true">★</span> הכול</button>
+          </nav>
+          <button class="search-shortcut" id="search-toggle" type="button" aria-expanded="false" aria-controls="search-row" aria-label="פתיחת שורת חיפוש"><span class="search-icon" aria-hidden="true">🔍</span> חיפוש</button>
+        </div>
         <label class="search-label sr-only" id="search-label" for="search">חיפוש בסרטונים</label>
         <div class="search-row" id="search-row" hidden>
           <input id="search" type="search" placeholder="חיפוש בסרטונים" maxlength="100" autocomplete="off" spellcheck="false" enterkeyhint="search" aria-controls="grid">
@@ -211,7 +218,7 @@
   </section>
   <noscript>כדי לצפות בסרטונים, יש להפעיל JavaScript בדפדפן.</noscript>
   <script src="./providers.js?v=20261006h" defer></script>
-  <script src="./app.js?v=20261011b" defer></script>
+  <script src="./app.js?v=20261011c" defer></script>
 
 </body>
 </html>
