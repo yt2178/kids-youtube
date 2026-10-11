@@ -1373,3 +1373,98 @@ test('app sends the same load-cycle and request trace to native for startup and 
   }
   assert.equal(new Set(traces.map(t=>t.requestId)).size,3);
 });
+
+function controlledTimers(){
+  const scheduled=new Map();let current=0,next=0;
+  return {
+    setTimeout(fn,ms){const id=++next;scheduled.set(id,{fn,at:current+Math.max(0,ms)});return id;},
+    clearTimeout(id){scheduled.delete(id);},
+    pending(){return [...scheduled.values()].map(t=>t.at-current).sort((a,b)=>a-b);},
+    async advance(ms){
+      const target=current+ms;
+      for(let ticks=0;ticks<100;ticks++){
+        const ready=[...scheduled.entries()].filter(([_,t])=>t.at<=target)
+          .sort((a,b)=>a[1].at-b[1].at);
+        if(!ready.length)break;
+        const [id,task]=ready[0];scheduled.delete(id);current=task.at;
+        task.fn();
+        // Allow actual loadApp and native bridge promises to progress.
+        await new Promise(resolve=>setImmediate(resolve));
+      }
+      current=target;
+    }
+  };
+}
+test('real loadApp automatically recovers from four DNS failures and stalled headers on same app state',async()=>{
+  const clock=controlledTimers(),events=[];
+  const url='https://www.youtube.com/watch?v='+id(1),list=url+'\\n',stamp='stable';
+  const prepared={version:7,updatedAt:stamp,entries:[
+    {approval_url:url,kind:'video',item_id:id(1),title:'מאושר טרי',checked_at:new Date().toISOString()}
+  ]};
+  let cycles=0,wireAttempts=0,dnsCalls=0,httpArrivals=0;
+  const a=await app(list,()=>{throw Error('no NewPipe metadata needed');},new Map(),{
+    clock,nativeMode:true,logCollector:events,
+    nativeFetchAuthorization:async()=>{
+      cycles++;
+      if(cycles<=2){
+        // A native scoped grant call tries DNS at most twice.
+        wireAttempts+=2;dnsCalls+=2;
+        throw Object.assign(new Error('DNS_ERROR'),{code:'DNS_ERROR'});
+      }
+      wireAttempts++;dnsCalls++;httpArrivals++;
+      if(cycles===3)throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'});
+      return {list,version:7,updatedAt:stamp,catalogVersion:1,preparedCatalog:prepared};
+    }
+  });
+  assert.equal(cycles,1);assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.run('approvalMarker'),'');
+  assert.deepEqual(clock.pending().filter(ms=>ms>=6000),[6000]);
+  for(const delay of [6000,18000,45000]){
+    await clock.advance(delay);
+    await until(()=>!a.run('loading'));
+  }
+  assert.equal(cycles,4);
+  assert.equal(wireAttempts,6,'4 DNS lookups + timed-out HTTP + successful HTTP');
+  assert.equal(dnsCalls,6);assert.equal(httpArrivals,2);
+  assert.equal(a.run('displayed.size'),1);
+  assert.ok(a.run('approvalMarker').includes(list));
+  assert.equal(a.run('authorizationRetryAttempts'),0);
+  assert.equal(a.run('catalogRetryAttempts'),0);
+  assert.equal(a.elements.spinner.hidden,true);
+  assert.deepEqual(clock.pending(),[],'success must actually cancel timers');
+  assert.deepEqual(events.filter(x=>x.startsWith('KidsCatalog load-start')).length,4);
+  await clock.advance(600000); // No stale auto reload when still in foreground
+  assert.equal(cycles,4);
+});
+test('actual loadApp stops automatic authority retries for permanent errors and valid empty list',async()=>{
+  const codes=['AUTH_DENIED','TLS_ERROR','INVALID_AUTH_RESPONSE','REQUEST_ERROR','FORBIDDEN'];
+  for(const code of codes){
+    const clock=controlledTimers();let count=0;
+    const a=await app('',()=>json({videos:[]}),new Map(),{
+      clock,nativeMode:true,nativeFetchAuthorization:async()=>{count++;
+        throw Object.assign(new Error(code),{code});}
+    });
+    assert.equal(count,1,code);assert.equal(a.run('displayed.size'),0);
+    assert.equal(a.run('approvalMarker'),'');assert.deepEqual(clock.pending(),[],code);
+    await clock.advance(600000);assert.equal(count,1,code);
+  }
+  const clock=controlledTimers();let calls=0;
+  const ok=await app('',()=>json({videos:[]}),new Map(),{
+    clock,nativeMode:true,nativeFetchAuthorization:async()=>{calls++;
+      return {list:'',version:1,updatedAt:'empty-is-valid',catalogVersion:1};}
+  });
+  assert.equal(calls,1);
+  assert.equal(ok.run('authorizationRetryAttempts'),0);
+  assert.equal(ok.run('loadError'),false);
+  assert.deepEqual(clock.pending(),[]);
+});
+test('actual authority error handling retries HTTP 409, 429, 5xx and DNS but not 401/403',async()=>{
+  for(const code of ['AUTH_CHANGED_RETRY','RATE_LIMITED','NETWORK_ERROR','DNS_ERROR','CONNECT_ERROR','TIMEOUT','PROVIDER_ERROR']){
+    const clock=controlledTimers();
+    const a=await app('',()=>json({videos:[]}),new Map(),{
+      clock,nativeMode:true,nativeFetchAuthorization:async()=>{throw Object.assign(new Error(code),{code});}
+    });
+    assert.equal(a.run('authorizationRetryAttempts'),1,code);
+    assert.deepEqual(clock.pending().filter(ms=>ms>=6000),[6000],code);
+  }
+});
