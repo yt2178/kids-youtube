@@ -2,6 +2,7 @@
 package il.kidsyoutube;
 
 import android.app.Activity;
+import android.media.AudioManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.*;
@@ -42,8 +43,12 @@ public final class MainActivity extends Activity {
     private final Map<String,Task> tasks=new HashMap<>();
     private WebView web;
     private NativeApi api;
-    private LinearLayout overlay;
-    private TextView title,message;
+    private LinearLayout overlay,bar;
+    private TextView title,message,hudToast;
+    private final Handler hudHandler=new Handler(Looper.getMainLooper());
+    private final Runnable hideHudRunnable=()->{if(hudToast!=null)hudToast.setVisibility(View.GONE);};
+    private final Runnable hideControlsRunnable=this::hidePlayerControls;
+    private boolean controlsVisible=true;
     private ProgressBar loading;
     private Button retry,quality;
     private String qualityMode="auto";
@@ -142,7 +147,7 @@ public final class MainActivity extends Activity {
         overlay=new LinearLayout(this);overlay.setOrientation(LinearLayout.VERTICAL);
         overlay.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         overlay.setBackgroundColor(Color.rgb(15,15,29));overlay.setVisibility(View.GONE);
-        LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);
         Button back=button("← חזרה");back.setOnClickListener(v->closePlayer());
         title=text("");title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         bar.setPadding(dp(8),dp(4),dp(8),dp(4));bar.setMinimumHeight(dp(64));
@@ -165,7 +170,141 @@ public final class MainActivity extends Activity {
         playerView=new PlayerView(this);
         playerView.setShowNextButton(false);playerView.setShowPreviousButton(false);
         playerView.setShowFastForwardButton(true);playerView.setShowRewindButton(true);
-        overlay.addView(playerView,new LinearLayout.LayoutParams(-1,0,1));
+        
+        FrameLayout playerContainer=new FrameLayout(this);
+        playerContainer.addView(playerView,new FrameLayout.LayoutParams(-1,-1));
+        hudToast=new TextView(this);
+        hudToast.setTextColor(Color.WHITE);
+        hudToast.setTextSize(16);
+        hudToast.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        hudToast.setGravity(Gravity.CENTER);
+        android.graphics.drawable.GradientDrawable hudBg=new android.graphics.drawable.GradientDrawable();
+        hudBg.setColor(Color.argb(210, 20, 20, 35));
+        hudBg.setCornerRadius(dp(16));
+        hudToast.setBackground(hudBg);
+        hudToast.setPadding(dp(20),dp(12),dp(20),dp(12));
+        hudToast.setVisibility(View.GONE);
+        FrameLayout.LayoutParams hudParams=new FrameLayout.LayoutParams(-2,-2);
+        hudParams.gravity=Gravity.CENTER;
+        playerContainer.addView(hudToast,hudParams);
+
+        AudioManager audioManager=(AudioManager)getSystemService(AUDIO_SERVICE);
+        View gestureOverlay=new View(this);
+        gestureOverlay.setBackgroundColor(Color.TRANSPARENT);
+
+        final float[] downX=new float[1],downY=new float[1];
+        final boolean[] isDragging=new boolean[1],isVolumeGesture=new boolean[1];
+        final int[] startVol=new int[1];
+        final float[] startBright=new float[1];
+        int touchSlop=ViewConfiguration.get(this).getScaledTouchSlop();
+
+        final Handler pressHandler=new Handler(Looper.getMainLooper());
+        final boolean[] isFastForwarding=new boolean[1];
+        final long[] lastTapTime=new long[1];
+        final Runnable singleTapRunnable=()->togglePlayerControls();
+
+        final Runnable longPressRunnable=()->{
+            isFastForwarding[0]=true;
+            if(player!=null){
+                player.setPlaybackSpeed(2.0f);
+                showHud("⏩  2x מהירות");
+            }
+        };
+
+        gestureOverlay.setOnTouchListener((v,event)->{
+            switch(event.getAction()){
+                case MotionEvent.ACTION_DOWN:
+                    downX[0]=event.getX();downY[0]=event.getY();
+                    isDragging[0]=false;
+                    isVolumeGesture[0]=event.getX()>(playerContainer.getWidth()/2);
+                    startVol[0]=audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+                    WindowManager.LayoutParams lp=getWindow().getAttributes();
+                    startBright[0]=lp.screenBrightness<0f?0.5f:lp.screenBrightness;
+                    isFastForwarding[0]=false;
+                    pressHandler.postDelayed(longPressRunnable,400);
+                    return true;
+
+                case MotionEvent.ACTION_MOVE:
+                    float dx=event.getX()-downX[0],dy=event.getY()-downY[0];
+                    if(isFastForwarding[0]){
+                        float speed=2.0f+(dx/150f);
+                        speed=Math.max(1.0f,Math.min(4.0f,speed));
+                        if(player!=null)player.setPlaybackSpeed(speed);
+                        showHud(String.format(java.util.Locale.ROOT,"⏩  %.1fx מהירות",speed));
+                        return true;
+                    }
+                    if(!isDragging[0]&&(Math.abs(dx)>touchSlop||Math.abs(dy)>touchSlop)){
+                        if(Math.abs(dy)>Math.abs(dx)){
+                            isDragging[0]=true;
+                            pressHandler.removeCallbacks(longPressRunnable);
+                        }else{
+                            pressHandler.removeCallbacks(longPressRunnable);
+                        }
+                    }
+                    if(isDragging[0]){
+                        float totalDy=downY[0]-event.getY();
+                        float factor=totalDy/(float)playerContainer.getHeight();
+                        if(isVolumeGesture[0]){
+                            int maxVol=audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                            int newVol=Math.min(maxVol,Math.max(0,startVol[0]+(int)(factor*maxVol*1.5f)));
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC,newVol,0);
+                            showHud("🔊  ווליום: "+(newVol*100/maxVol)+"%");
+                        }else{
+                            float newBright=Math.min(1.0f,Math.max(0.01f,startBright[0]+(factor*1.5f)));
+                            WindowManager.LayoutParams brightLp=getWindow().getAttributes();
+                            brightLp.screenBrightness=newBright;
+                            getWindow().setAttributes(brightLp);
+                            showHud("☀️  בהירות: "+Math.round(newBright*100)+"%");
+                        }
+                    }
+                    return true;
+
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    pressHandler.removeCallbacks(longPressRunnable);
+                    if(isFastForwarding[0]){
+                        isFastForwarding[0]=false;
+                        if(player!=null){
+                            player.setPlaybackSpeed(1.0f);
+                            showHud("▶  מהירות רגילה (1x)");
+                        }
+                        return true;
+                    }
+                    if(!isDragging[0]){
+                        long now=System.currentTimeMillis();
+                        if(now-lastTapTime[0]<350){
+                            pressHandler.removeCallbacks(singleTapRunnable);
+                            lastTapTime[0]=0;
+                            float x=event.getX();
+                            float width=playerContainer.getWidth();
+                            if(player!=null){
+                                if(x<width*0.33f){
+                                    long target=Math.max(0,player.getCurrentPosition()-10000);
+                                    player.seekTo(target);
+                                    showHud("⏪  -10 שניות");
+                                }else if(x>width*0.66f){
+                                    long target=Math.min(player.getDuration(),player.getCurrentPosition()+10000);
+                                    player.seekTo(target);
+                                    showHud("⏩  +10 שניות");
+                                }else{
+                                    if(player.isPlaying())player.pause();
+                                    else player.play();
+                                    showHud(player.isPlaying()?"▶  נגן":"⏸  השהה");
+                                }
+                            }
+                        }else{
+                            lastTapTime[0]=now;
+                            pressHandler.postDelayed(singleTapRunnable,350);
+                        }
+                    }
+                    v.performClick();
+                    return true;
+            }
+            return false;
+        });
+        playerContainer.addView(gestureOverlay,new FrameLayout.LayoutParams(-1,-1));
+
+        overlay.addView(playerContainer,new LinearLayout.LayoutParams(-1,0,1));
         root.addView(overlay,new FrameLayout.LayoutParams(-1,-1));
         setContentView(root);
         debugStartup("view-hierarchy-ready");
@@ -190,6 +329,35 @@ public final class MainActivity extends Activity {
     private Button button(String value){Button b=new Button(this);b.setText(value);b.setTextSize(20);b.setTextColor(Color.WHITE);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(233,69,96)));b.setMinHeight(dp(60));return b;}
     private void showMessage(String value){message.setText(value);message.setVisibility(value.isEmpty()?View.GONE:View.VISIBLE);}
     private void showLoading(boolean value){loading.setVisibility(value?View.VISIBLE:View.GONE);}
+    private void showHud(String text){
+        if(hudToast==null)return;
+        hudToast.setText(text);
+        hudToast.setVisibility(View.VISIBLE);
+        hudHandler.removeCallbacks(hideHudRunnable);
+        hudHandler.postDelayed(hideHudRunnable,1200);
+    }
+    private void scheduleHideControls(){
+        hudHandler.removeCallbacks(hideControlsRunnable);
+        hudHandler.postDelayed(hideControlsRunnable,3500);
+    }
+    private void showPlayerControls(){
+        controlsVisible=true;
+        if(bar!=null)bar.setVisibility(View.VISIBLE);
+        if(quality!=null)quality.setVisibility(View.VISIBLE);
+        if(playerView!=null)playerView.showController();
+        scheduleHideControls();
+    }
+    private void hidePlayerControls(){
+        if(active==null)return;
+        controlsVisible=false;
+        if(bar!=null)bar.setVisibility(View.GONE);
+        if(quality!=null)quality.setVisibility(View.GONE);
+        if(playerView!=null)playerView.hideController();
+    }
+    private void togglePlayerControls(){
+        if(controlsVisible)hidePlayerControls();
+        else showPlayerControls();
+    }
     private void setupWeb() {
         WebSettings settings=web.getSettings();
         settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);
@@ -632,6 +800,7 @@ public final class MainActivity extends Activity {
                     " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-mediaStarted),null);
                 if(state==Player.STATE_READY){
                     ready=true;cancelPlayerTimeout();showLoading(false);showMessage("");
+                    showPlayerControls();
                 }else if(state==Player.STATE_ENDED){
                     cancelPlayerTimeout();showMessage("הסרטון הסתיים. אפשר לחזור ולבחור סרטון אחר.");
                     getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -683,6 +852,9 @@ public final class MainActivity extends Activity {
     }
     private void closePlayer(){
         ++playerGeneration;if(playTask!=null){playTask.abort();playTask=null;}
+        hudHandler.removeCallbacks(hideHudRunnable);
+        hudHandler.removeCallbacks(hideControlsRunnable);
+        if(hudToast!=null)hudToast.setVisibility(View.GONE);
         boolean wasOpen=active!=null;
         stopMedia("close-player");showLoading(false);active=null;sourceOrder=List.of();overlay.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);
         if(wasOpen && !destroyed && web!=null)
