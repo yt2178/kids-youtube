@@ -782,6 +782,7 @@ async function retryCatalogContents(){
       // partial-retry against a connection already busy with playback.
       debugCatalog('partial-retry-superseded',{loadCycle:cycle,pending:pendingChannelRetry.size});
       catalogRetryPending=pendingChannelRetry.size>0;
+      status('השלמת פרטי הערוץ הושהתה בזמן אימות חדש. נמשיך כשאפשר.');
       return;
     }
     // This is an optional content-completion retry, not the periodic authority
