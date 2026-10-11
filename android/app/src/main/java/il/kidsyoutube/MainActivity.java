@@ -463,7 +463,11 @@ public final class MainActivity extends Activity {
         try{playbackWorkers.execute(playTask);}catch(RejectedExecutionException e){playTask.abort();unavailable();}
     }
     static OkHttpClient mediaClient(OkHttpClient base){return mediaClient(base,"video");}
-    static OkHttpClient mediaClient(OkHttpClient base,String role) {
+    static OkHttpClient mediaClient(OkHttpClient base,String role){
+        return mediaClient(base,role,-1,0,new java.util.concurrent.atomic.AtomicInteger(),false);
+    }
+    static OkHttpClient mediaClient(OkHttpClient base,String role,long generation,
+            int sourceNumber,java.util.concurrent.atomic.AtomicInteger calls,boolean debug) {
         // Extractor requests intentionally keep redirects disabled. Signed Googlevideo
         // media URLs can redirect between HTTPS media hosts. Follow those redirects
         // ourselves so every Location target is validated before connecting to it.
@@ -474,6 +478,9 @@ public final class MainActivity extends Activity {
                 .readTimeout(20,TimeUnit.SECONDS)
                 .followRedirects(false)
                 .followSslRedirects(false)
+                .eventListenerFactory(debug
+                        ? call->new MediaRequestTrace(call,role,generation,sourceNumber,calls)
+                        : call->okhttp3.EventListener.NONE)
                 .addInterceptor(chain->{
                     okhttp3.Request request=chain.request();
                     for(int redirects=0;;redirects++){
@@ -514,22 +521,28 @@ public final class MainActivity extends Activity {
                 || android.os.SystemClock.elapsedRealtime()-playbackStartedAt>120000){unavailable("SLOW_CONNECTION");return;}
         showLoading(true);showMessage(sourceIndex==0?"מתחבר בחיבור איטי…":"מנסה איכות חלופית…");
         NativeApi.Source source=active.sources.get(sourceOrder.get(sourceIndex++));
+        final int playingSourceIndex=sourceIndex;
+        final java.util.concurrent.atomic.AtomicInteger mediaCalls=new java.util.concurrent.atomic.AtomicInteger();
+        final boolean traceMedia=(getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0;
         logPlayback(generation,"media-source-"+sourceIndex+" of "+sourceOrder.size()+
                 " height="+source.height+" bitrate="+source.bitrate,null);
         OkHttpDataSource.Factory videoData=new OkHttpDataSource.Factory(
-                mediaClient(api.downloader.client,"video"))
+                mediaClient(api.downloader.client,"video",generation,
+                        playingSourceIndex,mediaCalls,traceMedia))
                 .setTransferListener(bandwidthMeter.getTransferListener());
         ProgressiveMediaSource.Factory videoFactory=new ProgressiveMediaSource.Factory(videoData)
-                .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(0));
+                .setLoadErrorHandlingPolicy(new MediaSourceLoadPolicy());
         MediaSource video=videoFactory.createMediaSource(MediaItem.fromUri(source.video));
         MediaSource media;
         if(source.audio==null)media=video;
         else {
             OkHttpDataSource.Factory audioData=new OkHttpDataSource.Factory(
-                    mediaClient(api.downloader.client,"audio"))
+                    mediaClient(api.downloader.client,"audio",generation,
+                            playingSourceIndex,mediaCalls,traceMedia))
                     .setTransferListener(bandwidthMeter.getTransferListener());
             ProgressiveMediaSource.Factory audioFactory=new ProgressiveMediaSource.Factory(audioData)
-                    .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(0));
+                    .setLoadErrorHandlingPolicy(new MediaSourceLoadPolicy());
             media=new MergingMediaSource(video,
                     audioFactory.createMediaSource(MediaItem.fromUri(source.audio)));
         }
@@ -538,7 +551,6 @@ public final class MainActivity extends Activity {
                 .setTargetBufferBytes(12*1024*1024).build();
         ExoPlayer attempt=new ExoPlayer.Builder(this).setLoadControl(buffer).build();
         player=attempt;mediaOwnerGeneration=generation;
-        final int playingSourceIndex=sourceIndex;
         final long mediaStarted=android.os.SystemClock.elapsedRealtime();
         attempt.setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true);
