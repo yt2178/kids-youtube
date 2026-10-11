@@ -21,7 +21,7 @@ function fixture(){
     let catalogRetryTimer=null,catalogRetryAttempts=0,catalogRetryPending=false;
   `+implementation,context);
   return {context,scheduled,loads,debug,
-    schedule:()=>vm.runInContext("scheduleCatalogRetry('authorization')",context),
+    schedule:(reason='authorization')=>vm.runInContext('scheduleCatalogRetry('+JSON.stringify(reason)+')',context),
     attempts:()=>vm.runInContext('catalogRetryAttempts',context),
     pending:()=>vm.runInContext('catalogRetryPending',context)};
 }
@@ -56,4 +56,15 @@ test('fresh recovery can reset the backoff stage after a successful grant',()=>{
   for(let i=0;i<5;i++){f.schedule();f.scheduled.shift().fn();}
   vm.runInContext('catalogRetryAttempts=0',f.context); // loadApp resets on fresh authorization
   f.schedule();assert.equal(f.scheduled[0].ms,6000);
+});
+
+test('optional metadata retries retain their original three-attempt cap',()=>{
+  const f=fixture();
+  for(let i=0;i<3;i++){
+    f.schedule('partial');assert.equal(f.scheduled.length,1);
+    f.scheduled.shift().fn();
+  }
+  f.schedule('partial');
+  assert.equal(f.scheduled.length,0);
+  assert.equal(f.attempts(),3);
 });
