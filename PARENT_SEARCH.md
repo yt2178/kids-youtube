@@ -16,7 +16,7 @@ Sources:
 
 ## Behavior
 
-Explicit parent search returns video rows with thumbnail, title, channel name, official watch link and an add-to-kids button. Search itself never approves a video. Add uses the unchanged authenticated `mutate` action. Duplicate explicit video approvals are disabled; channel approvals continue to work as before.
+Explicit parent search returns video rows with thumbnail, clickable title, channel name, an embedded official YouTube player (using the existing parent player dialog) and an add-to-kids button. Opening the official YouTube iframe is for parental preview only; search and preview never approve a video. Add uses the unchanged authenticated `mutate` action. Duplicate explicit video approvals are disabled; channel approvals continue to work as before.
 
 The search function validates the parent bearer session through the existing `kids-youtube?action=status` authority before loading the search library or contacting YouTube. The core function, database and children's Android app are unchanged. No parent credentials are sent to YouTube. Only `https://www.youtube.com` is allowed as a library network destination; redirects and other destinations fail. Response bodies are bounded to 4 MB; the whole request has a 15-second abort deadline. Query, page count and displayed results are bounded. Library payload logging is disabled.
 
@@ -26,7 +26,7 @@ Pagination is stateless: requesting page 2 or 3 repeats the initial search and f
 
 - Live pre-integration library probes: Hebrew search returned 23 videos; English search returned 20.
 - The exact production `searchVideos` helper was exercised against real YouTube (only the `npm:` module specifier changed to the same installed version for Node). Hebrew page 1 and page 2 and English page 1 all returned real results, with durations about 6.4 s, 1.3 s and 0.8 s. Initial probe capped returned rows at 20; the final cap is 50 to avoid truncating ordinary upstream pages.
-- Automated tests cover authentication failure, cross-origin rejection, request validation, upstream failure, Video/LockupView normalization, URL allowlisting, bounded pagination, frontend rendering, addition through existing mutation, duplicate clicks and stale responses after logout.
+- Automated tests cover authentication failure, cross-origin rejection, request validation, upstream failure, Video/LockupView normalization, URL allowlisting, bounded pagination, frontend rendering, official iframe preview and teardown, addition through existing mutation, duplicate clicks and stale responses after logout.
 - These tests do not prove every search will work from every deployment region or that any particular video will play in the Android app.
 
 ## Deployment
