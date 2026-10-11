@@ -489,3 +489,17 @@ test('parent search retrieves a real safe avatar when a search channel result la
  assert.equal(visual.children[0].hidden,true);
  assert.equal(visual.children[1].hidden,false);
 });
+
+test('refreshing an unchanged parent list preserves rendered row nodes and edit state',async()=>{
+  const local=new Map([['kidsParentToken','token']]);
+  const a=await parentApp(async action=>{
+    if(action==='list')return {list:video+'\\n',version:3,setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    throw Error('Unexpected '+action);
+  },{local});
+  const first=a.elements['approved-cards'].children[0];
+  assert.ok(first);
+  await a.fire('refresh-list');
+  assert.equal(a.elements['approved-cards'].children[0],first,'unchanged approval cards are not rebuilt');
+  assert.equal(a.elements['approved-text'].value,video+'\\n');
+});
