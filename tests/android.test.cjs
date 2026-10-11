@@ -447,3 +447,50 @@ test('Media3 403 retry suppression and private per-call audio/video trace are wi
   assert.doesNotMatch(source,/\.setDefaultRequestProperties\(/,
     'do not invent upstream-required headers absent evidence');
 });
+
+test('Android WebView 83 gets replaceChildren before app startup; modern WebViews are untouched',()=>{
+  const {prepare}=require('../android/prepare-assets.cjs');
+  const out=fs.mkdtempSync(path.join(os.tmpdir(),'kids-webview83-'));
+  try{
+    const {html,app}=prepare(out);
+    const scripts=[...html.matchAll(/<script src="\.\/([^"]+)" defer><\/script>/g)].map(m=>m[1]);
+    const compat=scripts.indexOf('legacy-webview.js');
+    assert.ok(compat>=0);
+    assert.ok(compat<scripts.indexOf('providers.js?v=20261006h'));
+    assert.ok(compat<scripts.indexOf('native-adapter.js'));
+    assert.ok(compat<scripts.indexOf('app.js?v=20261011b'));
+    const shim=fs.readFileSync(path.join(out,'legacy-webview.js'),'utf8');
+    new vm.Script(shim);
+    class OldElement{
+      constructor(){this.children=[];}
+      get firstChild(){return this.children[0]||null;}
+      removeChild(child){
+        const index=this.children.indexOf(child);
+        if(index<0)throw new Error('child missing');
+        this.children.splice(index,1);return child;
+      }
+      append(...children){this.children.push(...children);}
+    }
+    assert.equal(typeof OldElement.prototype.replaceChildren,'undefined');
+    vm.runInNewContext(shim,{Element:OldElement});
+    const grid=new OldElement(),oldCard={id:'old'},newCard={id:'new'};
+    grid.append(oldCard);
+    grid.replaceChildren();
+    assert.deepEqual(grid.children,[]);
+    grid.replaceChildren(newCard);
+    assert.deepEqual(grid.children,[newCard]);
+    const filter=new OldElement(),options={id:'options'};
+    filter.replaceChildren(options);
+    assert.deepEqual(filter.children,[options]);
+    assert.match(app,/ui\.grid\.replaceChildren\(\);ui\.count\.textContent/);
+    // A built-in implementation on newer WebViews must not be replaced.
+    class NewElement{}
+    const nativeMethod=function(){return 'native';};
+    NewElement.prototype.replaceChildren=nativeMethod;
+    vm.runInNewContext(shim,{Element:NewElement});
+    assert.equal(NewElement.prototype.replaceChildren,nativeMethod);
+    // No public website source is rewritten, and the shim remains local.
+    const sourceHtml=fs.readFileSync(path.join(root,'index.html'),'utf8');
+    assert.doesNotMatch(sourceHtml,/legacy-webview\.js/);
+  }finally{fs.rmSync(out,{recursive:true,force:true});}
+});
