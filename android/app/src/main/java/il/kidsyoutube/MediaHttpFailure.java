@@ -17,6 +17,11 @@ final class MediaHttpFailure extends IOException {
         this.track="audio".equals(track)?"audio":"video";
     }
 
+    static void rejectUnsupportedMediaStatus(int httpStatus,String role) throws MediaHttpFailure {
+        if(httpStatus==401||httpStatus==403||httpStatus==429)
+            throw new MediaHttpFailure(httpStatus,role);
+    }
+
     static MediaHttpFailure find(Throwable failure){
         for(Throwable current=failure;current!=null;current=current.getCause())
             if(current instanceof MediaHttpFailure)return (MediaHttpFailure)current;
