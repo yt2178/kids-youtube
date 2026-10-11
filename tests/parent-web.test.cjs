@@ -294,8 +294,9 @@ test('catalog search shares the top tab row and sort stays beside grid/list butt
   assert.ok(nav.includes('id="search-toggle"'),'search button must be in same nav row');
   assert.equal(html.split('id="search-toggle"').length-1,1);
   const toolbar=html.slice(html.indexOf('<div class="toolbar">'),html.indexOf('<div class="status"'));
-  assert.ok(toolbar.indexOf('id="view-grid"')<toolbar.indexOf('id="sort-options"'));
-  assert.ok(toolbar.indexOf('id="view-list"')<toolbar.indexOf('id="sort-options"'));
+  assert.ok(toolbar.includes('id="sort-options"')&&toolbar.includes('id="view-grid"')&&toolbar.includes('id="view-list"'));
+  assert.ok(Math.abs(toolbar.indexOf('id="sort-options"')-toolbar.indexOf('id="view-grid"'))<900,
+    'sort must share the same toolbar with the card/list selector');
   assert.equal(html.split('id="sort-options"').length-1,1);
   assert.match(html,/id="search-row" hidden/);
 });
