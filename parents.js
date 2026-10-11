@@ -2,7 +2,7 @@
 'use strict';
 const API='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 const PARENT_REQUEST_TIMEOUT_MS=20000, CHANNEL_IMAGE_TIMEOUT_MS=8000; // no automatic retry of parent writes
-const ids=['search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+const ids=['management-search-toggle','management-search-panel','search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
 const ui=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));let parentLink=null,setupRequired=false,currentList='',currentVersion=null,manualVersion=null,pendingRemove=null,channelImageTimer=null,channelImageDeadline=null,previewGeneration=0,sessionEpoch=0,listSequence=0;let catalogSupported=false,catalogBackfillStarted=false;const pendingRequests=new Set();
 const TRUSTED_FRAME=window.top===window;
 function token(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
@@ -59,6 +59,13 @@ async function backfillApprovedCatalog(){
 }
 function showParent(list){ui.auth.hidden=true;ui['parent-area'].hidden=false;renderList(list||'');setParentView(false);if(catalogSupported)Promise.resolve().then(backfillApprovedCatalog);}
 function setParentView(catalog){
+  ui['management-search-toggle'].hidden=catalog;
+  if(catalog){
+    ui['management-search-panel'].hidden=true;
+    ui['management-search-toggle'].setAttribute('aria-expanded','false');
+    // Invalidates search results arriving after leaving the screen.
+    searchGeneration++;
+  }
   // A late metadata response must not recreate a hidden preview behind the catalog.
   if(catalog&&ui.inspect.disabled)resetPreview();
   ui['management-view'].hidden=catalog;ui['catalog-view'].hidden=!catalog;
@@ -136,6 +143,14 @@ ui.logout.addEventListener('click',()=>{expireSession();ui['parent-catalog'].rem
 
 // Search is parent-only and never grants access until the parent explicitly adds a result.
 let searchItems=[],searchQuery='',searchPage='',searchGeneration=0;
+ui['management-search-toggle'].addEventListener('click',()=>{
+  if(ui['management-view'].hidden)return;
+  const opening=ui['management-search-panel'].hidden;
+  ui['management-search-panel'].hidden=!opening;
+  ui['management-search-toggle'].setAttribute('aria-expanded',String(opening));
+  if(opening&&typeof ui['search-query'].focus==='function')ui['search-query'].focus();
+  if(!opening)searchGeneration++; // Ignore late results after hiding search.
+});
 const searchAdds=new Set(),searchButtons=new Map();
 function searchKey(item){return item.kind+':'+item.id;}
 function searchUrl(item){return item.kind==='channel'?'https://www.youtube.com/channel/'+item.id:'https://www.youtube.com/watch?v='+item.id;}
@@ -234,7 +249,7 @@ async function addSearchResult(item){
   }finally{searchAdds.delete(key);syncSearchButtons();}
 }
 async function runSearch(more=false){
-  if(ui['parent-area'].hidden||ui['search-submit'].disabled)return;
+  if(ui['parent-area'].hidden||ui['management-search-panel'].hidden||ui['search-submit'].disabled)return;
   const query=ui['search-query'].value.trim();if(!query){ui['search-status'].textContent='הקלידו מה לחפש.';return;}
   const append=more&&query===searchQuery;if(append&&!searchPage)return;
   const epoch=sessionEpoch,generation=++searchGeneration;
@@ -248,7 +263,20 @@ async function runSearch(more=false){
       return item.kind==='channel'?/^UC[A-Za-z0-9_-]{22}$/.test(item.id):/^[A-Za-z0-9_-]{11}$/.test(item.id);
     }).map(item=>({kind:item.kind,id:item.id,title:String(item.title||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube')).slice(0,300),author:String(item.author||'').slice(0,200),thumbnail:item.kind==='channel'?safeChannelImage(item.thumbnail):''})):[];
     const seen=new Set(searchItems.map(searchKey));for(const item of found){const key=searchKey(item);if(!seen.has(key)){seen.add(key);searchItems.push(item);}}
-    searchItems.sort((a,b)=>Number(b.kind==='channel')-Number(a.kind==='channel'));
+    // Rank the closest channel first and then its matching videos, rather
+    // than interleaving that channel's videos with unrelated results.
+    const normalized=value=>String(value||'').normalize('NFKC').trim().toLocaleLowerCase('he');
+    const needle=normalized(query);
+    const bestChannel=searchItems.filter(item=>item.kind==='channel')
+      .sort((a,b)=>Number(normalized(b.title)===needle)-Number(normalized(a.title)===needle)
+        || Number(normalized(b.title).includes(needle))-Number(normalized(a.title).includes(needle)))[0];
+    const mainTitle=normalized(bestChannel?.title);
+    const matchesMain=item=>item.kind==='video'&&!!mainTitle&&!!normalized(item.author)
+      &&(normalized(item.author)===mainTitle||normalized(item.author).includes(needle)&&mainTitle.includes(needle));
+    searchItems.sort((a,b)=>{
+      const rank=item=>item===bestChannel?0:matchesMain(item)?1:item.kind==='channel'?2:3;
+      return rank(a)-rank(b);
+    });
     searchPage=typeof d.nextPageToken==='string'?d.nextPageToken:'';renderSearch();
     ui['search-status'].textContent=searchItems.length?
       (d.partial?'הוצגו תוצאות חלקיות. חלק ממקורות החיפוש אינם זמינים כרגע.':'ערוצים מוצגים ראשונים, ואחריהם סרטונים. בחרו מה לאשר לילדים.'):
