@@ -4,7 +4,7 @@ const {webcrypto,createHash}=require('node:crypto');
 const API_ORIGIN='https://yt2178.github.io';
 const A='https://www.youtube.com/watch?v=mVTlbvQ_010',B='https://www.youtube.com/watch?v=AAAAAAAAAAA';
 const hash=(pass,secret)=>createHash('sha256').update(secret+'\0'+pass).digest('base64url');
-async function createFixture({upstream,configured=true,onCatalogRead}={}){
+async function createFixture({upstream,configured=true,searchKey="test-key",onCatalogRead}={}){
  const db={list_text:A+'\n',password_hash:configured?hash('familyPassword!','secret123'):null,session_secret:'secret123',version:7,updated_at:'date'};
  let serve,patches=0,conflict=false,stateReads=0,catalogReads=0;const catalog=new Map();
  async function fetcher(input,opts={}){
@@ -30,7 +30,7 @@ async function createFixture({upstream,configured=true,onCatalogRead}={}){
   return new Response(JSON.stringify([db]),{status:200});
  }
  const source=stripTypeScriptTypes(fs.readFileSync('supabase/functions/kids-youtube/index.ts','utf8'),{mode:'strip'});
- const ctx=vm.createContext({Deno:{env:{get:k=>k==='SUPABASE_URL'?'https://test.supabase.co':'servicekey'},serve:f=>serve=f},
+ const ctx=vm.createContext({Deno:{env:{get:k=>k==='SUPABASE_URL'?'https://test.supabase.co':k==='YOUTUBE_DATA_API_KEY'?searchKey:'servicekey'},serve:f=>serve=f},
  fetch:fetcher,crypto:webcrypto,URL,Request,Response,TextEncoder,TextDecoder,AbortController,DOMException,Uint8Array,ReadableStream,atob,btoa,setTimeout,clearTimeout,console});
  vm.runInContext(source,ctx);
  async function request(action,{method='POST',body,token,origin=API_ORIGIN,query={}}={}){
@@ -404,4 +404,26 @@ test('runtime: compact native polls retain fresh permissions and pins without di
   assert.equal(revoked.data.version,f.db.version);
   assert.equal(revoked.data.list,A+'\n');
   assert.equal(revoked.data.pinnedChannels.length,0);
+});
+
+test('official search requires parent auth, validates input, bounds results and never grants',async()=>{
+ let requests=0;const f=await createFixture({upstream:(u)=>{
+ requests++;assert.equal(u.origin,'https://www.googleapis.com');assert.equal(u.pathname,'/youtube/v3/search');assert.equal(u.searchParams.get('type'),'video');assert.equal(u.searchParams.get('safeSearch'),'strict');assert.equal(u.searchParams.get('q'),'שיר');assert.equal(u.searchParams.get('pageToken'),'next');
+ return new Response(JSON.stringify({items:[{id:{videoId:'mVTlbvQ_010'},snippet:{title:'Song',channelTitle:'Artist'}},{id:{videoId:'javascript:bad'}}],nextPageToken:'second'}));
+ }});
+ assert.equal((await f.request('search',{body:{query:'שיר'}})).status,401);
+ assert.equal((await f.request('search',{token:f.token,body:{query:'x'.repeat(121)}})).status,400);
+ assert.equal((await f.request('search',{token:f.token,body:{query:'שיר',pageToken:'https://evil'}})).status,400);
+ const result=await f.request('search',{token:f.token,body:{query:'שיר',pageToken:'next'}});
+ assert.equal(result.status,200);assert.deepEqual(result.data.items,[{id:'mVTlbvQ_010',title:'Song',author:'Artist'}]);assert.equal(result.data.nextPageToken,'second');assert.equal(requests,1);assert.equal(f.patches(),0);
+});
+test('official search does not expose upstream error bodies or keys',async()=>{
+ const f=await createFixture({upstream:()=>new Response('private upstream details',{status:403})});
+ const result=await f.request('search',{token:f.token,body:{query:'song'}});
+ assert.equal(result.status,503);assert.deepEqual(result.data,{error:'SEARCH_UNAVAILABLE'});
+});
+
+test('official search missing server key fails safely without outbound requests',async()=>{
+ const f=await createFixture({searchKey:''});const result=await f.request('search',{token:f.token,body:{query:'song'}});
+ assert.equal(result.status,503);assert.deepEqual(result.data,{error:'SEARCH_NOT_CONFIGURED'});assert.equal(f.patches(),0);
 });
