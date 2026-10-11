@@ -421,3 +421,29 @@ test('media HTTP 403 from signed URL is distinct from NewPipe block and allows o
   assert.match(gate,/BLOCK_MS=60\*1000L/);
   assert.doesNotMatch(gate,/BLOCK_MS=15\*60\*1000L/);
 });
+
+test('Media3 403 retry suppression and private per-call audio/video trace are wired',()=>{
+  const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  const policy=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MediaSourceLoadPolicy.java'),'utf8');
+  const trace=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MediaRequestTrace.java'),'utf8');
+  const native=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  const downloader=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/ExtractorDownloader.java'),'utf8');
+  assert.equal((source.match(/new MediaSourceLoadPolicy\(\)/g)||[]).length,2,
+    'audio and video progressive streams must share terminal HTTP policy');
+  assert.match(policy,/MediaHttpFailure\.find\(error\)/);
+  assert.match(policy,/C\.TIME_UNSET : super\.getRetryDelayMsFor\(info\)/);
+  assert.match(source,/mediaClient\(api\.downloader\.client,"video",generation/);
+  assert.match(source,/mediaClient\(api\.downloader\.client,"audio",generation/);
+  assert.match(source,/new MediaRequestTrace\(call,role,generation,sourceNumber,calls\)/);
+  assert.match(trace,/track="\+role/);
+  assert.match(trace,/call="\+callNumber/);
+  assert.match(trace,/range="\+\(req\.header\("Range"\)!=null\)/);
+  assert.match(trace,/status="\+response\.code\(\)/);
+  assert.match(trace,/expireInSec/);
+  assert.doesNotMatch(trace,/getContent\(\)|queryParameter\("sig"\)|queryParameter\("pot"\)/);
+  assert.match(native,/new Source\(video\.getContent\(\),null/);
+  assert.match(native,/new Source\(video\.getContent\(\),audio\.getContent\(\)/);
+  assert.match(downloader,/for\(Map.Entry<String,List<String>> header:request\.headers\(\)\.entrySet\(\)\)/);
+  assert.doesNotMatch(source,/\.setDefaultRequestProperties\(/,
+    'do not invent upstream-required headers absent evidence');
+});
