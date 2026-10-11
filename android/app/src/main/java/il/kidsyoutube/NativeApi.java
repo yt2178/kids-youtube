@@ -407,9 +407,23 @@ final class NativeApi {
     }
     Playback playback(String id,long requestId) throws Exception {
         // Every playback starts from a fresh authoritative parent list.
-        whitelist(true,false);
+        debugPlaybackAuthorization(requestId,"auth-before-extraction-start");
+        try {
+            whitelist(true,false);
+        }catch(Exception error){
+            debugPlaybackAuthorization(requestId,"auth-before-extraction-failed-"+errorCode(error));
+            throw error;
+        }
         debugPlaybackAuthorization(requestId,"auth-before-extraction-ok");
-        ensureExtractor();
+        debugPlaybackAuthorization(requestId,"extractor-initialization-start");
+        try {
+            ensureExtractor();
+        }catch(Exception error){
+            debugPlaybackAuthorization(requestId,"extractor-initialization-failed-"+errorCode(error));
+            throw error;
+        }
+        debugPlaybackAuthorization(requestId,"extractor-start");
+        String playbackPhase="extractor";
         try {
             StreamExtractor extractor=extractVideo(id);
             String author=authorId(extractor.getUploaderUrl());
@@ -445,11 +459,16 @@ final class NativeApi {
             RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
             // Re-read the authoritative list after extraction too. A parent may
             // revoke access while network extraction is still in progress.
+            playbackPhase="auth-after-extraction";
+            debugPlaybackAuthorization(requestId,"auth-after-extraction-start");
             whitelist(true,false);
             if(!policy.allows(id,author,approvedChannels()))throw new IOException("NOT_APPROVED");
             debugPlaybackAuthorization(requestId,"auth-after-extraction-ok");
             return new Playback(id,clean(extractor.getName()),sources);
-        }catch(Exception e){recordFailure(e);throw e;}
+        }catch(Exception e){
+            debugPlaybackAuthorization(requestId,playbackPhase+"-failed-"+errorCode(e));
+            recordFailure(e);throw e;
+        }
     }
     private static int resolution(VideoStream stream) {
         try{return Integer.parseInt(stream.getResolution().replaceAll("[^0-9].*$",""));}catch(Exception e){return 0;}
@@ -468,7 +487,7 @@ final class NativeApi {
             if(text.contains("AUTH_CHANGED_RETRY"))return "AUTH_CHANGED_RETRY";
             if(text.contains("AUTH_DENIED"))return "AUTH_DENIED";
             if(text.contains("INVALID_AUTH_RESPONSE"))return "INVALID_AUTH_RESPONSE";
-            if(text.contains("AUTH_SUPERSEDED"))return "NETWORK_ERROR";
+            if(text.contains("AUTH_SUPERSEDED"))return "AUTH_SUPERSEDED";
             if(cause instanceof org.schabi.newpipe.extractor.exceptions.ReCaptchaException
                     || text.contains("UPSTREAM_BLOCKED") || text.contains("LOGIN_REQUIRED")
                     || text.toLowerCase(Locale.ROOT).contains("not a bot"))return "UPSTREAM_BLOCKED";
