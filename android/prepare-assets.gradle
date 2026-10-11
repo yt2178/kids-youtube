@@ -3,7 +3,7 @@ def webRoot = rootProject.projectDir.parentFile
 def outputAssets = layout.buildDirectory.dir('generated/kidsAssets')
 def outputRes = layout.buildDirectory.dir('generated/kidsRes')
 tasks.register('prepareKidsAssets') {
-    inputs.files(['index.html','app.js','providers.js','manifest.json','android/native-adapter.js',
+    inputs.files(['index.html','app.js','providers.js','manifest.json','android/legacy-webview.js','android/native-adapter.js',
         'android/LICENSE','android/THIRD_PARTY_NOTICES.md'].collect { new File(webRoot,it) })
     inputs.files(fileTree(new File(webRoot,'icons')) { include '*.png' })
     outputs.dir outputAssets
@@ -20,7 +20,7 @@ tasks.register('prepareKidsAssets') {
         String html = new File(webRoot,'index.html').getText('UTF-8')
         html = once(html,"if ('serviceWorker' in navigator)","if (false && 'serviceWorker' in navigator)")
         html = once(html,'<script src="./providers.js?v=20261006h" defer></script>',
-            '<script src="./providers.js?v=20261006h" defer></script>\n  <script src="./native-adapter.js" defer></script>')
+            '<script src="./legacy-webview.js" defer></script>\n  <script src="./providers.js?v=20261006h" defer></script>\n  <script src="./native-adapter.js" defer></script>')
         String app = new File(webRoot,'app.js').getText('UTF-8')
         app = once(app,'''function optionalStorage() { try { return localStorage; } catch (_) { return null; } }
 function parentToken(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
@@ -54,6 +54,7 @@ providers.request=(...args)=>{catalogMetrics.providerCalls++;return nativeReques
         new File(target,'index.html').setText(html,'UTF-8')
         new File(target,'app.js').setText(app,'UTF-8')
         ['android/LICENSE':'LICENSE.txt','android/THIRD_PARTY_NOTICES.md':'THIRD_PARTY_NOTICES.txt',
+            'android/legacy-webview.js':'legacy-webview.js',
             'android/native-adapter.js':'native-adapter.js','providers.js':'providers.js','manifest.json':'manifest.json'].each { src,dst ->
             new File(target,dst).bytes = new File(webRoot,src).bytes
         }
