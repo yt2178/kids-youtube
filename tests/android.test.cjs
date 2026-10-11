@@ -411,8 +411,8 @@ test('media HTTP 403 from signed URL is distinct from NewPipe block and allows o
   assert.match(activity,/MediaHttpFailure\.canSwitch/);
   assert.match(activity,/MediaHttpFailure\.category\(mediaFault\.status\)/);
   assert.match(activity,/if\(source\.audio==null\)media=video/);
-  assert.match(activity,/mediaClient\(api\.downloader\.client,"audio"\)/);
-  assert.match(activity,/mediaClient\(api\.downloader\.client,"video"\)/);
+  assert.match(activity,/mediaClient\(api\.downloader\.client,"audio",generation/);
+  assert.match(activity,/mediaClient\(api\.downloader\.client,"video",generation/);
   assert.doesNotMatch(activity,/response\.close\(\);throw new IOException\("UPSTREAM_BLOCKED"\)/);
   assert.equal((activity.match(/api\.recordFailure\(error\)/g)||[]).length,1,
     'only the actual non-media upstream path may record a global failure');
