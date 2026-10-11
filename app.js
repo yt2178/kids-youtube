@@ -990,8 +990,10 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
     activeConfig = {videos:[], channels:[]}; activeLists = Object.create(null);
     displayed = new Map(); ui.grid.replaceChildren(); ui.count.textContent = ''; ui.more.hidden = true;
     activeLinkRecords = Object.create(null);approvalMarker='';
-    // Any authority failure clears the local grant snapshot too.
-    saveSnapshot({videos:[], channels:[]}, {});
+    // Authorization is in-memory only. Preserve the display metadata cache
+    // on network errors, so a later freshly approved load can reuse it.
+    // readSnapshot() must never be called as a permission source.
+    debugCatalog('metadata-cache-retained-after-auth-failure',{loadCycle:thisCycle});
     const retry=transientAuthorizationFailure(error);
     const superseded=(error?.code||error?.message)==='AUTH_SUPERSEDED';
     status(superseded?'אימות קודם הוחלף בבקשה חדשה. מאמתים הרשאות מחדש…':
@@ -1022,7 +1024,9 @@ function failClosedAuthorization(message='לא הצלחנו לאמת כרגע א
   pendingChannelRetry.clear();catalogRetryPending=false;
   debugCatalog('authorization-blocked',{loadCycle,reason,generation:authorizationGeneration});
   activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
-  displayed=new Map();ui.grid.inert=false;ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;saveSnapshot(activeConfig,{});
+  displayed=new Map();ui.grid.inert=false;ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;
+  // Retain inert metadata on disk for a future verified grant. Never revive it
+  // from disk if the authoritative list is unavailable or has changed.
   status(message);render(activeConfig,activeLists);
 }
 async function checkAuthorizationFreshness(source='poll'){
