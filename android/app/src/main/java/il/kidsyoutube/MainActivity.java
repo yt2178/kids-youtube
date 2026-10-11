@@ -423,7 +423,16 @@ public final class MainActivity extends Activity {
             try {
                 logPlayback(generation,"fresh-auth-and-extraction-start",null);
                 long extractionStarted=android.os.SystemClock.elapsedRealtime();
-                NativeApi.Playback result=api.playback(id,generation);scope.check();
+                NativeApi.Playback result=PlaybackRecovery.run(scope,
+                        ()->api.playback(id,generation),category->{
+                            logPlayback(generation,"preparation-retry-"+category,null);
+                            handler.post(()->{
+                                if(!destroyed&&generation==playerGeneration&&!scope.cancelled){
+                                    showLoading(true);
+                                    showMessage("החיבור נקטע. מנסים שוב לקבל הרשאה ומקורות ניגון…");
+                                }
+                            });
+                        });scope.check();
                 logPlayback(generation,"extraction-success sources="+result.sources.size()+
                     " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-extractionStarted),null);
                 handler.post(()->{
