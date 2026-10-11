@@ -1397,7 +1397,7 @@ function controlledTimers(){
 }
 test('real loadApp automatically recovers from four DNS failures and stalled headers on same app state',async()=>{
   const clock=controlledTimers(),events=[];
-  const url='https://www.youtube.com/watch?v='+id(1),list=url+'\\n',stamp='stable';
+  const url='https://www.youtube.com/watch?v='+id(1),list=url+'\n',stamp='stable';
   const prepared={version:7,updatedAt:stamp,entries:[
     {approval_url:url,kind:'video',item_id:id(1),title:'מאושר טרי',checked_at:new Date().toISOString()}
   ]};
