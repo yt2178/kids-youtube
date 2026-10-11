@@ -13,9 +13,9 @@ public final class UpstreamCooldownTest {
                 "https://example.invalid/grants",clock::get);
         IOException original=new IOException("UPSTREAM_BLOCKED");
         api.recordFailure(original);
-        assertEquals(15*60*1000L,api.cooldownRemainingMs());
+        assertEquals(UpstreamCooldown.BLOCK_MS,api.cooldownRemainingMs());
 
-        clock.addAndGet(70*1000L);
+        clock.addAndGet(10*1000L);
         for(int click=0;click<25;click++){
             try{
                 api.checkNetwork();
@@ -29,8 +29,8 @@ public final class UpstreamCooldownTest {
             }
             clock.addAndGet(1000);
         }
-        assertEquals(15*60*1000L-95*1000L,api.cooldownRemainingMs());
-        clock.set(1000000+15*60*1000L);
+        assertEquals(UpstreamCooldown.BLOCK_MS-35*1000L,api.cooldownRemainingMs());
+        clock.set(1000000+UpstreamCooldown.BLOCK_MS);
         api.checkNetwork(); // no local refusal after exact deadline
         assertEquals(0,api.cooldownRemainingMs());
     }
@@ -40,15 +40,15 @@ public final class UpstreamCooldownTest {
         UpstreamCooldown gate=new UpstreamCooldown(clock::get);
         IOException blocked=new IOException("UPSTREAM_BLOCKED");
         gate.record(blocked,"UPSTREAM_BLOCKED");
-        clock.addAndGet(90*1000L);
+        clock.addAndGet(20*1000L);
         gate.record(blocked,"UPSTREAM_BLOCKED");
-        assertEquals(13*60*1000L+30*1000L,gate.remainingMs());
+        assertEquals(UpstreamCooldown.BLOCK_MS-20*1000L,gate.remainingMs());
         // A genuinely NEW response is allowed to restart protection.
         gate.record(new IOException("UPSTREAM_BLOCKED"),"UPSTREAM_BLOCKED");
         assertEquals(UpstreamCooldown.BLOCK_MS,gate.remainingMs());
     }
 
-    @Test public void throttlingIsShorterAndNeverShortensExistingLongBlock() throws Exception {
+    @Test public void realRateLimitAndRealBlockKeepDistinctDurations() throws Exception {
         AtomicLong clock=new AtomicLong(10);
         UpstreamCooldown gate=new UpstreamCooldown(clock::get);
         IOException rate=new IOException("RATE_LIMITED");
@@ -58,10 +58,11 @@ public final class UpstreamCooldownTest {
         gate.record(rate,"RATE_LIMITED");
         assertEquals(90000,gate.remainingMs());
         gate.record(new IOException("UPSTREAM_BLOCKED"),"UPSTREAM_BLOCKED");
-        assertEquals(UpstreamCooldown.BLOCK_MS,gate.remainingMs());
+        // A new 60-second block cannot shorten a pre-existing 90-second rate-limit.
+        assertEquals(90000,gate.remainingMs());
         clock.addAndGet(45000);
         gate.record(new IOException("RATE_LIMITED"),"RATE_LIMITED");
-        assertEquals(UpstreamCooldown.BLOCK_MS-45000,gate.remainingMs());
+        assertEquals(UpstreamCooldown.RATE_LIMIT_MS,gate.remainingMs());
     }
 
     @Test public void cooldownSurvivesCacheClearAndDoesNotBypassFreshGrants() throws Exception {
