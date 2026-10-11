@@ -63,7 +63,7 @@ public final class AuthorizationFullRecoveryTest {
                     return java.util.Collections.singletonList(localhost);
                 };
                 NativeApi api=new NativeApi(new ExtractorDownloader(false,flaky,220),
-                    "http://127.0.0.1:"+server.getLocalPort()+"/?action=list&format=native");
+                    "http://localhost:"+server.getLocalPort()+"/?action=list&format=native");
                 for(int cycle=0;cycle<2;cycle++){
                     try{api.whitelist(true,false);fail("two DNS failures must fail closed");}
                     catch(UnknownHostException expected){}
@@ -181,7 +181,7 @@ public final class AuthorizationFullRecoveryTest {
             try{
                 Dns numeric=name->java.util.Collections.singletonList(localhost);
                 NativeApi api=new NativeApi(new ExtractorDownloader(false,numeric,550),
-                    "http://127.0.0.1:"+server.getLocalPort()+"/?action=list&format=native");
+                    "http://localhost:"+server.getLocalPort()+"/?action=list&format=native");
                 assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
                 try{api.whitelist(true,false);fail("disconnect must fail closed");}
                 catch(IOException expected){}
