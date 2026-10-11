@@ -494,3 +494,24 @@ test('Android WebView 83 gets replaceChildren before app startup; modern WebView
     assert.doesNotMatch(sourceHtml,/legacy-webview\.js/);
   }finally{fs.rmSync(out,{recursive:true,force:true});}
 });
+
+test('Media3 and app chrome are controlled by one tap and one timeout; actual media controls receive touch streams',()=>{
+ const source=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+ assert.match(source,/playerView\.setControllerAutoShow\(false\)/);
+ assert.match(source,/playerView\.setControllerHideOnTouch\(false\)/);
+ assert.match(source,/playerView\.setControllerShowTimeoutMs\(0\)/);
+ assert.match(source,/playerView\.setControllerAnimationEnabled\(false\)/);
+ assert.match(source,/final Runnable singleTapRunnable=\(\)->togglePlayerControls\(\)/);
+ assert.match(source,/private void showPlayerControls\(\)[\s\S]*?playerView\.showController\(\)/);
+ assert.match(source,/private void hidePlayerControls\(\)[\s\S]*?playerView\.hideController\(\)/);
+ assert.match(source,/private static boolean isMedia3ControlHit/);
+ assert.match(source,/view\.getGlobalVisibleRect\(hit\)/);
+ assert.match(source,/playerView\.findViewById\(androidx\.media3\.ui\.R\.id\.exo_controller\)/);
+ assert.match(source,/view\.getId\(\)!=androidx\.media3\.ui\.R\.id\.exo_progress/);
+ assert.match(source,/if\(routingMedia3Touch\)\{\s*playerView\.dispatchTouchEvent\(event\)/);
+ assert.match(source,/pressHandler\.removeCallbacksAndMessages\(null\)/);
+ assert.match(source,/case MotionEvent\.ACTION_CANCEL:[\s\S]{0,300}return true;\s*case MotionEvent\.ACTION_UP:/);
+ assert.match(source,/postDelayed\(singleTapRunnable,350\)/);
+ assert.match(source,/postDelayed\(hideControlsRunnable,3500\)/);
+ assert.doesNotMatch(source,/playerView\.setUseController\(false\)/);
+});
