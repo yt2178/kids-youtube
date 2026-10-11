@@ -287,6 +287,40 @@ test('leaving management during metadata loading prevents hidden iframe from app
   assert.equal(a.elements.preview.hidden,true);
 });
 
+test('catalog search shares the top tab row and sort stays beside grid/list buttons',()=>{
+  const html=fs.readFileSync('index.html','utf8');
+  const nav=html.slice(html.indexOf('<nav class="tabs"'),html.indexOf('</nav>'));
+  assert.ok(nav.includes('id="videos-tab"')&&nav.includes('id="channels-tab"')&&nav.includes('id="all-tab"'));
+  assert.ok(nav.includes('id="search-toggle"'),'search button must be in same nav row');
+  assert.equal(html.split('id="search-toggle"').length-1,1);
+  const toolbar=html.slice(html.indexOf('<div class="toolbar">'),html.indexOf('<div class="status"'));
+  assert.ok(toolbar.indexOf('id="view-grid"')<toolbar.indexOf('id="sort-options"'));
+  assert.ok(toolbar.indexOf('id="view-list"')<toolbar.indexOf('id="sort-options"'));
+  assert.equal(html.split('id="sort-options"').length-1,1);
+  assert.match(html,/id="search-row" hidden/);
+});
+test('closing parent search discards a late result, reopening permits a new search',async()=>{
+  let resolveSearch,requests=0;
+  const app=await parentApp(async action=>{
+    if(action==='list')return {list:'',version:1};
+    if(action==='status')return {authenticated:true};
+    if(action==='search'){requests++;return requests===1?new Promise(resolve=>resolveSearch=resolve):{items:[{kind:'video',id:'mVTlbvQ_010',title:'חדש'}]};}
+    throw Error(action);
+  },{local:new Map([['kidsParentToken','parent']])});
+  await app.fire('management-search-toggle');
+  app.elements['search-query'].value='ברדק';
+  const pending=app.fire('search-submit');
+  await new Promise(resolve=>setImmediate(resolve));
+  await app.fire('management-search-toggle');
+  resolveSearch({items:[{kind:'video',id:'AAAAAAAAAAA',title:'ישן'}]});
+  await pending;
+  assert.equal(app.elements['search-results'].children.length,0);
+  assert.equal(app.elements['search-submit'].disabled,false);
+  await app.fire('management-search-toggle');
+  await app.fire('search-submit');
+  assert.equal(app.elements['search-results'].children[0].children[1].children[1].textContent,'חדש');
+  assert.equal(requests,2);
+});
 test('management search is closed by default and opens only on its compact button',async()=>{
   const app=await parentApp(async action=>{
     if(action==='list')return {list:'',version:1};
