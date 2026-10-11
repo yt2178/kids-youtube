@@ -27,7 +27,7 @@ final class NativeApi {
     private final Map<String,Alias> aliases=new ConcurrentHashMap<>();
     private final Map<String,Cache> cache=new ConcurrentHashMap<>();
     private final Map<String,Cursor> cursors=new ConcurrentHashMap<>();
-    private volatile long cooldownUntil;
+    private final UpstreamCooldown cooldown;
     private volatile boolean extractorReady;
     private final Object extractorInitLock=new Object();
     // A completed older request must never replace an authorization request
@@ -36,13 +36,18 @@ final class NativeApi {
     private final boolean debugBuild;
     // Test-only transport seam: calls exercise the same production whitelist.
     NativeApi(ExtractorDownloader downloader,String listUrl) {
+        this(downloader,listUrl,System::currentTimeMillis);
+    }
+    NativeApi(ExtractorDownloader downloader,String listUrl,java.util.function.LongSupplier clock) {
         this.downloader=downloader;this.listUrl=listUrl;this.debugBuild=false;
+        this.cooldown=new UpstreamCooldown(clock);
     }
     NativeApi(Context context) {
         // Do not initialize NewPipe on Activity.onCreate's UI thread.
         debugBuild=(context.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0;
         downloader=new ExtractorDownloader(debugBuild);
         listUrl=context.getString(R.string.kids_list_url);
+        cooldown=new UpstreamCooldown(System::currentTimeMillis);
     }
     private void ensureExtractor() {
         if(extractorReady)return;
@@ -231,9 +236,9 @@ final class NativeApi {
             return new JSONObject(lastAuthorization.toString());
         }
     }
-    private void checkNetwork() throws IOException {
+    void checkNetwork() throws IOException { // package-private for deterministic cooldown checks
         RequestScope scope=RequestScope.CURRENT.get();if(scope!=null)scope.check();
-        if(System.currentTimeMillis()<cooldownUntil)throw new IOException("UPSTREAM_BLOCKED");
+        cooldown.check(); // Throws COOLDOWN_ACTIVE without extending a provider block.
     }
     private Set<String> approvedChannels() {
         Set<String> result=new HashSet<>(policy.channels);
@@ -480,6 +485,8 @@ final class NativeApi {
                 && height>0 && height<=720 && ApprovalPolicy.safeMedia(stream.getContent());
     }
     static String errorCode(Throwable error) {
+        for(Throwable cause=error;cause!=null;cause=cause.getCause())
+            if(cause instanceof UpstreamCooldown.ActiveException)return "COOLDOWN_ACTIVE";
         for(Throwable cause=error;cause!=null;cause=cause.getCause()) {
             String text=String.valueOf(cause.getMessage());
             if(text.contains("NOT_APPROVED"))return "NOT_APPROVED";
@@ -510,10 +517,9 @@ final class NativeApi {
         return root==null?"Unknown":root.getClass().getSimpleName();
     }
     void recordFailure(Throwable error) {
-        String code=errorCode(error);
-        if(code.equals("UPSTREAM_BLOCKED"))cooldownUntil=System.currentTimeMillis()+15*60*1000;
-        else if(code.equals("RATE_LIMITED"))cooldownUntil=System.currentTimeMillis()+2*60*1000;
+        cooldown.record(error,errorCode(error));
     }
+    long cooldownRemainingMs(){return cooldown.remainingMs();}
     synchronized void clear() {
         authorizationGeneration.incrementAndGet();
         cache.clear();cursors.clear();aliases.clear();checkedAt=0;lastAuthorization=null;

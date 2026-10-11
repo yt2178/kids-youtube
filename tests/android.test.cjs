@@ -377,3 +377,25 @@ test('native foreground playback explicitly gates optional catalog and polls wit
   assert.ok((playback.match(/whitelist\(true,false\)/g)||[]).length>=2,
     'each playback attempt must still perform TWO fresh checks');
 });
+
+test('local provider cooldown is distinct from a real upstream block and playback records once',()=>{
+  const api=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  const gate=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/UpstreamCooldown.java'),'utf8');
+  assert.match(api,/cooldown\.check\(\)/);
+  assert.match(api,/instanceof UpstreamCooldown\.ActiveException\)return "COOLDOWN_ACTIVE"/);
+  assert.match(gate,/new ActiveException\(remaining\)/);
+  assert.match(gate,/recorded\.containsKey\(event\)/);
+  const failedPreparation=activity.slice(activity.indexOf('logPlayback(generation,"playback-preparation-failed"'));
+  assert.doesNotMatch(failedPreparation.slice(0,270),/api\.recordFailure\(e\)/);
+  assert.match(activity,/api\.cooldownRemainingMs\(\)/);
+  assert.match(activity,/לא נשלחה בקשה חדשה לספק הסרטונים/);
+  // The same gate protects every NEW provider query, not fresh parent grants.
+  const extract=api.slice(api.indexOf('private StreamExtractor extractVideo'),api.indexOf('private static String authorId'));
+  const channel=api.slice(api.indexOf('private ChannelInfo channel('),api.indexOf('private ChannelInfo approvedChannel('));
+  const page=api.slice(api.indexOf('private Object channelPage('),api.indexOf('private static int resolution'));
+  assert.match(extract,/checkNetwork\(\)/);
+  assert.match(channel,/checkNetwork\(\)/);
+  assert.match(page,/checkNetwork\(\)/);
+  assert.ok(api.indexOf('whitelist(true,false)')>=0,'fresh playback authority remains intact');
+});
