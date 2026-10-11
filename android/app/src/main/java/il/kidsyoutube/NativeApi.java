@@ -114,7 +114,13 @@ final class NativeApi {
                     call.timeout().timeout(Math.min(32000,remaining),java.util.concurrent.TimeUnit.MILLISECONDS);
                 }
                 try(okhttp3.Response response=call.execute()){
-                    if(!response.isSuccessful())throw new IOException("WHITELIST_UNAVAILABLE");
+                    if(!response.isSuccessful()){
+                        int status=response.code();
+                        if(status==409)throw new IOException("AUTH_CHANGED_RETRY");
+                        if(status==429)throw new IOException("RATE_LIMITED");
+                        if(status>=400&&status<500)throw new IOException("AUTH_DENIED");
+                        throw new IOException("WHITELIST_UNAVAILABLE");
+                    }
                     String responseBody=ExtractorDownloader.readBounded(response.body(),1000000);
                     JSONObject doc;
                     try{doc=new JSONObject(responseBody);}catch(JSONException e){throw new IOException("INVALID_AUTH_RESPONSE",e);}
@@ -150,7 +156,8 @@ final class NativeApi {
                 // Log only request phase and error class; no URL or list text.
                 if(debugBuild)android.util.Log.d("KidsNetwork","kind=authorization"+
                         (scope==null?"":scope.trace())+" phase=transport-retry attempt="+attempt+
-                        " category="+errorCode(error));
+                        " category="+errorCode(error)+" remainingMs="+
+                        (scope==null?0:Math.max(0,scope.deadline-System.currentTimeMillis())));
                 try{Thread.sleep(350);}catch(InterruptedException interrupted){
                     Thread.currentThread().interrupt();
                     throw new java.io.InterruptedIOException("TIMEOUT");
@@ -457,6 +464,9 @@ final class NativeApi {
             String text=String.valueOf(cause.getMessage());
             if(text.contains("NOT_APPROVED"))return "NOT_APPROVED";
             if(text.contains("CATALOG_AUTH_CHANGED"))return "CATALOG_AUTH_CHANGED";
+            if(text.contains("AUTH_CHANGED_RETRY"))return "AUTH_CHANGED_RETRY";
+            if(text.contains("AUTH_DENIED"))return "AUTH_DENIED";
+            if(text.contains("INVALID_AUTH_RESPONSE"))return "INVALID_AUTH_RESPONSE";
             if(text.contains("AUTH_SUPERSEDED"))return "NETWORK_ERROR";
             if(cause instanceof org.schabi.newpipe.extractor.exceptions.ReCaptchaException
                     || text.contains("UPSTREAM_BLOCKED") || text.contains("LOGIN_REQUIRED")
