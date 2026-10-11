@@ -1520,3 +1520,51 @@ test('superseded startup cannot accept old content but schedules one fresh recon
   assert.equal(a.elements.spinner.hidden,true);
   assert.match(a.elements['status-text'].textContent,/אימות קודם/);
 });
+
+test('native player pauses only background grant checks, then resumes a fresh check on close',async()=>{
+  const list='https://www.youtube.com/watch?v='+id(1)+'\n',stamp='stable';
+  const catalog={version:8,updatedAt:stamp,entries:[
+    {approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',
+      item_id:id(1),title:'Approved card',checked_at:new Date().toISOString()}
+  ]};
+  let checks=0;
+  const a=await app(list,()=>{throw Error('no provider metadata needed');},new Map(),{
+    nativeMode:true,nativeFetchAuthorization:async()=>{checks++;
+      return {list,version:8,updatedAt:stamp,catalogVersion:1,preparedCatalog:catalog};}
+  });
+  assert.equal(checks,1);assert.equal(a.run('displayed.size'),1);
+  for(const fn of a.listeners['kids-native-playback-open'])fn();
+  assert.equal(a.run('nativePlaybackActive'),true);
+  await a.run("checkAuthorizationFreshness('poll')");
+  assert.equal(checks,1,'hidden WebView is not document.hidden; still avoid native poll');
+  for(const fn of a.listeners['kids-native-playback-closed'])fn();
+  await until(()=>checks===2);
+  await until(()=>a.run('authorizationCheckInFlight')===false);
+  assert.equal(a.run('nativePlaybackActive'),false);
+  assert.equal(a.run('displayed.size'),1);
+  assert.notEqual(a.run('approvalMarker'),'');
+});
+test('in-flight background grant cancelled for native play cannot hide usable catalog',async()=>{
+  const list='https://www.youtube.com/watch?v='+id(1)+'\n',stamp='stable';
+  let calls=0,failPoll;
+  const catalog={version:8,updatedAt:stamp,entries:[{
+    approval_url:'https://www.youtube.com/watch?v='+id(1),kind:'video',
+    item_id:id(1),title:'Approved',checked_at:new Date().toISOString()}]};
+  const a=await app(list,()=>{throw Error('no provider');},new Map(),{
+    nativeMode:true,nativeFetchAuthorization:async()=>{
+      calls++;
+      if(calls===2)return new Promise((_,reject)=>failPoll=reject);
+      return {list,version:8,updatedAt:stamp,catalogVersion:1,preparedCatalog:catalog};
+    }
+  });
+  const pending=a.run("checkAuthorizationFreshness('poll')");
+  await until(()=>typeof failPoll==='function');
+  for(const fn of a.listeners['kids-native-playback-open'])fn();
+  failPoll(Object.assign(new Error('PLAYBACK_BUSY'),{code:'PLAYBACK_BUSY'}));
+  await pending;
+  assert.equal(a.run('displayed.size'),1);
+  assert.equal(a.run('authorizationRetryAttempts'),0);
+  for(const fn of a.listeners['kids-native-playback-closed'])fn();
+  await until(()=>calls===3);
+  assert.equal(a.run('displayed.size'),1,'fresh grants unchanged, no blank catalog');
+});
