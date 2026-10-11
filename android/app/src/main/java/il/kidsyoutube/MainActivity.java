@@ -48,6 +48,7 @@ public final class MainActivity extends Activity {
     private Button retry,quality;
     private String qualityMode="auto";
     private List<Integer> sourceOrder=List.of();
+    private int mediaHttpSwitches;
     private long observedBandwidthBps=-1;
     private long playbackStartedAt;
     private DefaultBandwidthMeter bandwidthMeter;
@@ -411,7 +412,7 @@ public final class MainActivity extends Activity {
         active=new NativeApi.Playback(id,initialTitle,List.of());
         web.evaluateJavascript("window.dispatchEvent(new Event('kids-native-playback-open'))",null);
         logPlayback(generation,"request",null);
-        sourceIndex=0;sourceOrder=List.of();resumeAt=Math.max(0,resumePosition);
+        sourceIndex=0;sourceOrder=List.of();mediaHttpSwitches=0;resumeAt=Math.max(0,resumePosition);
         playbackStartedAt=android.os.SystemClock.elapsedRealtime();
         overlay.setVisibility(View.VISIBLE);web.setVisibility(View.INVISIBLE);
         title.setText(initialTitle);showLoading(true);showMessage("מתחבר...");retry.setVisibility(View.GONE);
@@ -461,7 +462,8 @@ public final class MainActivity extends Activity {
         });
         try{playbackWorkers.execute(playTask);}catch(RejectedExecutionException e){playTask.abort();unavailable();}
     }
-    static OkHttpClient mediaClient(OkHttpClient base) {
+    static OkHttpClient mediaClient(OkHttpClient base){return mediaClient(base,"video");}
+    static OkHttpClient mediaClient(OkHttpClient base,String role) {
         // Extractor requests intentionally keep redirects disabled. Signed Googlevideo
         // media URLs can redirect between HTTPS media hosts. Follow those redirects
         // ourselves so every Location target is validated before connecting to it.
@@ -479,11 +481,12 @@ public final class MainActivity extends Activity {
                             throw new IOException("INVALID_MEDIA_REDIRECT");
                         okhttp3.Response response=chain.proceed(request);
                         if(!response.isRedirect()){
-                            if(response.code()==401 || response.code()==403){
-                                response.close();throw new IOException("UPSTREAM_BLOCKED");
-                            }
-                            if(response.code()==429){
-                                response.close();throw new IOException("RATE_LIMITED");
+                            if(response.code()==401 || response.code()==403 || response.code()==429){
+                                int status=response.code();
+                                response.close();
+                                // A signed CDN media URL's HTTP response is not
+                                // proof of a provider-wide NewPipe block.
+                                throw new MediaHttpFailure(status,role);
                             }
                             return response;
                         }
@@ -513,14 +516,23 @@ public final class MainActivity extends Activity {
         NativeApi.Source source=active.sources.get(sourceOrder.get(sourceIndex++));
         logPlayback(generation,"media-source-"+sourceIndex+" of "+sourceOrder.size()+
                 " height="+source.height+" bitrate="+source.bitrate,null);
-        OkHttpClient mediaClient=mediaClient(api.downloader.client);
-        OkHttpDataSource.Factory dataSource=new OkHttpDataSource.Factory(mediaClient)
+        OkHttpDataSource.Factory videoData=new OkHttpDataSource.Factory(
+                mediaClient(api.downloader.client,"video"))
                 .setTransferListener(bandwidthMeter.getTransferListener());
-        ProgressiveMediaSource.Factory factory=new ProgressiveMediaSource.Factory(dataSource)
+        ProgressiveMediaSource.Factory videoFactory=new ProgressiveMediaSource.Factory(videoData)
                 .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(0));
-        MediaSource video=factory.createMediaSource(MediaItem.fromUri(source.video));
-        MediaSource media=source.audio==null?video:new MergingMediaSource(video,
-                factory.createMediaSource(MediaItem.fromUri(source.audio)));
+        MediaSource video=videoFactory.createMediaSource(MediaItem.fromUri(source.video));
+        MediaSource media;
+        if(source.audio==null)media=video;
+        else {
+            OkHttpDataSource.Factory audioData=new OkHttpDataSource.Factory(
+                    mediaClient(api.downloader.client,"audio"))
+                    .setTransferListener(bandwidthMeter.getTransferListener());
+            ProgressiveMediaSource.Factory audioFactory=new ProgressiveMediaSource.Factory(audioData)
+                    .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(0));
+            media=new MergingMediaSource(video,
+                    audioFactory.createMediaSource(MediaItem.fromUri(source.audio)));
+        }
         DefaultLoadControl buffer=new DefaultLoadControl.Builder()
                 .setBufferDurationsMs(16000,45000,2500,5500)
                 .setTargetBufferBytes(12*1024*1024).build();
@@ -563,7 +575,28 @@ public final class MainActivity extends Activity {
                 logPlayback(generation,error instanceof PlaybackException
                     ? "media3-error-code-"+((PlaybackException)error).errorCode
                     : "media-source-failed",error);
-                if(code.equals("UPSTREAM_BLOCKED") || code.equals("RATE_LIMITED")){
+                MediaHttpFailure mediaFault=MediaHttpFailure.find(error);
+                if(mediaFault!=null){
+                    // The request may be for the video stream OR for a separate
+                    // audio stream; log only role/status, never signed addresses.
+                    logPlayback(generation,"media-http-"+mediaFault.status+
+                            "-"+mediaFault.track+" source="+playingSourceIndex,null);
+                    if("audio".equals(mediaFault.track)){
+                        // Avoid hitting exactly the same rejected audio URL
+                        // across multiple video-only resolutions.
+                        while(sourceIndex<sourceOrder.size() && sourceIndex<6
+                                && java.util.Objects.equals(
+                                  active.sources.get(sourceOrder.get(sourceIndex)).audio,source.audio))
+                            sourceIndex++;
+                    }
+                    if(MediaHttpFailure.canSwitch(mediaFault.status,mediaHttpSwitches,
+                            sourceIndex,sourceOrder.size())){
+                        mediaHttpSwitches++;
+                        trySource(generation);
+                    }else unavailable(MediaHttpFailure.category(mediaFault.status));
+                }else if(code.equals("UPSTREAM_BLOCKED") || code.equals("RATE_LIMITED")){
+                    // Only true upstream extractor/provider errors affect the
+                    // shared NewPipe cooldown, never signed media 401/403.
                     api.recordFailure(error);unavailable(code);
                 }else if(error instanceof IOException && "TIMEOUT".equals(error.getMessage())
                         && (sourceIndex>=sourceOrder.size()
@@ -626,6 +659,10 @@ public final class MainActivity extends Activity {
             else reason="ההשהיה הסתיימה. אפשר לנסות לפתוח את הסרטון שוב.";
         }
         else if("RATE_LIMITED".equals(code))reason="שירות הסרטונים הגביל בקשות. נסו שוב מאוחר יותר.";
+        else if("MEDIA_SOURCE_UNAVAILABLE".equals(code))
+            reason="מקור המדיה לא אפשר טעינה (HTTP 401/403). אפשר לנסות שוב ולרענן את כתובות המדיה.";
+        else if("MEDIA_SOURCE_RATE_LIMITED".equals(code))
+            reason="שרת המדיה החזיר HTTP 429. נסו שוב מאוחר יותר.";
         else if("TIMEOUT".equals(code))reason="הטעינה ארכה יותר מדי זמן. בדקו את החיבור ונסו שוב.";
         else if("SLOW_CONNECTION".equals(code)||"DNS_ERROR".equals(code)||"NETWORK_ERROR".equals(code))
             reason="החיבור איטי או לא יציב. נסו שוב כשיש קליטה טובה יותר.";
