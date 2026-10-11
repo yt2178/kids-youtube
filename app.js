@@ -822,10 +822,18 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
   const generation=authorizationGeneration;
   const stillAuthorized=()=>generation===authorizationGeneration;
   ui.grid.setAttribute('aria-busy','true');
-  // Never keep previously approved cards visible while authority is being revalidated.
-  activeConfig={videos:[],channels:[]};activeLists=Object.create(null);displayed=new Map();
-  ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;ui.empty.hidden=true;
-  status('רגע קטן, הסרטונים בדרך…', true);
+  // Keep already verified cards stable during an in-session revalidation.
+  // A fresh page/process has no approvalMarker and must fail closed until the
+  // authoritative parent list succeeds. Never use localStorage as a grant.
+  const keepVerifiedView=!!approvalMarker;
+  if(!keepVerifiedView){
+    activeConfig={videos:[],channels:[]};activeLists=Object.create(null);displayed=new Map();
+    ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;ui.empty.hidden=true;
+  }
+  // Disable opening a card while a new grant check is in flight. Existing
+  // thumbnails remain visible, but no pending/revoked grant can start playback.
+  ui.grid.inert=true;
+  status(keepVerifiedView?'בודקים אם יש סרטונים חדשים…':'מאמתים את אישורי ההורה…',true);
   const previous = readSnapshot();
   channelDates = {...(previous ? previous.channelDates : {})};
   let config = null;
@@ -841,6 +849,9 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
     catalogMetrics.authorizationMs=Date.now()-startedAt;
     debugCatalog('authorization-ok',{loadCycle:thisCycle,ms:catalogMetrics.authorizationMs,version:remote&&remote.version,catalogVersion:remote&&remote.catalogVersion});
     if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
+    // If the parent changed grants, hold the previous UI inactive until the
+    // new allowlist has been parsed and filtered. The next render applies only
+    // the newly validated grants.
     // Successful fresh authority resets ONLY authority backoff, even when
     // optional catalog completion still has outstanding work.
     authorizationRetryAttempts=0;
@@ -903,7 +914,9 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
       if (!saveSnapshot(config, lists)) cacheSaved = false;
     }
     // Manual approvals appear immediately; cached channels only after fresh config validation.
+    // Re-enable the grid only after the new list is authoritative and pruned.
     render(config, lists);
+    ui.grid.inert=false;
     const metadataStarted=Date.now();
     if (entries && entries.length) {
       status('מזהים את הסרטונים והערוצים…', true);
@@ -973,6 +986,7 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
     if(!stillAuthorized())return;
     debugCatalog('load-fatal',{loadCycle:thisCycle,phase:catalogMetrics.authorizationMs===0?'authorization':'after-authorization',error:String(error&&error.message||'UNKNOWN'),metrics:{...catalogMetrics}});
     loadError=true;
+    ui.grid.inert=false;
     activeConfig = {videos:[], channels:[]}; activeLists = Object.create(null);
     displayed = new Map(); ui.grid.replaceChildren(); ui.count.textContent = ''; ui.more.hidden = true;
     activeLinkRecords = Object.create(null);approvalMarker='';
@@ -988,6 +1002,8 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
   } finally {
     catalogMetrics.completedMs=Date.now()-startedAt;
     loading = false; ui.grid.removeAttribute('aria-busy');
+    // Failed/superseded auth is fail-closed, not a permanently disabled UI.
+    if(stillAuthorized())ui.grid.inert=false;
     if(stillAuthorized()){
       render(activeConfig, activeLists);
       if(!loadError)debugCatalog('load-complete',{loadCycle:thisCycle,displayed:displayed.size,linksFailed:linkFailures,channelsFailed:failures,metrics:{...catalogMetrics}});
@@ -1006,7 +1022,7 @@ function failClosedAuthorization(message='לא הצלחנו לאמת כרגע א
   pendingChannelRetry.clear();catalogRetryPending=false;
   debugCatalog('authorization-blocked',{loadCycle,reason,generation:authorizationGeneration});
   activeConfig={videos:[],channels:[]};activeLists=Object.create(null);activeLinkRecords=Object.create(null);
-  displayed=new Map();ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;saveSnapshot(activeConfig,{});
+  displayed=new Map();ui.grid.inert=false;ui.grid.replaceChildren();ui.count.textContent='';ui.more.hidden=true;saveSnapshot(activeConfig,{});
   status(message);render(activeConfig,activeLists);
 }
 async function checkAuthorizationFreshness(source='poll'){
@@ -1201,6 +1217,9 @@ function launchNativeApp() {
   },1200);
 }
 function openPlayer(id) {
+  // Metadata already displayed during a fresh grant check must never be used
+  // to start a new playback request until revalidation succeeds.
+  if(loading||!approvalMarker||ui.grid.inert)return;
   const video = displayed.get(id);
   if (!video || (!getApprovedVideos().has(id) && !getApprovedChannels().has(video.channelId))) return;
   if (PARENT_CATALOG) {
