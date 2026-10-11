@@ -77,9 +77,19 @@ final class NativeApi {
     String whitelist(boolean force) throws Exception {
         return whitelist(force,true);
     }
+    static boolean retryableAuthorizationTransport(IOException error) {
+        // Only safe-to-repeat GET transport failures, never certificate errors,
+        // read/header timeouts, HTTP denials, or malformed grant documents.
+        if(error instanceof javax.net.ssl.SSLException)return false;
+        return error instanceof java.net.UnknownHostException
+                ||error instanceof java.net.ConnectException
+                ||error instanceof java.net.NoRouteToHostException
+                ||error instanceof java.net.SocketException;
+    }
     String whitelist(boolean force,boolean withDisplayCatalog) throws Exception {
-        // Only state reads and commits hold this monitor. TCP/TLS, response
-        // headers and body must never hold the shared authorization lock.
+        // Authorization requests never wait behind NewPipe's init monitor.
+        // Retrying must remain inside ONE authorization generation: an older
+        // reply cannot commit even if a newer request completes during retry.
         synchronized(this){
             if(!force && checkedAt>0 && System.currentTimeMillis()-checkedAt<LIST_TTL)
                 return raw;
@@ -91,39 +101,66 @@ final class NativeApi {
         if(!withDisplayCatalog)endpoint=endpoint.newBuilder().addQueryParameter("detail","grants").build();
         okhttp3.Request request=new okhttp3.Request.Builder().url(endpoint)
                 .header("Cache-Control","no-cache").tag(String.class,"authorization").build();
-        Call call=downloader.authorizationClient.newCall(request);
-        if(scope!=null)scope.add(call);
-        try(okhttp3.Response response=call.execute()){
-            if(!response.isSuccessful())throw new IOException("WHITELIST_UNAVAILABLE");
-            String responseBody=ExtractorDownloader.readBounded(response.body(),1000000);
-            JSONObject doc;
-            try{doc=new JSONObject(responseBody);}catch(JSONException e){throw new IOException("INVALID_AUTH_RESPONSE",e);}
-            String text=doc.optString("list","");
-            if(!doc.has("list")||!doc.has("version")||text.length()>1000000)
-                throw new IOException("INVALID_AUTH_RESPONSE");
-            ApprovalPolicy next=ApprovalPolicy.parse(text);
-            Map<String,Alias> pinned=new HashMap<>();
-            JSONArray pins=doc.optJSONArray("pinnedChannels");
-            if(pins!=null)for(int i=0;i<Math.min(500,pins.length());i++){
-                JSONObject item=pins.optJSONObject(i);if(item==null)continue;
-                String url=item.optString("url",""),id=item.optString("id","");
-                if(next.channelUrls.contains(url)&&ApprovalPolicy.CHANNEL.matcher(id).matches())
-                    pinned.put(url,new Alias(id));
-            }
+        for(int attempt=1;attempt<=2;attempt++){
             if(scope!=null)scope.check();
-            long entered=System.nanoTime();
-            synchronized(this){
-                if(debugBuild&&scope!=null)scope.phase("authorization-state-lock-wait",
-                        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-entered));
+            Call call=downloader.authorizationClient.newCall(request);
+            try{
+                if(scope!=null){
+                    scope.add(call);
+                    // Native task (34s) must outlive all wire attempts including
+                    // body parsing. Never let a late retry exceed that deadline.
+                    long remaining=scope.deadline-System.currentTimeMillis()-250;
+                    if(remaining<=0){scope.check();throw new java.io.InterruptedIOException("TIMEOUT");}
+                    call.timeout().timeout(Math.min(32000,remaining),java.util.concurrent.TimeUnit.MILLISECONDS);
+                }
+                try(okhttp3.Response response=call.execute()){
+                    if(!response.isSuccessful())throw new IOException("WHITELIST_UNAVAILABLE");
+                    String responseBody=ExtractorDownloader.readBounded(response.body(),1000000);
+                    JSONObject doc;
+                    try{doc=new JSONObject(responseBody);}catch(JSONException e){throw new IOException("INVALID_AUTH_RESPONSE",e);}
+                    String text=doc.optString("list","");
+                    if(!doc.has("list")||!doc.has("version")||text.length()>1000000)
+                        throw new IOException("INVALID_AUTH_RESPONSE");
+                    ApprovalPolicy next=ApprovalPolicy.parse(text);
+                    Map<String,Alias> pinned=new HashMap<>();
+                    JSONArray pins=doc.optJSONArray("pinnedChannels");
+                    if(pins!=null)for(int i=0;i<Math.min(500,pins.length());i++){
+                        JSONObject item=pins.optJSONObject(i);if(item==null)continue;
+                        String url=item.optString("url",""),id=item.optString("id","");
+                        if(next.channelUrls.contains(url)&&ApprovalPolicy.CHANNEL.matcher(id).matches())
+                            pinned.put(url,new Alias(id));
+                    }
+                    if(scope!=null)scope.check();
+                    long entered=System.nanoTime();
+                    synchronized(this){
+                        if(debugBuild&&scope!=null)scope.phase("authorization-state-lock-wait",
+                                java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-entered));
+                        if(scope!=null)scope.check();
+                        if(generation!=authorizationGeneration.get())
+                            throw new IOException("AUTH_SUPERSEDED");
+                        if(!next.fingerprint.equals(policy.fingerprint)){cache.clear();cursors.clear();}
+                        aliases.clear();aliases.putAll(pinned);
+                        raw=text;policy=next;lastAuthorization=doc;checkedAt=System.currentTimeMillis();
+                        return text;
+                    }
+                }
+            }catch(IOException error){
+                if(attempt==2 || !retryableAuthorizationTransport(error))throw error;
                 if(scope!=null)scope.check();
-                if(generation!=authorizationGeneration.get())
-                    throw new IOException("AUTH_SUPERSEDED");
-                if(!next.fingerprint.equals(policy.fingerprint)){cache.clear();cursors.clear();}
-                aliases.clear();aliases.putAll(pinned);
-                raw=text;policy=next;lastAuthorization=doc;checkedAt=System.currentTimeMillis();
-                return text;
+                // Log only request phase and error class; no URL or list text.
+                if(debugBuild)android.util.Log.d("KidsNetwork","kind=authorization"+
+                        (scope==null?"":scope.trace())+" phase=transport-retry attempt="+attempt+
+                        " category="+errorCode(error));
+                try{Thread.sleep(350);}catch(InterruptedException interrupted){
+                    Thread.currentThread().interrupt();
+                    throw new java.io.InterruptedIOException("TIMEOUT");
+                }
+                if(scope!=null)scope.check();
+            }finally{
+                if(scope!=null)scope.remove(call);
             }
-        } finally {if(scope!=null)scope.remove(call);}
+        }
+        throw new IOException("WHITELIST_UNAVAILABLE");
     }
     String displayWhitelist() throws Exception {
         // Fail closed: stale approvals are never displayed as current approvals.

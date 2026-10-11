@@ -17,8 +17,10 @@ final class ExtractorDownloader extends Downloader {
     // Keep the optional legacy parent companion source-compatible.
     ExtractorDownloader(){this(false);}
     ExtractorDownloader(boolean debugBuild){this(debugBuild,okhttp3.Dns.SYSTEM);}
-    // Test seam: same client configuration, only DNS resolution can be fault-injected.
-    ExtractorDownloader(boolean debugBuild,okhttp3.Dns dns) {
+    ExtractorDownloader(boolean debugBuild,okhttp3.Dns dns){this(debugBuild,dns,14000);}
+    // Package-local test seam: DNS and header-read latency are fault-injected.
+    // Production always calls the 14,000 ms overload with unchanged TLS.
+    ExtractorDownloader(boolean debugBuild,okhttp3.Dns dns,int authorizationReadMs) {
         OkHttpClient.Builder builder=new OkHttpClient.Builder().dns(dns)
                 .connectTimeout(5,TimeUnit.SECONDS).readTimeout(8,TimeUnit.SECONDS)
                 .callTimeout(12,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
@@ -27,7 +29,7 @@ final class ExtractorDownloader extends Downloader {
         client=builder.build();
         // Give grant responses their own budget without multiplying extractor retries.
         authorizationClient=client.newBuilder()
-                .connectTimeout(8,TimeUnit.SECONDS).readTimeout(14,TimeUnit.SECONDS)
+                .connectTimeout(8,TimeUnit.SECONDS).readTimeout(authorizationReadMs,TimeUnit.MILLISECONDS)
                 .callTimeout(32,TimeUnit.SECONDS).build();
     }
     // No hostname, IP, URL, cookies, credentials, or signed media URI is logged.
