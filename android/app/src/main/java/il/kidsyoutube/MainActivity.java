@@ -484,9 +484,9 @@ public final class MainActivity extends Activity {
                             if(response.code()==401 || response.code()==403 || response.code()==429){
                                 int status=response.code();
                                 response.close();
-                                // A signed CDN media URL's HTTP response is not
-                                // proof of a provider-wide NewPipe block.
-                                throw new MediaHttpFailure(status,role);
+                                // A signed CDN response is not a provider-wide
+                                // NewPipe ban. Keep status/track but no URL.
+                                MediaHttpFailure.rejectUnsupportedMediaStatus(status,role);
                             }
                             return response;
                         }
