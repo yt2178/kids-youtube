@@ -141,16 +141,23 @@ function syncSearchButtons(){
   const approved=new Set(entries(currentList).map(item=>item.url));
   for(const [id,button] of searchButtons){const exists=approved.has('https://www.youtube.com/watch?v='+id);button.disabled=exists||searchAdds.has(id);button.textContent=exists?'כבר נוסף לילדים':searchAdds.has(id)?'מוסיף…':'הוספה לילדים';}
 }
+function openSearchVideo(item){
+  if(ui['parent-area'].hidden||!token()||!item||!/^[A-Za-z0-9_-]{11}$/.test(item.id))return;
+  ui['catalog-player-title'].textContent=String(item.title||'צפייה בסרטון').slice(0,300);
+  ui['catalog-player-loading'].hidden=false;
+  ui['catalog-player'].src='https://www.youtube.com/embed/'+item.id+'?playsinline=1&rel=0&autoplay=1';
+  if(typeof ui['catalog-player-dialog'].showModal==='function')ui['catalog-player-dialog'].showModal();
+}
 function renderSearch(){
   ui['search-results'].replaceChildren();searchButtons.clear();
   for(const item of searchItems){
     const row=document.createElement('article');row.className='search-row';
     const image=document.createElement('img');image.src='https://i.ytimg.com/vi/'+item.id+'/mqdefault.jpg';image.alt='';image.loading='lazy';
     const info=document.createElement('div');info.className='search-info';
-    const title=document.createElement('p');title.textContent=item.title;
+    const title=document.createElement('button');title.type='button';title.className='search-title-button';title.textContent=item.title;title.addEventListener('click',()=>openSearchVideo(item));
     const author=document.createElement('p');author.textContent=item.author;
     const actions=document.createElement('div');actions.className='search-actions';
-    const open=document.createElement('a');open.textContent='פתיחת הסרטון ב־YouTube';open.href='https://www.youtube.com/watch?v='+item.id;open.target='_blank';open.rel='noopener noreferrer';
+    const open=document.createElement('button');open.type='button';open.className='secondary';open.textContent='צפייה בסרטון';open.addEventListener('click',()=>openSearchVideo(item));
     const add=document.createElement('button');add.type='button';add.addEventListener('click',()=>addSearchResult(item));searchButtons.set(item.id,add);
     actions.append(open,add);info.append(title,author,actions);row.append(image,info);ui['search-results'].append(row);
   }
