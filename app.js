@@ -99,6 +99,7 @@ let catalogRetryTimer = null;
 let catalogRetryAttempts = 0; // optional display completion only
 let authorizationRetryAttempts = 0; // fresh grants only
 let catalogRetryPending = false;
+let nativePlaybackActive = false;
 const catalogMetrics = {startedAt:0,authorizationMs:0,metadataMs:0,channelsMs:0,firstUsefulMs:0,completedMs:0,requests:0,providerCalls:0,renderCalls:0,displayCacheHits:0,channelCacheHits:0,retries:0};
 function debugCatalog(event,details={}){
   if(!NATIVE_MODE)return;
@@ -741,7 +742,7 @@ function scheduleCatalogRetry(reason='partial'){
   if(catalogRetryTimer&&typeof catalogRetryTimer.unref==='function')catalogRetryTimer.unref();
 }
 async function retryCatalogContents(){
-  if(contentRetryBusy||loading||paginationBusy||document.hidden||navigator.onLine===false||!approvalMarker)return;
+  if(contentRetryBusy||loading||paginationBusy||nativePlaybackActive||document.hidden||navigator.onLine===false||!approvalMarker)return;
   contentRetryBusy=true;
   status('משלימים את הפרטים החסרים…',true);
   const generation=authorizationGeneration,cycle=loadCycle,serial=++authorityCheckSerial,marker=approvalMarker;
@@ -776,6 +777,11 @@ async function retryCatalogContents(){
     else {catalogRetryAttempts=0;status('');}
   }catch(e){
     if(!current())return;
+    if((e?.code||e?.message)==='PLAYBACK_BUSY'){
+      debugCatalog('partial-retry-deferred-to-playback',{loadCycle:cycle});
+      catalogRetryPending=pendingChannelRetry.size>0;
+      return;
+    }
     if((e?.code||e?.message)==='AUTH_SUPERSEDED'){
       // A newer *fresh* grant read displaced this optional request.
       // Do not call this a network outage and do not start another
@@ -1004,7 +1010,7 @@ function failClosedAuthorization(message='לא הצלחנו לאמת כרגע א
   status(message);render(activeConfig,activeLists);
 }
 async function checkAuthorizationFreshness(source='poll'){
-  if(authorizationCheckInFlight||contentRetryBusy||loading||playback||document.hidden||navigator.onLine===false)return;
+  if(authorizationCheckInFlight||contentRetryBusy||loading||nativePlaybackActive||playback||document.hidden||navigator.onLine===false)return;
   authorizationCheckInFlight=true;
   const cycle=loadCycle,serial=++authorityCheckSerial,generation=authorizationGeneration;
   const current=()=>cycle===loadCycle&&serial===authorityCheckSerial&&generation===authorizationGeneration&&!loading;
@@ -1024,6 +1030,10 @@ async function checkAuthorizationFreshness(source='poll'){
   }catch(e){
     if(!current()){debugCatalog('authorization-check-stale',{source,loadCycle:cycle,serial,outcome:e?.code||'failed'});return;}
     debugCatalog('authorization-check-end',{source,loadCycle:cycle,serial,outcome:e?.code||e?.message||'failed',ms:Date.now()-started});
+    if((e?.code||e?.message)==='PLAYBACK_BUSY'){
+      debugCatalog('authorization-check-deferred-to-playback',{source,loadCycle:cycle});
+      return;
+    }
     // A superseded read was rejected for concurrency safety, not DNS/TCP.
     // The JS catalog cannot assume the newer grant has identical contents:
     // fail closed and schedule one fresh reconciliation at normal backoff.
@@ -1328,6 +1338,24 @@ ui.install.addEventListener('click', async () => {
   installPrompt = null; ui.install.hidden = true;
 });
 window.addEventListener('appinstalled', () => { installPrompt = null; ui.install.hidden = true; });
+// Native overlay is not document.hidden. Prevent optional catalog polling
+// from replacing the generation of two mandatory fresh playback grants.
+// The bridge also rejects races before this main-frame UI hint is delivered.
+window.addEventListener('kids-native-playback-open',()=>{
+  if(!NATIVE_MODE)return;
+  nativePlaybackActive=true;
+  clearTimeout(catalogRetryTimer);catalogRetryTimer=null;
+  if(pendingChannelRetry.size)catalogRetryPending=true;
+});
+window.addEventListener('kids-native-playback-closed',()=>{
+  if(!NATIVE_MODE)return;
+  nativePlaybackActive=false;
+  // The child still cannot use stale approvals: every player open performs
+  // fresh native checks. Revalidate quietly instead of wiping the catalog.
+  if(!document.hidden && navigator.onLine!==false && !loading && !contentRetryBusy)
+    checkAuthorizationFreshness('native-playback-closed');
+  else if(pendingChannelRetry.size)catalogRetryPending=true;
+});
 window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
 window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;catalogRetryAttempts=0;authorizationRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp({trigger:'online'});});
 document.addEventListener('visibilitychange', () => {
