@@ -707,12 +707,21 @@ async function parallelMap(items, worker) {
   }));
 }
 function scheduleCatalogRetry(reason='partial'){
-  if(catalogRetryTimer||catalogRetryAttempts>=3||navigator.onLine===false)return;
-  const delay=(reason==='authorization'?[6000,18000,45000]:[35000,90000,180000])[catalogRetryAttempts++];
+  if(catalogRetryTimer)return; // Exactly one queued recovery, even after repeated failures.
+  const steps=reason==='authorization'?[6000,18000,45000,90000,180000]:
+    [35000,90000,180000];
+  const stage=Math.min(catalogRetryAttempts,steps.length-1);
+  const delay=steps[stage];
+  catalogRetryAttempts=Math.min(catalogRetryAttempts+1,steps.length);
   debugCatalog('retry-scheduled',{reason,attempt:catalogRetryAttempts,delayMs:delay});
   catalogRetryTimer=setTimeout(()=>{
     catalogRetryTimer=null;
-    if(document.hidden||playback||loading||paginationBusy||navigator.onLine===false){catalogRetryPending=true;return;}
+    if(document.hidden||playback||loading||paginationBusy){
+      catalogRetryPending=true;return;
+    }
+    // navigator.onLine is only a hint. It may be true during DNS outages
+    // or false while connectivity is recovering; the fresh HTTPS result is
+    // the sole authority. Never substitute cached grants.
     catalogMetrics.retries++;
     if(reason==='partial'&&approvalMarker&&displayed.size>0)retryCatalogContents();
     else loadApp({forceCatalog:reason==='partial',trigger:'scheduled-'+reason});
