@@ -60,7 +60,10 @@ public final class NativeAuthorizationTransportTest {
                     fail("stale authority must never be accepted");
                 }catch(ExecutionException expected){
                     assertTrue(String.valueOf(expected.getCause()).contains("AUTH_SUPERSEDED"));
+                    assertEquals("HTTP 200 superseded by newer fresh grant is not a transport error",
+                            "AUTH_SUPERSEDED",NativeApi.errorCode(expected.getCause()));
                 }
+                assertEquals("Both HTTP 200 responses reached the same NativeApi",2,server.getRequestCount());
                 String latest=api.whitelist(false);
                 assertTrue(latest.contains("AAAAAAAAAAA"));
                 assertFalse(latest.contains("mVTlbvQ_010"));
