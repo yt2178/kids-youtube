@@ -22,7 +22,7 @@ async function api(action,options={}){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),PARENT_REQUEST_TIMEOUT_MS);
   pendingRequests.add(controller);
   try{
-    const r=await fetch(API+'?action='+encodeURIComponent(action),{method,headers,body,cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:controller.signal});
+    const r=await fetch(action==='search'?'https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube-search':API+'?action='+encodeURIComponent(action),{method,headers,body,cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:controller.signal});
     let data;
     try{data=await r.json();}catch(error){if(controller.signal.aborted)throw Error('TIMEOUT');throw Error('BAD_RESPONSE');}
     if(controller.signal.aborted)throw Error('TIMEOUT');

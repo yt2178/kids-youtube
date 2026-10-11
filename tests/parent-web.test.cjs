@@ -12,7 +12,7 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
   assert.match(html,/font-src 'self';/);assert.doesNotMatch(html,/web-share|clipboard-write/);assert.doesNotMatch(html,/fonts\.gstatic\.com|https:\/\/\*\./);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
-  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011search1/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
+  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011search2/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
@@ -30,7 +30,7 @@ async function parentApp(handler,{local=new Map(),session=new Map()}={}){
   let reloads=0;const calls=[],windowListeners={};const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(local),sessionStorage:memoryStorage(session),
     KidsParentLinks:links,URL,Map,Object,String,JSON,Error,AbortController,encodeURIComponent,setTimeout,clearTimeout,confirm:()=>true,location:{origin:'https://example.test',reload(){reloads++;}},addEventListener:(k,fn)=>(windowListeners[k]??=[]).push(fn),
-    fetch:async(url,options={})=>{const action=new URL(String(url)).searchParams.get('action');calls.push({action,options});const work=Promise.resolve().then(()=>handler(action,options));const result=options.signal?await Promise.race([work,new Promise((_,reject)=>{if(options.signal.aborted){const e=Error('aborted');e.name='AbortError';reject(e);return;}options.signal.addEventListener('abort',()=>{const e=Error('aborted');e.name='AbortError';reject(e);},{once:true});})]):await work;return {ok:result.status===undefined||result.status<400,status:result.status??200,json:async()=>result.body??result};}
+    fetch:async(url,options={})=>{const action=new URL(String(url)).pathname.endsWith('/kids-youtube-search')?'search':new URL(String(url)).searchParams.get('action');calls.push({action,options});const work=Promise.resolve().then(()=>handler(action,options));const result=options.signal?await Promise.race([work,new Promise((_,reject)=>{if(options.signal.aborted){const e=Error('aborted');e.name='AbortError';reject(e);return;}options.signal.addEventListener('abort',()=>{const e=Error('aborted');e.name='AbortError';reject(e);},{once:true});})]):await work;return {ok:result.status===undefined||result.status<400,status:result.status??200,json:async()=>result.body??result};}
   });
   context.window=context;context.top=context;vm.runInContext(fs.readFileSync('parents.js','utf8'),context,{filename:'parents.js'});await new Promise(r=>setImmediate(r));
   async function fire(id,type='click'){for(const fn of elements[id].listeners[type]||[])await fn();await new Promise(r=>setImmediate(r));}
@@ -287,7 +287,7 @@ test('leaving management during metadata loading prevents hidden iframe from app
   assert.equal(a.elements.preview.hidden,true);
 });
 
-test('official search opens YouTube and adds through authenticated mutation exactly once',async()=>{
+test('YouTube search opens YouTube and adds through authenticated mutation exactly once',async()=>{
  let finish,mutations=0;
  const app=await parentApp(async(action,options)=>{
   if(action==='list')return {list:'',version:7};if(action==='status')return {authenticated:true};

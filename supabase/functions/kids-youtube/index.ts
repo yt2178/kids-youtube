@@ -521,27 +521,6 @@ Deno.serve(async(req)=>{
       if(!constantTime(hash,s.password_hash))return json({error:"WRONG_PASSWORD"},401,origin);
       return json({token:await makeToken(s.session_secret,body.remember===false?0.5:90)},200,origin);
     }
-    if(action==="search"){
-      if(!await auth(req,s))return json({error:"UNAUTHORIZED"},401,origin);
-      const query=typeof body.query==="string"?body.query.trim():"";
-      const pageToken=body.pageToken===undefined?"":body.pageToken;
-      if(!query||query.length>120||typeof pageToken!=="string"||!/^[A-Za-z0-9_=-]{0,512}$/.test(pageToken))return json({error:"INVALID_SEARCH"},400,origin);
-      const key=Deno.env.get("YOUTUBE_DATA_API_KEY");
-      if(!key)return json({error:"SEARCH_NOT_CONFIGURED"},503,origin);
-      try{
-        return await timed(8000,async(signal)=>{
-          const endpoint=new URL("https://www.googleapis.com/youtube/v3/search");
-          for(const [name,value] of Object.entries({key,part:"snippet",type:"video",maxResults:"20",q:query,safeSearch:"strict",relevanceLanguage:"he",regionCode:"IL",...(pageToken?{pageToken}:{})}))endpoint.searchParams.set(name,value);
-          const response=await fetch(endpoint,{signal,redirect:"error"});
-          if(!response.ok)return json({error:"SEARCH_UNAVAILABLE"},503,origin);
-          const data=JSON.parse(await readBounded(response.body,1000000));
-          if(!Array.isArray(data.items))throw Error("BAD_SEARCH_RESPONSE");
-          const items=data.items.slice(0,20).filter((item:any)=>/^[A-Za-z0-9_-]{11}$/.test(item?.id?.videoId||"")).map((item:any)=>({id:item.id.videoId,title:String(item.snippet?.title||"YouTube").slice(0,300),author:String(item.snippet?.channelTitle||"").slice(0,200)}));
-          const nextPageToken=typeof data.nextPageToken==="string"&&/^[A-Za-z0-9_=-]{1,512}$/.test(data.nextPageToken)?data.nextPageToken:"";
-          return json({items,nextPageToken},200,origin);
-        });
-      }catch{return json({error:"SEARCH_UNAVAILABLE"},503,origin);}
-    }
     if(action==="metadata"){
       if(!await auth(req,s))return json({error:"UNAUTHORIZED"},401,origin);
       try{return json(await metadata(body.link||""),200,origin);}catch{return json({error:"INVALID_LINK"},400,origin);}
