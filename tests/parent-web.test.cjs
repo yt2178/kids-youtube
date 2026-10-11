@@ -301,7 +301,7 @@ test('parent search opens the official embedded YouTube player and adds once',as
  assert.equal(info.children[0].type,'button');
  await info.children[0].listeners.click[0]();
  assert.equal(app.elements['catalog-player-dialog'].open,true);
- assert.match(app.elements['catalog-player'].src,/youtube\\.com\\/embed\\/mVTlbvQ_010/);
+ assert.ok(app.elements['catalog-player'].src.includes('youtube.com/embed/mVTlbvQ_010'));
  assert.equal(app.elements['catalog-player-title'].textContent,'<b>Song</b>');
  assert.equal(app.elements['catalog-player-loading'].hidden,false);
  await app.fire('catalog-player','load');assert.equal(app.elements['catalog-player-loading'].hidden,true);
