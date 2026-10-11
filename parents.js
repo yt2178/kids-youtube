@@ -228,7 +228,7 @@ function renderSearch(){
       const src=safeChannelImage(item.thumbnail);
       // Reject explicit third-party image URLs entirely. For missing images
       // only, use a bounded authenticated metadata lookup as a fallback.
-      if(src||!item.thumbnail){
+      if(src||(!item.thumbnail&&!item.thumbnailRejected)){
         const image=document.createElement('img');image.alt='';image.className='search-avatar';image.referrerPolicy='no-referrer';
         image.addEventListener('load',()=>{fallback.hidden=true;image.hidden=false;});
         image.addEventListener('error',()=>{image.hidden=true;fallback.hidden=false;});
@@ -283,7 +283,7 @@ async function runSearch(more=false){
     const found=Array.isArray(d.items)?d.items.filter(item=>{
       if(!item||!['video','channel'].includes(item.kind))return false;
       return item.kind==='channel'?/^UC[A-Za-z0-9_-]{22}$/.test(item.id):/^[A-Za-z0-9_-]{11}$/.test(item.id);
-    }).map(item=>({kind:item.kind,id:item.id,title:String(item.title||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube')).slice(0,300),author:String(item.author||'').slice(0,200),thumbnail:item.kind==='channel'?safeChannelImage(item.thumbnail):''})):[];
+    }).map(item=>({kind:item.kind,id:item.id,title:String(item.title||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube')).slice(0,300),author:String(item.author||'').slice(0,200),thumbnail:item.kind==='channel'?safeChannelImage(item.thumbnail):'',thumbnailRejected:item.kind==='channel'&&!!item.thumbnail&&!safeChannelImage(item.thumbnail)})):[];
     const seen=new Set(searchItems.map(searchKey));for(const item of found){const key=searchKey(item);if(!seen.has(key)){seen.add(key);searchItems.push(item);}}
     // Rank the closest channel first and then its matching videos, rather
     // than interleaving that channel's videos with unrelated results.
