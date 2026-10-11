@@ -50,7 +50,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   }
   const listeners={};
   const history={state:null,pushState(state){this.state=state;},replaceState(state){this.state=state;},back(){this.state=null;}};
-  const context=vm.createContext({URL,AbortController,Response,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console:options.logCollector?{log:(...args)=>options.logCollector.push(args.map(String).join(' '))}:console,history,
+  const context=vm.createContext({URL,AbortController,Response,setTimeout:options.clock ? options.clock.setTimeout : options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout:options.clock ? options.clock.clearTimeout : clearTimeout,Date,Map,Set,Promise,console:options.logCollector?{log:(...args)=>options.logCollector.push(args.map(String).join(' '))}:console,history,
     navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/',origin:new URL(options.href||'https://example.test/kids-youtube/').origin},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.listFetch?options.listFetch({url:target,opts,calls,raw}):options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return options.catalogFetch?options.catalogFetch({url:target,opts,calls}):json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
@@ -998,7 +998,7 @@ test('real failed fresh poll fails closed, rejects prior cards and schedules a b
   await a.run("checkAuthorizationFreshness('poll')");
   assert.equal(a.run('displayed.size'),0);
   assert.equal(a.run('approvalMarker'),'');
-  assert.equal(a.run('catalogRetryAttempts')>=1,true);
+  assert.equal(a.run('authorizationRetryAttempts')>=1,true);
 });
 test('provider page failure after successful grant verification cannot erase 17 prepared cards',async()=>{
   const C='UCV6xoqUxJzkWwCbDmEwMSYw',channel='https://www.youtube.com/channel/'+C;
@@ -1288,11 +1288,11 @@ test('late native poll fails closed after successful startup, then a fresh grant
   await a.run("checkAuthorizationFreshness('poll')");
   assert.equal(a.run('displayed.size'),0,'failed periodic authority must hide every card');
   assert.equal(a.run('approvalMarker'),'','old grant must not remain usable');
-  assert.equal(a.run('catalogRetryAttempts'),1,'recovery is scheduled once with bounded backoff');
+  assert.equal(a.run('authorizationRetryAttempts'),1,'recovery is scheduled once with bounded backoff');
   assert.equal(a.elements.spinner.hidden,true,'no endless loading spinner on failure');
   await a.run("loadApp({trigger:'test-recovery'})");
   assert.equal(a.run('displayed.size'),1,'recovery requires another successful fresh grant');
-  assert.equal(a.run('catalogRetryAttempts'),0);
+  assert.equal(a.run('authorizationRetryAttempts'),0);
   assert.equal(calls,3,'startup + failed poll + recovery; no hidden extra authority calls');
   assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,0);
 });
@@ -1340,7 +1340,7 @@ test('native 409-equivalent NETWORK_ERROR is bounded, fail-closed and recoverabl
   assert.equal(a.run('displayed.size'),0);
   assert.equal(a.run('authorizationCheckInFlight'),false);
   assert.equal(calls,2,'failure does not cause an immediate unbounded network loop');
-  assert.ok(a.run('catalogRetryAttempts')>=1&&a.run('catalogRetryAttempts')<=3);
+  assert.ok(a.run('authorizationRetryAttempts')>=1&&a.run('authorizationRetryAttempts')<=3);
   await a.run("loadApp({trigger:'test-409-recovery'})");
   assert.equal(a.run('displayed.size'),1);
   assert.equal(calls,3);
