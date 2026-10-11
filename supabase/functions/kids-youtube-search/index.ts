@@ -12,9 +12,49 @@ async function bounded(response:Response,max=MAX_BYTES){
  const result=new Uint8Array(bytes);let pos=0;for(const chunk of chunks){result.set(chunk,pos);pos+=chunk.length;}return new TextDecoder().decode(result);
 }
 async function loadSearchLibrary(){return import("npm:youtubei.js@18.1.0/web");}
-async function searchVideos(query:string,page:number,signal:AbortSignal){
+const VIDEO_ID=/^[A-Za-z0-9_-]{11}$/;
+const CHANNEL_ID=/^UC[A-Za-z0-9_-]{22}$/;
+const IMAGE_HOSTS=new Set(["yt3.googleusercontent.com","yt3.ggpht.com","i.ytimg.com","img.youtube.com"]);
+function safeImage(raw:unknown){
+ if(typeof raw!=="string"||raw.length>2500)return "";
+ try{
+  const u=new URL(raw);
+  return u.protocol==="https:"&&!u.username&&!u.password&&!u.port&&IMAGE_HOSTS.has(u.hostname.toLowerCase())?u.href:"";
+ }catch{return "";}
+}
+function channelThumbnail(node:any){
+ const thumbs=node.author?.thumbnails||node.thumbnails||node.metadata?.thumbnails||[];
+ if(!Array.isArray(thumbs))return "";
+ for(let i=thumbs.length-1;i>=0;i--){const image=safeImage(thumbs[i]?.url);if(image)return image;}
+ return "";
+}
+function normalizeChannels(results:any){
+ const seen=new Set<string>(),items:any[]=[];
+ for(const channel of results||[]){
+  const id=String(channel.id||channel.channel_id||channel.author?.id||channel.metadata?.channel_id||"");
+  if(!CHANNEL_ID.test(id)||seen.has(id))continue;
+  seen.add(id);
+  const title=String(channel.author?.name||channel.title?.text||channel.title||channel.metadata?.title||"ערוץ YouTube").slice(0,300);
+  items.push({kind:"channel",id,title,author:"",thumbnail:channelThumbnail(channel)});
+  if(items.length>=15)break;
+ }
+ return items;
+}
+function normalizeVideos(results:any){
+ const seen=new Set<string>(),items:any[]=[];
+ for(const video of results||[]){
+  const id=String(video.id||video.content_id||"");
+  if(!VIDEO_ID.test(id)||seen.has(id)||video.content_type&&video.content_type!=="VIDEO")continue;
+  seen.add(id);
+  const title=String(video.title||video.metadata?.title||"סרטון YouTube").slice(0,300);
+  const author=String(video.author?.name||video.metadata?.metadata?.metadata_rows?.[0]?.metadata_parts?.[0]?.text||"").slice(0,200);
+  items.push({kind:"video",id,title,author});if(items.length===50)break;
+ }
+ return items;
+}
+async function searchContent(query:string,page:number,signal:AbortSignal){
  const {Innertube,Log}=await loadSearchLibrary();Log.setLevel(Log.Level.NONE);
- // Only fixed public YouTube metadata endpoints. Never forward parent credentials.
+ // Search is metadata-only. Do not forward parent credentials to YouTube.
  const youtubeFetch=async(input:any,init:any={})=>{
   const url=new URL(typeof input==="string"?input:input.url||String(input));
   if(url.protocol!=="https:"||url.hostname!=="www.youtube.com"||url.port||url.username||url.password)throw Error("SEARCH_TARGET_DENIED");
@@ -24,20 +64,29 @@ async function searchVideos(query:string,page:number,signal:AbortSignal){
   return new Response(text,{status:response.status,headers:{"Content-Type":response.headers.get("Content-Type")||"application/json"}});
  };
  const client=await Innertube.create({lang:"he",location:"IL",retrieve_player:false,enable_safety_mode:true,enable_session_cache:false,fast_fail:true,fetch:youtubeFetch});
- let result=await client.search(query,{type:"video"});
- // Stateless bounded pagination survives Edge isolate changes, at most three pages.
- for(let i=1;i<page;i++){if(!result.has_continuation)return {items:[],nextPageToken:""};result=await result.getContinuation();}
- const seen=new Set<string>(),items:any[]=[];
- for(const video of result.videos){
-  const id=String(video.id||video.content_id||"");
-  if(!/^[A-Za-z0-9_-]{11}$/.test(id)||seen.has(id)||video.content_type&&video.content_type!=="VIDEO")continue;
-  seen.add(id);
-  const title=String(video.title||video.metadata?.title||"סרטון YouTube").slice(0,300);
-  const author=String(video.author?.name||video.metadata?.metadata?.metadata_rows?.[0]?.metadata_parts?.[0]?.text||"").slice(0,200);
-  items.push({id,title,author});if(items.length===50)break;
+ // Only the first page searches channels. Later pages continue the video search
+ // without repeating channels; the client places channel results first overall.
+ const channelTask=page===1?client.search(query,{type:"channel"}):null;
+ const videoTask=client.search(query,{type:"video"});
+ const [channelsResult,videoResult]=await Promise.allSettled([channelTask,videoTask]);
+ let channelItems:any[]=[];
+ if(page===1&&channelsResult.status==="fulfilled"&&channelsResult.value)
+   channelItems=normalizeChannels(channelsResult.value.channels||channelsResult.value.results);
+ if(videoResult.status==="rejected"&&channelsResult.status==="rejected")throw Error("SEARCH_UPSTREAM");
+ if(videoResult.status==="rejected"){
+   if(!channelItems.length)throw Error("SEARCH_UPSTREAM");
+   return {items:channelItems,nextPageToken:"",partial:true};
  }
- return {items,nextPageToken:page<3&&result.has_continuation?String(page+1):""};
+ let result=videoResult.value;
+ for(let i=1;i<page;i++){
+  if(!result.has_continuation)return {items:[],nextPageToken:""};
+  result=await result.getContinuation();
+ }
+ const videos=normalizeVideos(result.videos||[]);
+ const partial=page===1&&channelsResult.status==="rejected";
+ return {items:[...channelItems,...videos],nextPageToken:page<3&&result.has_continuation?String(page+1):"",partial};
 }
+
 Deno.serve(async(req:Request)=>{
  const origin=req.headers.get("origin");if(origin&&origin!==PARENT_ORIGIN)return reply({error:"ORIGIN_DENIED"},403);
  if(req.method==="OPTIONS")return reply({},200);
@@ -55,7 +104,7 @@ Deno.serve(async(req:Request)=>{
   if(!auth.ok)return reply({error:"SEARCH_UNAVAILABLE"},503);
   const session=JSON.parse(await bounded(auth,4096));
   if(session.authenticated!==true)return reply({error:"UNAUTHORIZED"},401);
-  const result=await searchVideos(query,Number(page),controller.signal);
+  const result=await searchContent(query,Number(page),controller.signal);
   if(controller.signal.aborted)throw Error("TIMEOUT");
   return reply(result);
  }catch{return reply({error:"SEARCH_UNAVAILABLE"},503);}finally{clearTimeout(timer);}
