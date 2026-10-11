@@ -146,4 +146,57 @@ public final class AuthorizationFullRecoveryTest {
                 assertTrue(threads.awaitTermination(4,TimeUnit.SECONDS));}
         }
     }
+
+    @Test public void actualSocketDisconnectThenRevocationRecoversSameNativeClient() throws Exception {
+        java.net.InetAddress localhost=java.net.InetAddress.getByName("127.0.0.1");
+        try(java.net.ServerSocket server=new java.net.ServerSocket(0,8,localhost)){
+            server.setSoTimeout(6000);
+            java.util.concurrent.atomic.AtomicBoolean recovered=new java.util.concurrent.atomic.AtomicBoolean();
+            AtomicInteger requests=new AtomicInteger();
+            ExecutorService peer=Executors.newSingleThreadExecutor();
+            Future<?> serving=peer.submit(()->{
+                try{
+                    while(requests.get()<7){
+                        try(java.net.Socket socket=server.accept()){
+                            socket.setSoTimeout(1500);
+                            java.io.BufferedReader input=new java.io.BufferedReader(
+                                new java.io.InputStreamReader(socket.getInputStream(),
+                                java.nio.charset.StandardCharsets.US_ASCII));
+                            String line;while((line=input.readLine())!=null&&!line.isEmpty()){}
+                            int request=requests.incrementAndGet();
+                            if(request>1&&!recovered.get())continue; // close socket without HTTP response
+                            String body=request==1?document(1):
+                                "{\"list\":\"\",\"version\":2,\"updatedAt\":\"2026-10-11T00:00:00Z\",\"catalogVersion\":1}";
+                            byte[] data=body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                            String head="HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"+
+                                "Content-Length: "+data.length+"\r\nConnection: close\r\n\r\n";
+                            socket.getOutputStream().write(head.getBytes(
+                                java.nio.charset.StandardCharsets.US_ASCII));
+                            socket.getOutputStream().write(data);socket.getOutputStream().flush();
+                            if(request>1)break;
+                        }
+                    }
+                }catch(Exception e){throw new RuntimeException(e);}
+            });
+            try{
+                Dns numeric=name->java.util.Collections.singletonList(localhost);
+                NativeApi api=new NativeApi(new ExtractorDownloader(false,numeric,550),
+                    "http://127.0.0.1:"+server.getLocalPort()+"/?action=list&format=native");
+                assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
+                try{api.whitelist(true,false);fail("disconnect must fail closed");}
+                catch(IOException expected){}
+                try{api.sharedCatalog(new JSONObject().put("version",1)
+                    .put("updatedAt","2026-10-11T00:00:00Z"));
+                    fail("revocation cannot use cached approval");
+                }catch(IOException expected){
+                    assertTrue(expected.getMessage().contains("CATALOG_AUTH_CHANGED"));
+                }
+                recovered.set(true);
+                assertEquals("",api.whitelist(true,false));
+                assertTrue("expected physical socket disconnect and one fresh recovery",requests.get()>=3);
+                serving.get(3,TimeUnit.SECONDS);
+            }finally{recovered.set(true);peer.shutdownNow();
+                assertTrue(peer.awaitTermination(3,TimeUnit.SECONDS));}
+        }
+    }
 }
