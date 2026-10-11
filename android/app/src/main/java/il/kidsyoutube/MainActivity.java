@@ -104,7 +104,8 @@ public final class MainActivity extends Activity {
     private final class Task extends FutureTask<Void> {
         final String id;
         final RequestScope scope;
-        boolean optionalApi;
+        boolean optionalApi,backgroundGrant;
+        JavaScriptReplyProxy callback;
         Task(String id,RequestScope scope,Callable<Void> action) {super(action);this.id=id;this.scope=scope;}
         void abort(){scope.cancel();cancel(true);}
         @Override protected void done(){handler.post(()->{if(tasks.get(id)==this)tasks.remove(id);});}
@@ -273,7 +274,12 @@ public final class MainActivity extends Activity {
             if(!Set.of("whitelist","authorization","catalog","api","clear").contains(method)){
                 respond(reply,id,null,"INVALID_REQUEST");return;
             }
-            if(method.equals("api")&&active!=null){respond(reply,id,null,"BUSY");return;}
+            if(active!=null&&(method.equals("api")||method.equals("authorization")||
+                    method.equals("whitelist"))){
+                // An explicit playback owns both fresh grant checks. Background
+                // checks cannot supersede them; resume a fresh poll on player close.
+                respond(reply,id,null,"PLAYBACK_BUSY");return;
+            }
             JSONObject traceArg=method.equals("authorization")?data.optJSONObject("argument"):null;
             long jsCycle=traceArg==null?0:traceArg.optLong("loadCycle",0);
             long jsRequestId=traceArg==null?0:traceArg.optLong("requestId",0);
@@ -311,6 +317,8 @@ public final class MainActivity extends Activity {
                 return null;
             });
             task.optionalApi=method.equals("api");
+            task.backgroundGrant=method.equals("authorization")||method.equals("whitelist");
+            task.callback=reply;
             tasks.put(id,task);
             try{
                 (method.equals("authorization")||method.equals("whitelist")?
@@ -388,13 +396,20 @@ public final class MainActivity extends Activity {
         if(keyboard!=null)keyboard.hideSoftInputFromWindow(web.getWindowToken(),0);
         long generation=++playerGeneration;
         if(playTask!=null)playTask.abort();
-        // Stop optional NewPipe metadata competing with an explicit play action.
-        for(Task task:new ArrayList<>(tasks.values()))if(task.optionalApi)task.abort();
+        // A background poll/partial request could supersede the two mandatory
+        // playback grants even after its own HTTP 200. Cancel ONLY the optional
+        // bridge work; do not serialize fresh playback checks behind catalog.
+        for(Task task:new ArrayList<>(tasks.values()))
+            if((task.optionalApi||task.backgroundGrant)&&!task.isDone()){
+                task.abort();
+                if(task.callback!=null)respond(task.callback,task.id,null,"PLAYBACK_BUSY");
+            }
         stopMedia("new-request");
         String initialTitle=displayTitle!=null&&!displayTitle.trim().isEmpty()
             ? displayTitle.trim().substring(0,Math.min(200,displayTitle.trim().length()))
             : "טוענים את פרטי הסרטון…";
         active=new NativeApi.Playback(id,initialTitle,List.of());
+        web.evaluateJavascript("window.dispatchEvent(new Event('kids-native-playback-open'))",null);
         logPlayback(generation,"request",null);
         sourceIndex=0;sourceOrder=List.of();resumeAt=Math.max(0,resumePosition);
         playbackStartedAt=android.os.SystemClock.elapsedRealtime();
@@ -408,7 +423,16 @@ public final class MainActivity extends Activity {
             try {
                 logPlayback(generation,"fresh-auth-and-extraction-start",null);
                 long extractionStarted=android.os.SystemClock.elapsedRealtime();
-                NativeApi.Playback result=api.playback(id,generation);scope.check();
+                NativeApi.Playback result=PlaybackRecovery.run(scope,
+                        ()->api.playback(id,generation),category->{
+                            logPlayback(generation,"preparation-retry-"+category,null);
+                            handler.post(()->{
+                                if(!destroyed&&generation==playerGeneration&&!scope.cancelled){
+                                    showLoading(true);
+                                    showMessage("החיבור נקטע. מנסים שוב לקבל הרשאה ומקורות ניגון…");
+                                }
+                            });
+                        });scope.check();
                 logPlayback(generation,"extraction-success sources="+result.sources.size()+
                     " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-extractionStarted),null);
                 handler.post(()->{
@@ -602,7 +626,10 @@ public final class MainActivity extends Activity {
     }
     private void closePlayer(){
         ++playerGeneration;if(playTask!=null){playTask.abort();playTask=null;}
+        boolean wasOpen=active!=null;
         stopMedia("close-player");showLoading(false);active=null;sourceOrder=List.of();overlay.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);
+        if(wasOpen && !destroyed && web!=null)
+            web.evaluateJavascript("window.dispatchEvent(new Event('kids-native-playback-closed'))",null);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
     @Override public void onBackPressed(){if(active!=null)closePlayer();else super.onBackPressed();}
