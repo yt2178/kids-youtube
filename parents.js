@@ -204,6 +204,18 @@ function previewSearchChannel(item){
   ui.preview.hidden=false;
   if(typeof ui.preview.scrollIntoView==='function')ui.preview.scrollIntoView({behavior:'smooth',block:'start'});
 }
+let searchAvatarLookups=0;
+async function resolveMissingSearchAvatar(item,image,fallback,generation){
+  if(searchAvatarLookups>=3 || !token())return;
+  searchAvatarLookups++;
+  const epoch=sessionEpoch;
+  try{
+    const meta=await api('metadata',{method:'POST',auth:true,body:{link:searchUrl(item)}});
+    if(epoch!==sessionEpoch||generation!==searchGeneration||!searchItems.includes(item))return;
+    const src=safeChannelImage(meta.thumbnail);
+    if(src){item.thumbnail=src;image.src=src;}
+  }catch(_){/* An unavailable thumbnail is not a grant or a search failure. */}
+}
 function renderSearch(){
   ui['search-results'].replaceChildren();searchButtons.clear();
   for(const item of searchItems){
@@ -214,12 +226,12 @@ function renderSearch(){
       const fallback=document.createElement('span');fallback.className='search-avatar-fallback';fallback.textContent='ערוץ';
       visual.append(fallback);
       const src=safeChannelImage(item.thumbnail);
-      if(src){
-        const image=document.createElement('img');image.alt='';image.className='search-avatar';image.referrerPolicy='no-referrer';
-        image.addEventListener('load',()=>{fallback.hidden=true;image.hidden=false;});
-        image.addEventListener('error',()=>{image.hidden=true;fallback.hidden=false;});
-        image.hidden=true;image.src=src;visual.append(image);
-      }
+      const image=document.createElement('img');image.alt='';image.className='search-avatar';image.referrerPolicy='no-referrer';
+      image.addEventListener('load',()=>{fallback.hidden=true;image.hidden=false;});
+      image.addEventListener('error',()=>{image.hidden=true;fallback.hidden=false;});
+      image.hidden=true;visual.append(image);
+      if(src)image.src=src;
+      else resolveMissingSearchAvatar(item,image,fallback,searchGeneration);
     }else{
       const image=document.createElement('img');image.src='https://i.ytimg.com/vi/'+item.id+'/mqdefault.jpg';
       image.alt='';image.loading='lazy';image.referrerPolicy='no-referrer';visual.append(image);
@@ -259,7 +271,7 @@ async function runSearch(more=false){
   const query=ui['search-query'].value.trim();if(!query){ui['search-status'].textContent='הקלידו מה לחפש.';return;}
   const append=more&&query===searchQuery;if(append&&!searchPage)return;
   const epoch=sessionEpoch,generation=++searchGeneration;
-  if(!append){searchItems=[];searchPage='';searchQuery=query;renderSearch();}
+  if(!append){searchItems=[];searchPage='';searchQuery=query;searchAvatarLookups=0;renderSearch();}
   setBusy(ui['search-submit'],true);ui['search-more'].disabled=true;ui['search-status'].textContent='מחפש ערוצים וסרטונים ב־YouTube…';
   try{
     const d=await api('search',{method:'POST',auth:true,body:{query,pageToken:append?searchPage:''}});
