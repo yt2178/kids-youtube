@@ -109,7 +109,7 @@ public final class WeakNetworkTransportTest {
     @Test public void socketFailureIsClassifiedAsTransportNotUnavailableVideo(){
         assertEquals("NETWORK_ERROR",NativeApi.errorCode(new java.net.SocketException("broken pipe")));
     }
-    @Test public void fourDnsFailuresThenTlsConnectionWithNoHeadersThenRecovery() throws Exception {
+    @Test public void fourDnsFailuresThenConnectedSocketStallsBeforeHeadersThenRecovery() throws Exception {
         try(MockWebServer server=new MockWebServer()){
             // Four DNS errors are consumed in two app-level load cycles.
             // Fifth resolution reaches the server, whose first response
