@@ -207,7 +207,7 @@ public final class MainActivity extends Activity {
             isFastForwarding[0]=true;
             if(player!=null){
                 player.setPlaybackSpeed(2.0f);
-                showHud("⏩  2x מהירות");
+                showHud("2x מהירות");
             }
         };
 
@@ -230,7 +230,7 @@ public final class MainActivity extends Activity {
                         float speed=2.0f+(dx/150f);
                         speed=Math.max(1.0f,Math.min(4.0f,speed));
                         if(player!=null)player.setPlaybackSpeed(speed);
-                        showHud(String.format(java.util.Locale.ROOT,"⏩  %.1fx מהירות",speed));
+                        showHud(String.format(java.util.Locale.ROOT,"%.1fx מהירות",speed));
                         return true;
                     }
                     if(!isDragging[0]&&(Math.abs(dx)>touchSlop||Math.abs(dy)>touchSlop)){
