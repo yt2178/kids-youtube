@@ -12,7 +12,7 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
   assert.match(html,/font-src 'self';/);assert.doesNotMatch(html,/web-share|clipboard-write/);assert.doesNotMatch(html,/fonts\.gstatic\.com|https:\/\/\*\./);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
-  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011search3/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
+  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011channels1/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
@@ -291,15 +291,15 @@ test('parent search opens the official embedded YouTube player and adds once',as
  let finish,mutations=0;
  const app=await parentApp(async(action,options)=>{
   if(action==='list')return {list:'',version:7};if(action==='status')return {authenticated:true};
-  if(action==='search'){assert.equal(options.headers.Authorization,'Bearer parent');assert.equal(JSON.parse(options.body).query,'שיר');return {items:[{id:'mVTlbvQ_010',title:'<b>Song</b>',author:'Artist'}],nextPageToken:'next'};}
+  if(action==='search'){assert.equal(options.headers.Authorization,'Bearer parent');assert.equal(JSON.parse(options.body).query,'שיר');return {items:[{kind:'video',id:'mVTlbvQ_010',title:'<b>Song</b>',author:'Artist'}],nextPageToken:'next'};}
   if(action==='mutate'){mutations++;assert.deepEqual(JSON.parse(options.body),{operation:'add',link:video,note:'<b>Song</b>'});return new Promise(resolve=>finish=resolve);}
   throw Error(action);
  },{local:new Map([['kidsParentToken','parent']])});
  app.elements['search-query'].value='שיר';await app.fire('search-submit');
- const row=app.elements['search-results'].children[0],info=row.children[1],actions=info.children[2],add=actions.children[1];
- assert.equal(info.children[0].textContent,'<b>Song</b>');
- assert.equal(info.children[0].type,'button');
- await info.children[0].listeners.click[0]();
+ const row=app.elements['search-results'].children[0],info=row.children[1],actions=info.children[3],add=actions.children[1];
+ assert.equal(info.children[1].textContent,'<b>Song</b>');
+ assert.equal(info.children[1].type,'button');
+ await info.children[1].listeners.click[0]();
  assert.equal(app.elements['catalog-player-dialog'].open,true);
  assert.ok(app.elements['catalog-player'].src.includes('youtube.com/embed/mVTlbvQ_010'));
  assert.equal(app.elements['catalog-player-title'].textContent,'<b>Song</b>');
@@ -310,22 +310,81 @@ test('parent search opens the official embedded YouTube player and adds once',as
  assert.equal(app.elements['catalog-player-dialog'].open,true);
  await app.fire('catalog-player-close');
  const first=add.listeners.click[0]();await new Promise(r=>setImmediate(r));await add.listeners.click[0]();assert.equal(mutations,1);
- finish({list:video+'\n',version:8,changed:true});await first;assert.equal(add.disabled,true);assert.equal(add.textContent,'כבר נוסף לילדים');
+ finish({list:video+'\n',version:8,changed:true});await first;assert.equal(add.disabled,true);assert.equal(add.textContent,'כבר מאושר');
 });
 test('search pagination deduplicates results and missing configuration has a clear message',async()=>{
  let count=0;const app=await parentApp(async(action,options)=>{
   if(action==='list')return {list:''};if(action==='status')return {authenticated:true};
   if(action==='search'){count++;if(count===3)return {status:503,body:{error:'SEARCH_NOT_CONFIGURED'}};
    assert.equal(JSON.parse(options.body).pageToken,count===1?'':'next');
-   return {items:[{id:'mVTlbvQ_010',title:'Song'},...(count===2?[{id:'AAAAAAAAAAA',title:'Other'}]:[])],nextPageToken:count===1?'next':''};}throw Error(action);
+   return {items:[{kind:'video',id:'mVTlbvQ_010',title:'Song'},...(count===2?[{kind:'video',id:'AAAAAAAAAAA',title:'Other'}]:[])],nextPageToken:count===1?'next':''};}throw Error(action);
  },{local:new Map([['kidsParentToken','parent']])});
  app.elements['search-query'].value='song';await app.fire('search-submit');await app.fire('search-more');
  assert.equal(app.elements['search-results'].children.length,2);assert.equal(app.elements['search-more'].hidden,true);
- await app.fire('search-submit');assert.match(app.elements['search-status'].textContent,/עדיין לא הופעל/);
+ await app.fire('search-submit');assert.match(app.elements['search-status'].textContent,/אינו זמין/);
 });
 test('logout invalidates a pending search without showing late results',async()=>{
  let finish;const app=await parentApp(async action=>{
  if(action==='list')return {list:''};if(action==='status')return {authenticated:true};if(action==='search')return new Promise(r=>finish=r);throw Error(action);
  },{local:new Map([['kidsParentToken','parent']])});
  app.elements['search-query'].value='song';const pending=app.fire('search-submit');await new Promise(r=>setImmediate(r));await app.fire('logout');finish({items:[{id:'AAAAAAAAAAA'}]});await pending;assert.equal(app.elements['search-results'].children.length,0);
+});
+
+test('channel search comes first, marks whole-channel approval, and adds canonical UC link only once',async()=>{
+  const channelId='UCV6xoqUxJzkWwCbDmEwMSYw',channelUrl='https://www.youtube.com/channel/'+channelId;
+  let mutations=0,release;
+  const app=await parentApp(async(action,opts)=>{
+    if(action==='list')return {list:'',version:1};
+    if(action==='status')return {authenticated:true};
+    if(action==='search')return {items:[
+      {kind:'video',id:'mVTlbvQ_010',title:'ברדק שיר',author:'ברדק'},
+      {kind:'channel',id:channelId,title:'ברדק',thumbnail:'https://yt3.googleusercontent.com/baradak'}
+    ],nextPageToken:''};
+    if(action==='mutate'){
+      mutations++;
+      assert.deepEqual(JSON.parse(opts.body),{operation:'add',link:channelUrl,note:'ברדק'});
+      return new Promise(resolve=>release=resolve);
+    }
+    throw Error(action);
+  },{local:new Map([['kidsParentToken','parent']])});
+  app.elements['search-query'].value='ברדק';
+  await app.fire('search-submit');
+  const results=app.elements['search-results'].children;
+  assert.equal(results.length,2);
+  const channelRow=results[0],videoRow=results[1],info=channelRow.children[1];
+  assert.match(channelRow.className,/search-channel/);
+  assert.equal(info.children[0].textContent,'ערוץ שלם');
+  assert.equal(info.children[1].textContent,'ברדק');
+  assert.match(info.children[2].textContent,/כולל חדשים בעתיד/);
+  assert.equal(videoRow.children[1].children[0].textContent,'סרטון');
+  const channelAdd=info.children[3].children[1];
+  assert.equal(channelAdd.textContent,'הוסף את כל הערוץ');
+  // Clicking the channel title previews it without granting permission.
+  await info.children[1].listeners.click[0]();
+  assert.equal(app.elements.kind.textContent,'ערוץ שלם');
+  assert.equal(app.elements.canonical.textContent,channelUrl);
+  assert.equal(app.elements['channel-warning'].hidden,false);
+  assert.equal(mutations,0);
+  const first=channelAdd.listeners.click[0]();
+  await new Promise(resolve=>setImmediate(resolve));
+  await channelAdd.listeners.click[0]();
+  assert.equal(mutations,1);
+  release({list:channelUrl+' // ברדק\n',version:2,changed:true});
+  await first;
+  assert.equal(channelAdd.disabled,true);
+  assert.equal(channelAdd.textContent,'כבר מאושר');
+  assert.match(app.elements['search-status'].textContent,/הערוץ השלם אושר/);
+});
+test('channel thumbnail is restricted to Google image origins, not arbitrary URLs',async()=>{
+  const channelId='UCV6xoqUxJzkWwCbDmEwMSYw';
+  const app=await parentApp(async action=>{
+    if(action==='list')return {list:'',version:1};
+    if(action==='status')return {authenticated:true};
+    if(action==='search')return {items:[{kind:'channel',id:channelId,title:'ערוץ מסוים',thumbnail:'https://evil.example/spy.jpg'}]};
+    throw Error(action);
+  },{local:new Map([['kidsParentToken','parent']])});
+  app.elements['search-query'].value='ערוץ';await app.fire('search-submit');
+  const visual=app.elements['search-results'].children[0].children[0];
+  assert.equal(visual.children.length,1);
+  assert.equal(visual.children[0].textContent,'ערוץ');
 });
