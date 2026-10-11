@@ -162,7 +162,8 @@ function renderSearch(){
   ui['search-results'].replaceChildren();searchButtons.clear();
   for(const item of searchItems){
     const row=document.createElement('article');row.className='search-row';
-    const image=document.createElement('img');image.src='https://i.ytimg.com/vi/'+item.id+'/mqdefault.jpg';image.alt='';image.loading='lazy';
+    const image=document.createElement('img');image.src='https://i.ytimg.com/vi/'+item.id+'/mqdefault.jpg';image.alt='';image.loading='lazy';image.referrerPolicy='no-referrer';
+    image.addEventListener('error',()=>{image.hidden=true;row.classList.add('thumb-missing');});
     const info=document.createElement('div');info.className='search-info';
     const title=document.createElement('button');title.type='button';title.className='search-title-button';title.textContent=item.title;title.addEventListener('click',()=>openSearchVideo(item));
     const author=document.createElement('p');author.textContent=item.author;
