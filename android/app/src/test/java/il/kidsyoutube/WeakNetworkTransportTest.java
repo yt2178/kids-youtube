@@ -114,7 +114,8 @@ public final class WeakNetworkTransportTest {
             // Four DNS errors are consumed in two app-level load cycles.
             // Fifth resolution reaches the server, whose first response
             // delays headers beyond read timeout; the next load recovers.
-            server.enqueue(new MockResponse().setHeadersDelay(750,TimeUnit.MILLISECONDS)\n                    .setBody(response(VIDEO,8,0)));
+            server.enqueue(new MockResponse().setHeadersDelay(750,TimeUnit.MILLISECONDS)
+                    .setBody(response(VIDEO,8,0)));
             server.enqueue(new MockResponse().setBody(response(VIDEO,9,0)));
             server.start();
             AtomicInteger lookups=new AtomicInteger();
