@@ -65,6 +65,8 @@ function setParentView(catalog){
     ui['management-search-toggle'].setAttribute('aria-expanded','false');
     // Invalidates search results arriving after leaving the screen.
     searchGeneration++;
+    setBusy(ui['search-submit'],false);
+    ui['search-more'].disabled=false;
   }
   // A late metadata response must not recreate a hidden preview behind the catalog.
   if(catalog&&ui.inspect.disabled)resetPreview();
@@ -149,7 +151,11 @@ ui['management-search-toggle'].addEventListener('click',()=>{
   ui['management-search-panel'].hidden=!opening;
   ui['management-search-toggle'].setAttribute('aria-expanded',String(opening));
   if(opening&&typeof ui['search-query'].focus==='function')ui['search-query'].focus();
-  if(!opening)searchGeneration++; // Ignore late results after hiding search.
+  if(!opening){
+    searchGeneration++; // Ignore late results after hiding search.
+    setBusy(ui['search-submit'],false);
+    ui['search-more'].disabled=false;
+  }
 });
 const searchAdds=new Set(),searchButtons=new Map();
 function searchKey(item){return item.kind+':'+item.id;}
@@ -284,7 +290,11 @@ async function runSearch(more=false){
   }catch(e){
     if(epoch!==sessionEpoch||generation!==searchGeneration)return;if(e.status===401){expireSession();location.reload();return;}
     ui['search-status'].textContent='החיפוש אינו זמין כרגע. נסו שוב מאוחר יותר.';
-  }finally{setBusy(ui['search-submit'],false);ui['search-more'].disabled=false;}
+  }finally{
+    if(epoch===sessionEpoch&&generation===searchGeneration){
+      setBusy(ui['search-submit'],false);ui['search-more'].disabled=false;
+    }
+  }
 }
 ui['search-submit'].addEventListener('click',()=>runSearch());
 ui['search-more'].addEventListener('click',()=>runSearch(true));
