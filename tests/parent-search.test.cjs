@@ -95,3 +95,18 @@ test('YouTube library fetch cannot access other sites or follow redirects',async
  await f.options().fetch('https://www.youtube.com/youtubei/v1/search',{method:'POST'});
  const call=f.calls.at(-1);assert.equal(call.opts.redirect,'error');assert.equal(call.opts.headers,undefined);
 });
+
+test('channel avatars fall back from empty author arrays to best_thumbnail and metadata avatar',async()=>{
+ const id1='UC'+'B'.repeat(22),id2='UC'+'C'.repeat(22),id3='UC'+'D'.repeat(22);
+ const f=await fixture({channels:[
+  {id:id1,author:{name:'Channel B',thumbnails:[]},best_thumbnail:{url:'https://yt3.ggpht.com/cover-b'}},
+  {id:id2,author:{name:'Channel C',thumbnails:[]},metadata:{avatar:[{url:'https://yt3.googleusercontent.com/cover-c'}]}},
+  {id:id3,author:{name:'Channel D',thumbnails:[]},thumbnail:{url:'https://evil.test/hidden'}}
+ ]});
+ const result=await f.request({query:'channels'});
+ assert.equal(result.status,200);
+ const items=result.data.items.filter(x=>x.kind==='channel');
+ assert.equal(items[0].thumbnail,'https://yt3.ggpht.com/cover-b');
+ assert.equal(items[1].thumbnail,'https://yt3.googleusercontent.com/cover-c');
+ assert.equal(items[2].thumbnail,'');
+});
