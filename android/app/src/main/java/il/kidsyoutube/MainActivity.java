@@ -448,7 +448,8 @@ public final class MainActivity extends Activity {
                 });
             }catch(Exception e){
                 logPlayback(generation,"playback-preparation-failed",e);
-                api.recordFailure(e);
+                // NativeApi.playback owns upstream failure recording. Recording
+                // here too would extend the same provider cooldown twice.
                 final String code=NativeApi.errorCode(e);
                 handler.post(()->{if(!destroyed && generation==playerGeneration)unavailable(code);});
             }finally {
@@ -616,7 +617,14 @@ public final class MainActivity extends Activity {
         String reason="לא הצלחנו להפעיל את הסרטון. אפשר לנסות שוב.";
         if("NOT_APPROVED".equals(code))reason="הסרטון כבר אינו מאושר לצפייה.";
         else if("NO_SUPPORTED_STREAM".equals(code))reason="לא נמצא מקור וידאו וקול מתאים לסרטון הזה.";
-        else if("UPSTREAM_BLOCKED".equals(code))reason="YouTube חסם את בקשת הניגון. נסו שוב מאוחר יותר.";
+        else if("UPSTREAM_BLOCKED".equals(code))reason="ספק הסרטונים דחה בקשה. ההמתנה מגנה מפני חסימות נוספות.";
+        else if("COOLDOWN_ACTIVE".equals(code)){
+            long remainingSec=(api.cooldownRemainingMs()+999)/1000;
+            if(remainingSec>0)
+                reason="בקשות לספק הסרטונים מושהות זמנית. לא נשלחה בקשה חדשה. נשארו "
+                        +(remainingSec/60)+" דקות ו־"+(remainingSec%60)+" שניות.";
+            else reason="ההשהיה הסתיימה. אפשר לנסות לפתוח את הסרטון שוב.";
+        }
         else if("RATE_LIMITED".equals(code))reason="שירות הסרטונים הגביל בקשות. נסו שוב מאוחר יותר.";
         else if("TIMEOUT".equals(code))reason="הטעינה ארכה יותר מדי זמן. בדקו את החיבור ונסו שוב.";
         else if("SLOW_CONNECTION".equals(code)||"DNS_ERROR".equals(code)||"NETWORK_ERROR".equals(code))
