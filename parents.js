@@ -226,12 +226,16 @@ function renderSearch(){
       const fallback=document.createElement('span');fallback.className='search-avatar-fallback';fallback.textContent='ערוץ';
       visual.append(fallback);
       const src=safeChannelImage(item.thumbnail);
-      const image=document.createElement('img');image.alt='';image.className='search-avatar';image.referrerPolicy='no-referrer';
-      image.addEventListener('load',()=>{fallback.hidden=true;image.hidden=false;});
-      image.addEventListener('error',()=>{image.hidden=true;fallback.hidden=false;});
-      image.hidden=true;visual.append(image);
-      if(src)image.src=src;
-      else resolveMissingSearchAvatar(item,image,fallback,searchGeneration);
+      // Reject explicit third-party image URLs entirely. For missing images
+      // only, use a bounded authenticated metadata lookup as a fallback.
+      if(src||!item.thumbnail){
+        const image=document.createElement('img');image.alt='';image.className='search-avatar';image.referrerPolicy='no-referrer';
+        image.addEventListener('load',()=>{fallback.hidden=true;image.hidden=false;});
+        image.addEventListener('error',()=>{image.hidden=true;fallback.hidden=false;});
+        image.hidden=true;visual.append(image);
+        if(src)image.src=src;
+        else resolveMissingSearchAvatar(item,image,fallback,searchGeneration);
+      }
     }else{
       const image=document.createElement('img');image.src='https://i.ytimg.com/vi/'+item.id+'/mqdefault.jpg';
       image.alt='';image.loading='lazy';image.referrerPolicy='no-referrer';visual.append(image);
