@@ -2,7 +2,7 @@
 'use strict';
 const API='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 const PARENT_REQUEST_TIMEOUT_MS=20000, CHANNEL_IMAGE_TIMEOUT_MS=8000; // no automatic retry of parent writes
-const ids=['search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+const ids=['search-toggle','search-toggle-label','search-content','search-query','search-submit','search-status','search-results','search-more','approved-count','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
 const ui=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));let parentLink=null,setupRequired=false,currentList='',currentVersion=null,manualVersion=null,pendingRemove=null,channelImageTimer=null,channelImageDeadline=null,previewGeneration=0,sessionEpoch=0,listSequence=0;let catalogSupported=false,catalogBackfillStarted=false;const pendingRequests=new Set();
 const TRUSTED_FRAME=window.top===window;
 function token(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
@@ -34,7 +34,7 @@ async function api(action,options={}){
   }finally{clearTimeout(timer);pendingRequests.delete(controller);}
 }
 function entries(raw){const out=[];for(const line of String(raw||'').replace(/^\uFEFF/,'').split(/\r?\n/)){const v=line.trim();if(!v||v.startsWith('//'))continue;const parts=v.split(/\s+\/\//,2);try{const link=KidsParentLinks.classify(parts[0]);out.push({...link,note:(parts[1]||'').trim()});}catch(_){out.push({url:parts[0],kind:'unknown',note:(parts[1]||'').trim()});}}return out;}
-function renderList(raw,version){currentList=String(raw||'');syncSearchButtons();if(Number.isSafeInteger(version))currentVersion=version;if(ui['manual-editor'].hidden)ui['approved-text'].value=currentList;ui['approved-cards'].replaceChildren();const list=entries(currentList);if(!list.length){const p=document.createElement('p');p.textContent='אין עדיין קישורים מאושרים.';ui['approved-cards'].append(p);return;}for(const item of list){const box=document.createElement('article');box.className='entry';const title=document.createElement('p');title.className='entry-title';title.textContent=item.note||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube');const link=document.createElement('p');link.className='entry-link';link.textContent=item.url;const remove=document.createElement('button');remove.type='button';remove.className='remove';remove.textContent='הסר';remove.addEventListener('click',()=>askRemove(item));box.append(title,link,remove);ui['approved-cards'].append(box);}}
+function renderList(raw,version){currentList=String(raw||'');syncSearchButtons();if(Number.isSafeInteger(version))currentVersion=version;if(ui['manual-editor'].hidden)ui['approved-text'].value=currentList;ui['approved-cards'].replaceChildren();const list=entries(currentList);ui['approved-count'].textContent=list.length===1?'פריט מאושר אחד':list.length+' פריטים מאושרים';if(!list.length){const p=document.createElement('p');p.textContent='אין עדיין קישורים מאושרים.';ui['approved-cards'].append(p);return;}for(const item of list){const box=document.createElement('article');box.className='entry';const title=document.createElement('p');title.className='entry-title';title.textContent=item.note||(item.kind==='channel'?'ערוץ YouTube':'סרטון YouTube');const link=document.createElement('p');link.className='entry-link';link.textContent=item.url;const remove=document.createElement('button');remove.type='button';remove.className='remove';remove.textContent='הסר';remove.addEventListener('click',()=>askRemove(item));box.append(title,link,remove);ui['approved-cards'].append(box);}}
 async function backfillApprovedCatalog(){
   if(!catalogSupported||catalogBackfillStarted||!token())return;
   catalogBackfillStarted=true;
@@ -59,6 +59,8 @@ async function backfillApprovedCatalog(){
 }
 function showParent(list){ui.auth.hidden=true;ui['parent-area'].hidden=false;renderList(list||'');setParentView(false);if(catalogSupported)Promise.resolve().then(backfillApprovedCatalog);}
 function setParentView(catalog){
+  // Match the Android child catalog's existing button layout by giving the iframe full width.
+  if(document.body&&document.body.classList)document.body.classList.toggle('catalog-open',!!catalog);
   // A late metadata response must not recreate a hidden preview behind the catalog.
   if(catalog&&ui.inspect.disabled)resetPreview();
   ui['management-view'].hidden=catalog;ui['catalog-view'].hidden=!catalog;
@@ -137,6 +139,14 @@ ui.logout.addEventListener('click',()=>{expireSession();ui['parent-catalog'].rem
 // Search is parent-only and never grants access until the parent explicitly adds a result.
 let searchItems=[],searchQuery='',searchPage='',searchGeneration=0;
 const searchAdds=new Set(),searchButtons=new Map();
+function setSearchOpen(open){
+  ui['search-content'].hidden=!open;
+  ui['search-toggle'].setAttribute('aria-expanded',String(open));
+  ui['search-toggle'].setAttribute('aria-label',open?'סגירת חיפוש הסרטונים':'פתיחת חיפוש סרטונים');
+  ui['search-toggle-label'].textContent=open?'סגירה':'חיפוש סרטונים';
+  if(open&&typeof ui['search-query'].focus==='function')ui['search-query'].focus();
+}
+ui['search-toggle'].addEventListener('click',()=>setSearchOpen(ui['search-content'].hidden));
 function syncSearchButtons(){
   const approved=new Set(entries(currentList).map(item=>item.url));
   for(const [id,button] of searchButtons){const exists=approved.has('https://www.youtube.com/watch?v='+id);button.disabled=exists||searchAdds.has(id);button.textContent=exists?'כבר נוסף לילדים':searchAdds.has(id)?'מוסיף…':'הוספה לילדים';}
@@ -152,7 +162,8 @@ function renderSearch(){
   ui['search-results'].replaceChildren();searchButtons.clear();
   for(const item of searchItems){
     const row=document.createElement('article');row.className='search-row';
-    const image=document.createElement('img');image.src='https://i.ytimg.com/vi/'+item.id+'/mqdefault.jpg';image.alt='';image.loading='lazy';
+    const image=document.createElement('img');image.src='https://i.ytimg.com/vi/'+item.id+'/mqdefault.jpg';image.alt='';image.loading='lazy';image.referrerPolicy='no-referrer';
+    image.addEventListener('error',()=>{image.hidden=true;row.classList.add('thumb-missing');});
     const info=document.createElement('div');info.className='search-info';
     const title=document.createElement('button');title.type='button';title.className='search-title-button';title.textContent=item.title;title.addEventListener('click',()=>openSearchVideo(item));
     const author=document.createElement('p');author.textContent=item.author;
@@ -189,7 +200,7 @@ async function runSearch(more=false){
 }
 ui['search-submit'].addEventListener('click',()=>runSearch());
 ui['search-more'].addEventListener('click',()=>runSearch(true));
-ui['search-query'].addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();runSearch();}});
+ui['search-query'].addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();runSearch();}else if(event.key==='Escape'){event.preventDefault();setSearchOpen(false);ui['search-toggle'].focus?.();}});
 
 if(TRUSTED_FRAME)boot();else{
   ui['auth-spinner'].hidden=true;ui.login.disabled=true;

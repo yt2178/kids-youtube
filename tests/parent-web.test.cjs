@@ -12,7 +12,7 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
   assert.match(html,/font-src 'self';/);assert.doesNotMatch(html,/web-share|clipboard-write/);assert.doesNotMatch(html,/fonts\.gstatic\.com|https:\/\/\*\./);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
-  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011search3/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
+  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011ui2/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
@@ -25,8 +25,8 @@ class ParentElement{
 }
 function memoryStorage(map){return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,String(v)),removeItem:k=>map.delete(k)};}
 async function parentApp(handler,{local=new Map(),session=new Map()}={}){
-  const ids=['search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
-  const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements.preview.hidden=true;elements['manual-editor'].hidden=true;elements.remember.checked=true;
+  const ids=['search-toggle','search-toggle-label','search-content','search-query','search-submit','search-status','search-results','search-more','approved-count','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements.preview.hidden=true;elements['manual-editor'].hidden=true;elements['search-content'].hidden=true;elements.remember.checked=true;
   let reloads=0;const calls=[],windowListeners={};const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(local),sessionStorage:memoryStorage(session),
     KidsParentLinks:links,URL,Map,Object,String,JSON,Error,AbortController,encodeURIComponent,setTimeout,clearTimeout,confirm:()=>true,location:{origin:'https://example.test',reload(){reloads++;}},addEventListener:(k,fn)=>(windowListeners[k]??=[]).push(fn),
@@ -40,7 +40,7 @@ async function parentApp(handler,{local=new Map(),session=new Map()}={}){
 test('parent management refuses to boot when framed, including by the same origin',async()=>{
   const local=new Map([['kidsParentToken','secret']]);let requests=0;
   const elements={};
-  const ids=['search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  const ids=['search-toggle','search-toggle-label','search-content','search-query','search-submit','search-status','search-results','search-more','approved-count','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
   for(const id of ids)elements[id]=new ParentElement();
   const context=vm.createContext({
     document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},
@@ -66,7 +66,7 @@ test('parent Supabase requests have a finite browser-side deadline and abort sig
 
 test('stalled parent Supabase request is actually aborted by the browser deadline',async()=>{
   const source=fs.readFileSync('parents.js','utf8').replace('PARENT_REQUEST_TIMEOUT_MS=20000','PARENT_REQUEST_TIMEOUT_MS=5');
-  const ids=['search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+  const ids=['search-toggle','search-toggle-label','search-content','search-query','search-submit','search-status','search-results','search-more','approved-count','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
   const elements=Object.fromEntries(ids.map(id=>[id,new ParentElement()]));elements.auth.hidden=false;elements['parent-area'].hidden=true;elements['auth-spinner'].hidden=true;
   let aborted=false;
   const context=vm.createContext({document:{getElementById:id=>elements[id],createElement:()=>new ParentElement()},localStorage:memoryStorage(new Map()),sessionStorage:memoryStorage(new Map()),KidsParentLinks:links,URL,Map,Object,String,JSON,Error,AbortController,encodeURIComponent,setTimeout,clearTimeout,confirm:()=>true,location:{origin:'https://example.test',reload(){}},addEventListener(){},fetch:(_url,options)=>new Promise((_resolve,reject)=>{options.signal.addEventListener('abort',()=>{aborted=true;const e=Error('aborted');e.name='AbortError';reject(e);},{once:true});})});
@@ -287,6 +287,39 @@ test('leaving management during metadata loading prevents hidden iframe from app
   assert.equal(a.elements.preview.hidden,true);
 });
 
+
+test('parent search is initially collapsed and one button opens it with query retained',async()=>{
+  const local=new Map([['kidsParentToken','token']]);
+  const a=await parentApp(async action=>{
+    if(action==='list')return {list:'',version:2,setupRequired:false};
+    if(action==='status')return {authenticated:true};
+    throw Error(action);
+  },{local});
+  assert.equal(a.elements['search-content'].hidden,true);
+  await a.fire('search-toggle');
+  assert.equal(a.elements['search-content'].hidden,false);
+  assert.equal(a.elements['search-toggle'].attributes['aria-expanded'],'true');
+  a.elements['search-query'].value='ברדק';
+  await a.fire('search-toggle');
+  assert.equal(a.elements['search-content'].hidden,true);
+  assert.equal(a.elements['search-toggle'].attributes['aria-expanded'],'false');
+  await a.fire('search-toggle');
+  assert.equal(a.elements['search-query'].value,'ברדק');
+  assert.equal(a.elements['search-content'].hidden,false);
+});
+test('compact search and parent catalog preserve the exact child catalog interface',()=>{
+  const html=fs.readFileSync('parents.html','utf8'),js=fs.readFileSync('parents.js','utf8');
+  const child=fs.readFileSync('index.html','utf8');
+  assert.match(html,/id="search-toggle"[^>]+aria-expanded="false"[^>]+aria-controls="search-content"/);
+  assert.match(html,/id="search-content" hidden/);
+  assert.match(html,/body\.catalog-open main\{max-width:1500px/);
+  assert.match(html,/\.search-actions button\{[^}]*min-height:36px/);
+  assert.match(js,/classList\.toggle\('catalog-open',!!catalog\)/);
+  assert.match(js,/\.\/index\.html\?parentCatalog=1/);
+  for(const id of ['videos-tab','channels-tab','all-tab','search-toggle','sort-options','view-grid','view-list']){
+    assert.match(child,new RegExp('id="'+id+'"'));
+  }
+});
 test('parent search opens the official embedded YouTube player and adds once',async()=>{
  let finish,mutations=0;
  const app=await parentApp(async(action,options)=>{
@@ -297,6 +330,7 @@ test('parent search opens the official embedded YouTube player and adds once',as
  },{local:new Map([['kidsParentToken','parent']])});
  app.elements['search-query'].value='שיר';await app.fire('search-submit');
  const row=app.elements['search-results'].children[0],info=row.children[1],actions=info.children[2],add=actions.children[1];
+ assert.equal(row.children[0].referrerPolicy,'no-referrer');
  assert.equal(info.children[0].textContent,'<b>Song</b>');
  assert.equal(info.children[0].type,'button');
  await info.children[0].listeners.click[0]();
@@ -312,6 +346,22 @@ test('parent search opens the official embedded YouTube player and adds once',as
  const first=add.listeners.click[0]();await new Promise(r=>setImmediate(r));await add.listeners.click[0]();assert.equal(mutations,1);
  finish({list:video+'\n',version:8,changed:true});await first;assert.equal(add.disabled,true);assert.equal(add.textContent,'כבר נוסף לילדים');
 });
+test('failed YouTube thumbnail uses a neutral fallback without losing search actions',async()=>{
+  const app=await parentApp(async action=>{
+    if(action==='list')return {list:'',version:1};
+    if(action==='status')return {authenticated:true};
+    if(action==='search')return {items:[{id:'mVTlbvQ_010',title:'Sample video'}]};
+    throw Error(action);
+  },{local:new Map([['kidsParentToken','parent']])});
+  app.elements['search-query'].value='sample';
+  await app.fire('search-submit');
+  const row=app.elements['search-results'].children[0];
+  const image=row.children[0];
+  for(const fn of image.listeners.error||[])fn();
+  assert.equal(image.hidden,true);
+  assert.equal(row.children[1].children[2].children.length,2);
+});
+
 test('search pagination deduplicates results and missing configuration has a clear message',async()=>{
  let count=0;const app=await parentApp(async(action,options)=>{
   if(action==='list')return {list:''};if(action==='status')return {authenticated:true};
