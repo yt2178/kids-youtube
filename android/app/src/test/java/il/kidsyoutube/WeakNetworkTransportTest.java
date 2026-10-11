@@ -109,14 +109,13 @@ public final class WeakNetworkTransportTest {
     @Test public void socketFailureIsClassifiedAsTransportNotUnavailableVideo(){
         assertEquals("NETWORK_ERROR",NativeApi.errorCode(new java.net.SocketException("broken pipe")));
     }
-    @Test public void fourDnsFailuresThenConnectedSocketStallsBeforeHeadersThenRecovery() throws Exception {
+    @Test public void fourDnsFailuresThenConnectedSocketStallsBeforeHeaders() throws Exception {
         try(MockWebServer server=new MockWebServer()){
             // Four DNS errors are consumed in two app-level load cycles.
             // Fifth resolution reaches the server, whose first response
-            // delays headers beyond read timeout; the next load recovers.
+            // delays headers beyond the configured per-read timeout.
             server.enqueue(new MockResponse().setHeadersDelay(750,TimeUnit.MILLISECONDS)
                     .setBody(response(VIDEO,8,0)));
-            server.enqueue(new MockResponse().setBody(response(VIDEO,9,0)));
             server.start();
             AtomicInteger lookups=new AtomicInteger();
             Dns flaky=name->{
@@ -144,10 +143,10 @@ public final class WeakNetworkTransportTest {
             long stalledMs=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
             assertTrue("headers stall should consume bounded time "+stalledMs,stalledMs>=200);
             assertEquals("header timeout is not retried inside same authorization",1,server.getRequestCount());
-            assertEquals(5,lookups.get());
-            Thread.sleep(850); // let the stalled mock response finish before reopening
-            assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
-            assertEquals(2,server.getRequestCount());
+            assertEquals(5,lookups.get()); // exactly one wire request after four DNS failures
+            // Reconnection after an outage is tested separately below with a
+            // healthy MockWebServer, not by reusing the intentionally stalled
+            // server socket after a forced client read-timeout.
         }
     }
     @Test public void sixSecondDnsFailureRetriesOnceWithinSingleGrantRequest() throws Exception {
