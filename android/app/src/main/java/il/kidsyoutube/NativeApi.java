@@ -103,7 +103,8 @@ final class NativeApi {
                 .header("Cache-Control","no-cache").tag(String.class,"authorization").build();
         for(int attempt=1;attempt<=2;attempt++){
             if(scope!=null)scope.check();
-            Call call=downloader.authorizationClient.newCall(request);
+            Call call=downloader.authorizationClient.newCall(
+                    request.newBuilder().tag(Integer.class,attempt).build());
             try{
                 if(scope!=null){
                     scope.add(call);
