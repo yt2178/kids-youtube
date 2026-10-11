@@ -187,7 +187,11 @@ test('successful empty channel response removes obsolete cached videos',async()=
 test('invalid current whitelist fails closed rather than reviving old cache',async()=>{
   const store=new Map();await app({videos:[{id:id(1)}],channels:[]},undefined,store);
   const a=await app({videos:'invalid',channels:[]},undefined,store);assert.equal(a.run('displayed.size'),0);
-  assert.equal(JSON.parse(store.get('kidsYoutubeVideos')).config.videos.length,0);
+  assert.equal(a.elements.grid.children.length,0);
+  assert.equal(a.run('approvalMarker'),'');
+  // Invalid authorization must not destroy already collected display metadata.
+  // The snapshot remains inert and can be reused only after another fresh grant.
+  assert.equal(JSON.parse(store.get('kidsYoutubeVideos')).config.videos.length,1);
 });
 test('cache is isolated across GitHub Pages repository paths',async()=>{
   const store=new Map();await app({videos:[{id:id(1)}],channels:[]},undefined,store);
@@ -1622,5 +1626,10 @@ test('a failed fresh authorization clears visible cards and cached grants',async
   assert.equal(a.run('approvalMarker'),'');
   assert.equal(a.elements.grid.inert,false);
   const snapshot=JSON.parse(store.get('kidsYoutubeVideos'));
-  assert.equal(snapshot.config.videos.length,0);
+  assert.equal(snapshot.config.videos.length,1,'metadata can survive without granting visibility');
+  const stillOffline=await app(empty,fail,store,{offline:true});
+  assert.equal(stillOffline.run('displayed.size'),0,'offline cached metadata grants no access');
+  assert.equal(stillOffline.elements.grid.children.length,0);
+  const reverified=await app(config,undefined,store);
+  assert.equal(reverified.run('displayed.size'),1,'metadata can return after an authoritative grant');
 });
