@@ -59,6 +59,11 @@ public class PlaybackRecoveryTest {
             }finally{scope.close();}
         }
     }
+    @Test public void nestedCertificateErrorTakesPrecedenceOverTemporaryConnectionWrapper(){
+        IOException wrapper=new java.net.SocketException("temporary");
+        wrapper.initCause(new javax.net.ssl.SSLHandshakeException("untrusted"));
+        assertFalse(PlaybackRecovery.transientFailure(wrapper));
+    }
     @Test public void cancelledDuringBackoffDoesNotStartSecondPreparation() throws Exception {
         RequestScope scope=new RequestScope(85000);
         AtomicInteger attempts=new AtomicInteger();
