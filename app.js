@@ -1220,9 +1220,8 @@ function launchNativeApp() {
       ui['app-open-message'].textContent='האפליקציה עדיין לא מותקנת במכשיר הזה.';
   },1200);
 }
+// Never start playback from cached metadata during a fresh grant check.
 function openPlayer(id) {
-  // Metadata already displayed during a fresh grant check must never be used
-  // to start a new playback request until revalidation succeeds.
   if(!approvalMarker||ui.grid.inert)return;
   const video = displayed.get(id);
   if (!video || (!getApprovedVideos().has(id) && !getApprovedChannels().has(video.channelId))) return;
