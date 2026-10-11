@@ -399,3 +399,25 @@ test('local provider cooldown is distinct from a real upstream block and playbac
   assert.match(page,/checkNetwork\(\)/);
   assert.ok(api.indexOf('whitelist(true,false)')>=0,'fresh playback authority remains intact');
 });
+
+test('media HTTP 403 from signed URL is distinct from NewPipe block and allows only a bounded alternative',()=>{
+  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  const gate=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/UpstreamCooldown.java'),'utf8');
+  const status=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MediaHttpFailure.java'),'utf8');
+  assert.match(activity,/MediaHttpFailure\.rejectUnsupportedMediaStatus\(status,role\)/);
+  assert.match(activity,/media-http-.*mediaFault\.status/);
+  assert.match(activity,/mediaFault\.track/);
+  assert.match(activity,/mediaHttpSwitches\+\+/);
+  assert.match(activity,/MediaHttpFailure\.canSwitch/);
+  assert.match(activity,/MediaHttpFailure\.category\(mediaFault\.status\)/);
+  assert.match(activity,/if\(source\.audio==null\)media=video/);
+  assert.match(activity,/mediaClient\(api\.downloader\.client,"audio"\)/);
+  assert.match(activity,/mediaClient\(api\.downloader\.client,"video"\)/);
+  assert.doesNotMatch(activity,/response\.close\(\);throw new IOException\("UPSTREAM_BLOCKED"\)/);
+  assert.equal((activity.match(/api\.recordFailure\(error\)/g)||[]).length,1,
+    'only the actual non-media upstream path may record a global failure');
+  assert.match(status,/priorSwitches<1/);
+  assert.match(status,/status==429\?"MEDIA_SOURCE_RATE_LIMITED"/);
+  assert.match(gate,/BLOCK_MS=60\*1000L/);
+  assert.doesNotMatch(gate,/BLOCK_MS=15\*60\*1000L/);
+});

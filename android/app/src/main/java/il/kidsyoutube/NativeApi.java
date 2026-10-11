@@ -485,6 +485,8 @@ final class NativeApi {
                 && height>0 && height<=720 && ApprovalPolicy.safeMedia(stream.getContent());
     }
     static String errorCode(Throwable error) {
+        MediaHttpFailure media=MediaHttpFailure.find(error);
+        if(media!=null)return MediaHttpFailure.category(media.status);
         for(Throwable cause=error;cause!=null;cause=cause.getCause())
             if(cause instanceof UpstreamCooldown.ActiveException)return "COOLDOWN_ACTIVE";
         for(Throwable cause=error;cause!=null;cause=cause.getCause()) {

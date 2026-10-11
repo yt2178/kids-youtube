@@ -11,7 +11,9 @@ import java.util.function.LongSupplier;
  * Package-local clock injection keeps expiry tests deterministic.
  */
 final class UpstreamCooldown {
-    static final long BLOCK_MS=15*60*1000L;
+    // Local protective throttle for actual NewPipe upstream blocks. Not a YouTube mandate.
+    // The former 15-minute global block is eliminated.
+    static final long BLOCK_MS=60*1000L;
     static final long RATE_LIMIT_MS=2*60*1000L;
 
     static final class ActiveException extends IOException {
@@ -46,7 +48,7 @@ final class UpstreamCooldown {
         recorded.put(event,Boolean.TRUE);
         long duration="UPSTREAM_BLOCKED".equals(code)?BLOCK_MS:RATE_LIMIT_MS;
         long next=clock.getAsLong()+duration;
-        // A shorter rate-limit report cannot prematurely end a real 15m block.
+        // A new upstream limit cannot shorten any existing active pause.
         untilMs=Math.max(untilMs,next);
     }
 }
