@@ -342,3 +342,18 @@ test('authorization timeout and sanitized network phases remain aligned across b
   assert.match(downloader,/headers-.*response\.code\(\)/);
   assert.doesNotMatch(downloader,/Log\.d\([^\n]*(?:url|authorizationHeader|cookie|body|password)/i);
 });
+
+test('playback setup logs authorization failures distinctly from media extraction',()=>{
+  const api=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  const playback=api.slice(api.indexOf('Playback playback(String id,long requestId)'));
+  assert.match(playback,/auth-before-extraction-start/);
+  assert.match(playback,/auth-before-extraction-failed-/);
+  assert.match(playback,/extractor-start/);
+  assert.match(playback,/auth-after-extraction-start/);
+  assert.ok(playback.indexOf('auth-before-extraction-start')<playback.indexOf('ensureExtractor()'),
+    'fresh pre-check must still happen before extractor initialization');
+  assert.match(activity,/playback-preparation-failed/);
+  assert.doesNotMatch(activity,/logPlayback\(generation,"extraction-failed",e\)/);
+  assert.match(api,/if\(text\.contains\("AUTH_SUPERSEDED"\)\)return "AUTH_SUPERSEDED"/);
+});

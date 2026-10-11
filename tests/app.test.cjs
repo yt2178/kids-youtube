@@ -1468,3 +1468,55 @@ test('actual authority error handling retries HTTP 409, 429, 5xx and DNS but not
     assert.deepEqual(clock.pending().filter(ms=>ms>=6000),[6000],code);
   }
 });
+
+test('optional partial HTTP 200 superseded by newer playback grant is not a network outage',async()=>{
+  const logs=[],url='https://www.youtube.com/watch?v='+id(1),list=url+'\n',stamp='stable';
+  const prepared={version:4,updatedAt:stamp,entries:[{
+    approval_url:url,kind:'video',item_id:id(1),title:'מוכן מראש',checked_at:new Date().toISOString()
+  }]};
+  let rejectPartial,requests=0;
+  const grant={list,version:4,updatedAt:stamp,catalogVersion:1,preparedCatalog:prepared};
+  const a=await app(list,()=>{throw Error('no optional provider request');},new Map(),{
+    nativeMode:true,logCollector:logs,
+    nativeFetchAuthorization:async trace=>{
+      requests++;
+      if(trace?.source==='partial-retry')
+        return new Promise((_,reject)=>{rejectPartial=reject;});
+      return grant;
+    }
+  });
+  assert.equal(a.run('displayed.size'),1);
+  const marker=a.run('approvalMarker');
+  // Artificial outstanding optional channel work. The failed optional
+  // authorization must not start the work or replace the approved catalog.
+  a.run('pendingChannelRetry.add('+JSON.stringify(A)+')');
+  const oldPartial=a.run('retryCatalogContents()');
+  await until(()=>typeof rejectPartial==='function');
+  const newerGrant=await a.context.KidsNative.fetchAuthorization({loadCycle:2,requestId:12,source:'playback'});
+  assert.equal(newerGrant.version,4,'newer fresh grant is accepted first');
+  rejectPartial(Object.assign(new Error('AUTH_SUPERSEDED'),{code:'AUTH_SUPERSEDED'}));
+  await oldPartial;
+  assert.equal(requests,3,'startup, old optional request, fresh playback grant');
+  assert.equal(a.run('displayed.size'),1);
+  assert.equal(a.run('approvalMarker'),marker);
+  assert.equal(a.run('authorizationRetryAttempts'),0);
+  assert.equal(a.run('catalogRetryAttempts'),0);
+  assert.equal(a.run('catalogRetryPending'),true,'optional work is deferred, not restarted');
+  assert.equal(a.elements.spinner.hidden,true);
+  assert.match(a.elements['status-text'].textContent,/הושהתה/);
+  assert.ok(logs.some(line=>line.includes('partial-retry-superseded')));
+  assert.equal(logs.some(line=>line.includes('partial-retry-auth-failed')&&line.includes('NETWORK_ERROR')),false);
+});
+test('superseded startup cannot accept old content but schedules one fresh reconciliation',async()=>{
+  const list='https://www.youtube.com/watch?v='+id(1)+'\n';
+  const a=await app(list,()=>{throw Error('unexpected provider');},new Map(),{
+    nativeMode:true,nativeFetchAuthorization:async()=>{
+      throw Object.assign(new Error('AUTH_SUPERSEDED'),{code:'AUTH_SUPERSEDED'});
+    }
+  });
+  assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.run('approvalMarker'),'');
+  assert.equal(a.run('authorizationRetryAttempts'),1);
+  assert.equal(a.elements.spinner.hidden,true);
+  assert.match(a.elements['status-text'].textContent,/אימות קודם/);
+});

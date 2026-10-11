@@ -711,7 +711,7 @@ function transientAuthorizationFailure(error){
   const code=String(error?.code||error?.message||'');
   return ['DNS_ERROR','CONNECT_ERROR','NETWORK_ERROR','NETWORK_OR_CORS',
     'TIMEOUT','RATE_LIMITED','PROVIDER_ERROR','WHITELIST_UNAVAILABLE',
-    'AUTH_CHANGED_RETRY','CATALOG_AUTH_CHANGED','BUSY'].includes(code);
+    'AUTH_CHANGED_RETRY','CATALOG_AUTH_CHANGED','AUTH_SUPERSEDED','BUSY'].includes(code);
 }
 function scheduleCatalogRetry(reason='partial'){
   // Only authorization needs long-lived recovery. Optional channel-completion
@@ -776,6 +776,15 @@ async function retryCatalogContents(){
     else {catalogRetryAttempts=0;status('');}
   }catch(e){
     if(!current())return;
+    if((e?.code||e?.message)==='AUTH_SUPERSEDED'){
+      // A newer *fresh* grant read displaced this optional request.
+      // Do not call this a network outage and do not start another
+      // partial-retry against a connection already busy with playback.
+      debugCatalog('partial-retry-superseded',{loadCycle:cycle,pending:pendingChannelRetry.size});
+      catalogRetryPending=pendingChannelRetry.size>0;
+      status('השלמת פרטי הערוץ הושהתה בזמן אימות חדש. נמשיך כשאפשר.');
+      return;
+    }
     // This is an optional content-completion retry, not the periodic authority
     // enforcement check. A transient auth transport failure here must not erase
     // a catalog that was already freshly authorized; the regular poll remains
@@ -964,7 +973,9 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
     // Any authority failure clears the local grant snapshot too.
     saveSnapshot({videos:[], channels:[]}, {});
     const retry=transientAuthorizationFailure(error);
-    status(retry?'לא הצלחנו לאמת את אישורי ההורה. ננסה להתחבר שוב אוטומטית.':
+    const superseded=(error?.code||error?.message)==='AUTH_SUPERSEDED';
+    status(superseded?'אימות קודם הוחלף בבקשה חדשה. מאמתים הרשאות מחדש…':
+      retry?'לא הצלחנו לאמת את אישורי ההורה. ננסה להתחבר שוב אוטומטית.':
       'לא ניתן לאמת את ההרשאות כרגע. בדקו את החיבור או בקשו עזרת הורה.');
     if(retry)scheduleCatalogRetry('authorization');
     else debugCatalog('retry-stopped',{reason:'non-transient-authorization'});
@@ -1013,7 +1024,12 @@ async function checkAuthorizationFreshness(source='poll'){
   }catch(e){
     if(!current()){debugCatalog('authorization-check-stale',{source,loadCycle:cycle,serial,outcome:e?.code||'failed'});return;}
     debugCatalog('authorization-check-end',{source,loadCycle:cycle,serial,outcome:e?.code||e?.message||'failed',ms:Date.now()-started});
-    failClosedAuthorization(undefined,'fresh-check-failed');
+    // A superseded read was rejected for concurrency safety, not DNS/TCP.
+    // The JS catalog cannot assume the newer grant has identical contents:
+    // fail closed and schedule one fresh reconciliation at normal backoff.
+    if((e?.code||e?.message)==='AUTH_SUPERSEDED')
+      failClosedAuthorization('בקשת אישורים חדשה החליפה את הקודמת. מאמתים מחדש…','superseded-check');
+    else failClosedAuthorization(undefined,'fresh-check-failed');
     if(transientAuthorizationFailure(e))scheduleCatalogRetry('authorization');
     else debugCatalog('retry-stopped',{reason:'non-transient-authorization'});
   }finally{authorizationCheckInFlight=false;}

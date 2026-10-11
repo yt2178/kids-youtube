@@ -423,7 +423,7 @@ public final class MainActivity extends Activity {
                     trySource(generation);
                 });
             }catch(Exception e){
-                logPlayback(generation,"extraction-failed",e);
+                logPlayback(generation,"playback-preparation-failed",e);
                 api.recordFailure(e);
                 final String code=NativeApi.errorCode(e);
                 handler.post(()->{if(!destroyed && generation==playerGeneration)unavailable(code);});
