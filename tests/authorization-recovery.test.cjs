@@ -18,11 +18,12 @@ function fixture(){
     catalogMetrics:{retries:0}
   });
   vm.runInContext(`
-    let catalogRetryTimer=null,catalogRetryAttempts=0,catalogRetryPending=false;
+    let catalogRetryTimer=null,catalogRetryAttempts=0,authorizationRetryAttempts=0,catalogRetryPending=false;
   `+implementation,context);
   return {context,scheduled,loads,debug,
     schedule:(reason='authorization')=>vm.runInContext('scheduleCatalogRetry('+JSON.stringify(reason)+')',context),
-    attempts:()=>vm.runInContext('catalogRetryAttempts',context),
+    attempts:()=>vm.runInContext('authorizationRetryAttempts',context),
+    partialAttempts:()=>vm.runInContext('catalogRetryAttempts',context),
     pending:()=>vm.runInContext('catalogRetryPending',context)};
 }
 test('DNS recovery scheduler does not stop after three failures or flood overlapping timers',()=>{
@@ -54,7 +55,7 @@ test('hidden screen defers authorization recovery instead of creating competing 
 test('fresh recovery can reset the backoff stage after a successful grant',()=>{
   const f=fixture();
   for(let i=0;i<5;i++){f.schedule();f.scheduled.shift().fn();}
-  vm.runInContext('catalogRetryAttempts=0',f.context); // loadApp resets on fresh authorization
+  vm.runInContext('authorizationRetryAttempts=0',f.context); // isolated scheduler only; real loadApp reset is tested in app.test.cjs
   f.schedule();assert.equal(f.scheduled[0].ms,6000);
 });
 
@@ -66,5 +67,5 @@ test('optional metadata retries retain their original three-attempt cap',()=>{
   }
   f.schedule('partial');
   assert.equal(f.scheduled.length,0);
-  assert.equal(f.attempts(),3);
+  assert.equal(f.partialAttempts(),3);
 });

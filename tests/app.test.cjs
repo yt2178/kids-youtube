@@ -50,7 +50,7 @@ async function app(config=empty,api=()=>json({videos:[],continuation:null}),stor
   }
   const listeners={};
   const history={state:null,pushState(state){this.state=state;},replaceState(state){this.state=state;},back(){this.state=null;}};
-  const context=vm.createContext({URL,AbortController,Response,setTimeout:options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout,Date,Map,Set,Promise,console:options.logCollector?{log:(...args)=>options.logCollector.push(args.map(String).join(' '))}:console,history,
+  const context=vm.createContext({URL,AbortController,Response,setTimeout:options.clock ? options.clock.setTimeout : options.timerCap ? ((fn,ms)=>setTimeout(fn,Math.min(ms,options.timerCap))) : setTimeout,clearTimeout:options.clock ? options.clock.clearTimeout : clearTimeout,Date,Map,Set,Promise,console:options.logCollector?{log:(...args)=>options.logCollector.push(args.map(String).join(' '))}:console,history,
     navigator:{},scrollY:0,scrollTo(position){this.scrollY=position.top;},location:{href:options.href||'https://example.test/kids-youtube/',origin:new URL(options.href||'https://example.test/kids-youtube/').origin},document,
     localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>{if(options.noStorage)throw new Error('quota');store.set(k,v);}},
     fetch:async(url,opts)=>{calls.push({url:String(url),opts});const target=String(url);const raw=typeof config==='string'?config:JSON.stringify(config);if(target.includes('/functions/v1/kids-youtube?action=list'))return options.listFetch?options.listFetch({url:target,opts,calls,raw}):options.offline?fail():json({list:raw,...(options.sharedCatalog?{catalogVersion:1,version:options.grantVersion??options.sharedCatalog.version??7,updatedAt:options.sharedCatalog.updatedAt??'stable'}:{})});if(target.includes('/functions/v1/kids-youtube?action=catalog'))return options.catalogFetch?options.catalogFetch({url:target,opts,calls}):json(options.sharedCatalog);if(target==='./videos.txt')return options.offline?fail():json(config);return api(target,opts);},
@@ -998,7 +998,7 @@ test('real failed fresh poll fails closed, rejects prior cards and schedules a b
   await a.run("checkAuthorizationFreshness('poll')");
   assert.equal(a.run('displayed.size'),0);
   assert.equal(a.run('approvalMarker'),'');
-  assert.equal(a.run('catalogRetryAttempts')>=1,true);
+  assert.equal(a.run('authorizationRetryAttempts')>=1,true);
 });
 test('provider page failure after successful grant verification cannot erase 17 prepared cards',async()=>{
   const C='UCV6xoqUxJzkWwCbDmEwMSYw',channel='https://www.youtube.com/channel/'+C;
@@ -1288,11 +1288,11 @@ test('late native poll fails closed after successful startup, then a fresh grant
   await a.run("checkAuthorizationFreshness('poll')");
   assert.equal(a.run('displayed.size'),0,'failed periodic authority must hide every card');
   assert.equal(a.run('approvalMarker'),'','old grant must not remain usable');
-  assert.equal(a.run('catalogRetryAttempts'),1,'recovery is scheduled once with bounded backoff');
+  assert.equal(a.run('authorizationRetryAttempts'),1,'recovery is scheduled once with bounded backoff');
   assert.equal(a.elements.spinner.hidden,true,'no endless loading spinner on failure');
   await a.run("loadApp({trigger:'test-recovery'})");
   assert.equal(a.run('displayed.size'),1,'recovery requires another successful fresh grant');
-  assert.equal(a.run('catalogRetryAttempts'),0);
+  assert.equal(a.run('authorizationRetryAttempts'),0);
   assert.equal(calls,3,'startup + failed poll + recovery; no hidden extra authority calls');
   assert.equal(a.calls.filter(x=>x.url.includes('action=list')).length,0);
 });
@@ -1340,7 +1340,7 @@ test('native 409-equivalent NETWORK_ERROR is bounded, fail-closed and recoverabl
   assert.equal(a.run('displayed.size'),0);
   assert.equal(a.run('authorizationCheckInFlight'),false);
   assert.equal(calls,2,'failure does not cause an immediate unbounded network loop');
-  assert.ok(a.run('catalogRetryAttempts')>=1&&a.run('catalogRetryAttempts')<=3);
+  assert.ok(a.run('authorizationRetryAttempts')>=1&&a.run('authorizationRetryAttempts')<=3);
   await a.run("loadApp({trigger:'test-409-recovery'})");
   assert.equal(a.run('displayed.size'),1);
   assert.equal(calls,3);
@@ -1372,4 +1372,99 @@ test('app sends the same load-cycle and request trace to native for startup and 
       line.includes('"loadCycle":'+trace.loadCycle)));
   }
   assert.equal(new Set(traces.map(t=>t.requestId)).size,3);
+});
+
+function controlledTimers(){
+  const scheduled=new Map();let current=0,next=0;
+  return {
+    setTimeout(fn,ms){const id=++next;scheduled.set(id,{fn,at:current+Math.max(0,ms)});return id;},
+    clearTimeout(id){scheduled.delete(id);},
+    pending(){return [...scheduled.values()].map(t=>t.at-current).sort((a,b)=>a-b);},
+    async advance(ms){
+      const target=current+ms;
+      for(let ticks=0;ticks<100;ticks++){
+        const ready=[...scheduled.entries()].filter(([_,t])=>t.at<=target)
+          .sort((a,b)=>a[1].at-b[1].at);
+        if(!ready.length)break;
+        const [id,task]=ready[0];scheduled.delete(id);current=task.at;
+        task.fn();
+        // Allow actual loadApp and native bridge promises to progress.
+        await new Promise(resolve=>setImmediate(resolve));
+      }
+      current=target;
+    }
+  };
+}
+test('real loadApp automatically recovers from four DNS failures and stalled headers on same app state',async()=>{
+  const clock=controlledTimers(),events=[];
+  const url='https://www.youtube.com/watch?v='+id(1),list=url+'\n',stamp='stable';
+  const prepared={version:7,updatedAt:stamp,entries:[
+    {approval_url:url,kind:'video',item_id:id(1),title:'מאושר טרי',checked_at:new Date().toISOString()}
+  ]};
+  let cycles=0,wireAttempts=0,dnsCalls=0,httpArrivals=0;
+  const a=await app(list,()=>{throw Error('no NewPipe metadata needed');},new Map(),{
+    clock,nativeMode:true,logCollector:events,
+    nativeFetchAuthorization:async()=>{
+      cycles++;
+      if(cycles<=2){
+        // A native scoped grant call tries DNS at most twice.
+        wireAttempts+=2;dnsCalls+=2;
+        throw Object.assign(new Error('DNS_ERROR'),{code:'DNS_ERROR'});
+      }
+      wireAttempts++;dnsCalls++;httpArrivals++;
+      if(cycles===3)throw Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'});
+      return {list,version:7,updatedAt:stamp,catalogVersion:1,preparedCatalog:prepared};
+    }
+  });
+  assert.equal(cycles,1);assert.equal(a.run('displayed.size'),0);
+  assert.equal(a.run('approvalMarker'),'');
+  assert.deepEqual(clock.pending().filter(ms=>ms>=6000),[6000]);
+  for(const delay of [6000,18000,45000]){
+    await clock.advance(delay);
+    await until(()=>!a.run('loading'));
+  }
+  assert.equal(cycles,4);
+  assert.equal(wireAttempts,6,'4 DNS lookups + timed-out HTTP + successful HTTP');
+  assert.equal(dnsCalls,6);assert.equal(httpArrivals,2);
+  assert.equal(a.run('displayed.size'),1);
+  assert.ok(a.run('approvalMarker').includes(list));
+  assert.equal(a.run('authorizationRetryAttempts'),0);
+  assert.equal(a.run('catalogRetryAttempts'),0);
+  assert.equal(a.elements.spinner.hidden,true);
+  assert.deepEqual(clock.pending(),[],'success must actually cancel timers');
+  assert.deepEqual(events.filter(x=>x.startsWith('KidsCatalog load-start')).length,4);
+  await clock.advance(600000); // No stale auto reload when still in foreground
+  assert.equal(cycles,4);
+});
+test('actual loadApp stops automatic authority retries for permanent errors and valid empty list',async()=>{
+  const codes=['AUTH_DENIED','TLS_ERROR','INVALID_AUTH_RESPONSE','REQUEST_ERROR','FORBIDDEN'];
+  for(const code of codes){
+    const clock=controlledTimers();let count=0;
+    const a=await app('',()=>json({videos:[]}),new Map(),{
+      clock,nativeMode:true,nativeFetchAuthorization:async()=>{count++;
+        throw Object.assign(new Error(code),{code});}
+    });
+    assert.equal(count,1,code);assert.equal(a.run('displayed.size'),0);
+    assert.equal(a.run('approvalMarker'),'');assert.deepEqual(clock.pending(),[],code);
+    await clock.advance(600000);assert.equal(count,1,code);
+  }
+  const clock=controlledTimers();let calls=0;
+  const ok=await app('',()=>json({videos:[]}),new Map(),{
+    clock,nativeMode:true,nativeFetchAuthorization:async()=>{calls++;
+      return {list:'',version:1,updatedAt:'empty-is-valid',catalogVersion:1};}
+  });
+  assert.equal(calls,1);
+  assert.equal(ok.run('authorizationRetryAttempts'),0);
+  assert.equal(ok.run('loadError'),false);
+  assert.deepEqual(clock.pending(),[]);
+});
+test('actual authority error handling retries HTTP 409, 429, 5xx and DNS but not 401/403',async()=>{
+  for(const code of ['AUTH_CHANGED_RETRY','RATE_LIMITED','NETWORK_ERROR','DNS_ERROR','CONNECT_ERROR','TIMEOUT','PROVIDER_ERROR']){
+    const clock=controlledTimers();
+    const a=await app('',()=>json({videos:[]}),new Map(),{
+      clock,nativeMode:true,nativeFetchAuthorization:async()=>{throw Object.assign(new Error(code),{code});}
+    });
+    assert.equal(a.run('authorizationRetryAttempts'),1,code);
+    assert.deepEqual(clock.pending().filter(ms=>ms>=6000),[6000],code);
+  }
 });

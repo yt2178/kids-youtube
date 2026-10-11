@@ -96,7 +96,8 @@ const pendingChannelRetry=new Set();
 let debugRequestSerial=0;
 let pendingOnlineRefresh = false;
 let catalogRetryTimer = null;
-let catalogRetryAttempts = 0;
+let catalogRetryAttempts = 0; // optional display completion only
+let authorizationRetryAttempts = 0; // fresh grants only
 let catalogRetryPending = false;
 const catalogMetrics = {startedAt:0,authorizationMs:0,metadataMs:0,channelsMs:0,firstUsefulMs:0,completedMs:0,requests:0,providerCalls:0,renderCalls:0,displayCacheHits:0,channelCacheHits:0,retries:0};
 function debugCatalog(event,details={}){
@@ -706,16 +707,25 @@ async function parallelMap(items, worker) {
     while (index < items.length) { const item = items[index++]; await worker(item); }
   }));
 }
+function transientAuthorizationFailure(error){
+  const code=String(error?.code||error?.message||'');
+  return ['DNS_ERROR','CONNECT_ERROR','NETWORK_ERROR','NETWORK_OR_CORS',
+    'TIMEOUT','RATE_LIMITED','PROVIDER_ERROR','WHITELIST_UNAVAILABLE',
+    'AUTH_CHANGED_RETRY','CATALOG_AUTH_CHANGED','BUSY'].includes(code);
+}
 function scheduleCatalogRetry(reason='partial'){
   // Only authorization needs long-lived recovery. Optional channel-completion
   // attempts keep their previous three-try cap to avoid excess provider traffic.
   if(catalogRetryTimer || (reason==='partial'&&catalogRetryAttempts>=3))return;
   const steps=reason==='authorization'?[6000,18000,45000,90000,180000]:
     [35000,90000,180000];
-  const stage=Math.min(catalogRetryAttempts,steps.length-1);
-  const delay=steps[stage];
-  catalogRetryAttempts=Math.min(catalogRetryAttempts+1,steps.length);
-  debugCatalog('retry-scheduled',{reason,attempt:catalogRetryAttempts,delayMs:delay});
+
+  const isGrant=reason==='authorization';
+  const count=isGrant?authorizationRetryAttempts:catalogRetryAttempts;
+  const stage=Math.min(count,steps.length-1),delay=steps[stage];
+  if(isGrant)authorizationRetryAttempts=Math.min(count+1,steps.length);
+  else catalogRetryAttempts=Math.min(count+1,steps.length);
+  debugCatalog('retry-scheduled',{reason,attempt:isGrant?authorizationRetryAttempts:catalogRetryAttempts,delayMs:delay});
   catalogRetryTimer=setTimeout(()=>{
     catalogRetryTimer=null;
     if(document.hidden||playback||loading||paginationBusy){
@@ -816,6 +826,9 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
     catalogMetrics.authorizationMs=Date.now()-startedAt;
     debugCatalog('authorization-ok',{loadCycle:thisCycle,ms:catalogMetrics.authorizationMs,version:remote&&remote.version,catalogVersion:remote&&remote.catalogVersion});
     if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
+    // Successful fresh authority resets ONLY authority backoff, even when
+    // optional catalog completion still has outstanding work.
+    authorizationRetryAttempts=0;
     raw = remote.list;
     approvalMarker=String(remote.updatedAt||'')+'\0'+raw;
     let shared={records:Object.create(null),lists:Object.create(null),dates:Object.create(null),progress:Object.create(null)};
@@ -950,7 +963,11 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
     activeLinkRecords = Object.create(null);approvalMarker='';
     // Any authority failure clears the local grant snapshot too.
     saveSnapshot({videos:[], channels:[]}, {});
-    status('לא הצלחנו לאמת את אישורי ההורה כרגע. התוכן מוסתר עד שהחיבור יחזור.');scheduleCatalogRetry('authorization');
+    const retry=transientAuthorizationFailure(error);
+    status(retry?'לא הצלחנו לאמת את אישורי ההורה. ננסה להתחבר שוב אוטומטית.':
+      'לא ניתן לאמת את ההרשאות כרגע. בדקו את החיבור או בקשו עזרת הורה.');
+    if(retry)scheduleCatalogRetry('authorization');
+    else debugCatalog('retry-stopped',{reason:'non-transient-authorization'});
   } finally {
     catalogMetrics.completedMs=Date.now()-startedAt;
     loading = false; ui.grid.removeAttribute('aria-busy');
@@ -997,7 +1014,8 @@ async function checkAuthorizationFreshness(source='poll'){
     if(!current()){debugCatalog('authorization-check-stale',{source,loadCycle:cycle,serial,outcome:e?.code||'failed'});return;}
     debugCatalog('authorization-check-end',{source,loadCycle:cycle,serial,outcome:e?.code||e?.message||'failed',ms:Date.now()-started});
     failClosedAuthorization(undefined,'fresh-check-failed');
-    scheduleCatalogRetry('authorization');
+    if(transientAuthorizationFailure(e))scheduleCatalogRetry('authorization');
+    else debugCatalog('retry-stopped',{reason:'non-transient-authorization'});
   }finally{authorizationCheckInFlight=false;}
 }
 
@@ -1253,7 +1271,7 @@ document.addEventListener('touchend',()=>{
 },{passive:true});
 ui.more.addEventListener('click', loadMoreVideos);
 ui['status-retry'].addEventListener('click',()=>{if(!loading&&!paginationBusy){
-  catalogRetryAttempts=0;loadApp({trigger:'error-retry'});
+  authorizationRetryAttempts=0;loadApp({trigger:'error-retry'});
 }});
 ui.back.addEventListener('click', () => closePlayer());
 window.addEventListener('popstate', () => closePlayer(true));
@@ -1295,7 +1313,7 @@ ui.install.addEventListener('click', async () => {
 });
 window.addEventListener('appinstalled', () => { installPrompt = null; ui.install.hidden = true; });
 window.addEventListener('offline', () => {failClosedAuthorization('אין חיבור כרגע. הרשימה מוסתרת עד שאפשר יהיה לאמת מחדש את אישורי ההורה.');audit();});
-window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;catalogRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp({trigger:'online'});});
+window.addEventListener('online', () => {clearTimeout(catalogRetryTimer);catalogRetryTimer=null;catalogRetryPending=false;catalogRetryAttempts=0;authorizationRetryAttempts=0;providers.resetHealth();if(loading){pendingOnlineRefresh=true;return;}loadApp({trigger:'online'});});
 document.addEventListener('visibilitychange', () => {
   if(document.hidden||navigator.onLine===false)return;
   if(catalogRetryPending&&!loading&&!paginationBusy&&!playback){

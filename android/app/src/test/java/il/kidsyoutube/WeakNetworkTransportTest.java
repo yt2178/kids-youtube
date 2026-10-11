@@ -183,7 +183,102 @@ public final class WeakNetworkTransportTest {
             NativeApi api=new NativeApi(new ExtractorDownloader(false),
                     server.url("/?action=list&format=native").toString());
             try{api.whitelist(true,false);fail("HTTP 403 must fail closed");}
-            catch(IOException expected){assertEquals("WHITELIST_UNAVAILABLE",expected.getMessage());}
+            catch(IOException expected){assertEquals("AUTH_DENIED",expected.getMessage());}
+            assertEquals(1,server.getRequestCount());
+        }
+    }
+
+    @Test public void httpGrantFailuresKeepDistinctTemporaryAndPermanentCategories() throws Exception {
+        try(MockWebServer server=new MockWebServer()){
+            for(int code:new int[]{401,403,409,429,503,200})server.enqueue(
+                new MockResponse().setResponseCode(code).setBody(
+                    code==200?"{malformed":response(VIDEO,1,0)));
+            server.start();
+            NativeApi api=new NativeApi(new ExtractorDownloader(false),
+                    server.url("/?action=list&format=native").toString());
+            String[] expected={"AUTH_DENIED","AUTH_DENIED","AUTH_CHANGED_RETRY",
+                "RATE_LIMITED","WHITELIST_UNAVAILABLE","INVALID_AUTH_RESPONSE"};
+            for(String code:expected){
+                try{api.whitelist(true,false);fail("must not grant "+code);}
+                catch(IOException error){
+                    assertEquals(code,error.getMessage());
+                }
+            }
+            assertEquals("One call per HTTP response, no implicit repeated write or redirect",
+                6,server.getRequestCount());
+        }
+    }
+
+    @Test public void cancelledScopeDuringSlowDnsCannotCommitLateAuthorization() throws Exception {
+        try(MockWebServer server=new MockWebServer()){
+            server.enqueue(new MockResponse().setBody(response(VIDEO,9,0)));
+            server.start();
+            java.util.concurrent.CountDownLatch started=new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.CountDownLatch unblock=new java.util.concurrent.CountDownLatch(1);
+            Dns slow=name->{
+                started.countDown();
+                try{unblock.await(3,TimeUnit.SECONDS);}catch(InterruptedException ex){
+                    Thread.currentThread().interrupt();
+                    throw new UnknownHostException("cancelled resolver");
+                }
+                return Dns.SYSTEM.lookup(name);
+            };
+            NativeApi api=new NativeApi(new ExtractorDownloader(false,slow),
+                    server.url("/?action=list&format=native").toString());
+            RequestScope scope=new RequestScope(450,"88",1,2);
+            java.util.concurrent.ExecutorService worker=
+                java.util.concurrent.Executors.newSingleThreadExecutor();
+            try{
+                java.util.concurrent.Future<String> pending=worker.submit(()->{
+                    scope.enter();
+                    try{return api.whitelist(true,false);}
+                    finally{scope.close();}
+                });
+                assertTrue(started.await(2,TimeUnit.SECONDS));
+                scope.cancel();
+                unblock.countDown();
+                try{pending.get(3,TimeUnit.SECONDS);fail("cancelled DNS must not grant");}
+                catch(java.util.concurrent.ExecutionException expected){
+                    assertTrue(expected.getCause() instanceof IOException);
+                }
+                try{api.sharedCatalog(new org.json.JSONObject().put("version",9)
+                    .put("updatedAt","2026-10-11T00:00:00Z"));
+                    fail("cancelled request must not commit grant document");
+                }catch(IOException expected){assertTrue(expected.getMessage().contains("CATALOG_AUTH_CHANGED"));}
+            }finally{
+                scope.cancel();unblock.countDown();worker.shutdownNow();
+                assertTrue(worker.awaitTermination(4,TimeUnit.SECONDS));
+            }
+        }
+    }
+
+    @Test public void scopedRetryUsesOnlyRemainingDeadlineIncludingDnsAndBackoff() throws Exception {
+        try(MockWebServer server=new MockWebServer()){
+            server.enqueue(new MockResponse().setHeadersDelay(650,TimeUnit.MILLISECONDS)
+                    .setBody(response(VIDEO,1,0)));
+            server.start();
+            AtomicInteger resolutions=new AtomicInteger();
+            Dns flaky=name->{
+                if(resolutions.incrementAndGet()==1){
+                    try{Thread.sleep(230);}catch(InterruptedException interrupted){
+                        Thread.currentThread().interrupt();
+                    }
+                    throw new UnknownHostException("first lookup slow");
+                }
+                return Dns.SYSTEM.lookup(name);
+            };
+            NativeApi api=new NativeApi(new ExtractorDownloader(false,flaky,2000),
+                    server.url("/?action=list&format=native").toString());
+            RequestScope scope=new RequestScope(900,"12",4,5);
+            long started=System.nanoTime();scope.enter();
+            try{
+                try{api.whitelist(true,false);fail("budget exhausted before headers");}
+                catch(IOException expected){}
+            }finally{scope.close();}
+            long elapsed=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
+            assertTrue("call must include DNS, 350ms pause, headers wait "+elapsed,elapsed>=550);
+            assertTrue("whole scope must bound the transfer "+elapsed,elapsed<1900);
+            assertEquals(2,resolutions.get());
             assertEquals(1,server.getRequestCount());
         }
     }

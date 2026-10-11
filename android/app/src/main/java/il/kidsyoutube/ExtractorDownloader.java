@@ -40,8 +40,11 @@ final class ExtractorDownloader extends Downloader {
         private final long started=android.os.SystemClock.elapsedRealtime();
         private final String kind;
         private final String trace;
+        private final int attempt;
         NetworkTrace(Call call){
             String tag=call.request().tag(String.class);
+            Integer taggedAttempt=call.request().tag(Integer.class);
+            attempt=taggedAttempt==null?0:taggedAttempt;
             kind="authorization".equals(tag)?"authorization":
                 "catalog".equals(tag)?"catalog":"extractor";
             // OkHttp's event listener is constructed when newCall() runs on
@@ -51,7 +54,7 @@ final class ExtractorDownloader extends Downloader {
         }
         private void mark(String phase){
             android.util.Log.d("KidsNetwork","id="+id+" kind="+kind+trace+" phase="+phase+
-                    " elapsedMs="+(android.os.SystemClock.elapsedRealtime()-started));
+                    " attempt="+attempt+" elapsedMs="+(android.os.SystemClock.elapsedRealtime()-started));
         }
         @Override public void callStart(Call call){mark("call-start");}
         @Override public void dnsStart(Call call,String name){mark("dns-start");}
@@ -60,6 +63,11 @@ final class ExtractorDownloader extends Downloader {
         @Override public void connectEnd(Call call,java.net.InetSocketAddress address,java.net.Proxy proxy,okhttp3.Protocol protocol){mark("tcp-end");}
         @Override public void secureConnectStart(Call call){mark("tls-start");}
         @Override public void secureConnectEnd(Call call,Handshake handshake){mark("tls-end");}
+        // Sending request headers does not prove the server processed them.
+        @Override public void requestHeadersEnd(Call call,okhttp3.Request request){mark("request-headers-sent");}
+        // responseHeadersStart means waiting to READ them, not that HTTP headers arrived.
+        @Override public void responseHeadersStart(Call call){mark("response-headers-wait-start");}
+        // Only responseHeadersEnd proves the status and headers were received.
         @Override public void responseHeadersEnd(Call call,okhttp3.Response response){mark("headers-"+response.code());}
         @Override public void responseBodyEnd(Call call,long byteCount){mark("body-end");}
         @Override public void callEnd(Call call){mark("call-end");}

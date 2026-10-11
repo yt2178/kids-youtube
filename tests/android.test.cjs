@@ -314,3 +314,31 @@ test('ADB capture refuses ambiguous targets and requires evidence from two perio
   assert.match(ps,/KidsPlayback:D/);
   assert.doesNotMatch(ps,/logcat\s+-c|pm clear|pm grant|pm revoke|settings put/);
 });
+
+test('native authorization bridge resolves exactly once despite duplicate and late callbacks',async()=>{
+  const {c,messages,reply}=context();
+  let settled=0;
+  const pending=c.KidsNative.fetchAuthorization({loadCycle:7,requestId:4,source:'load'})
+    .then(value=>{settled++;return value;},error=>{settled++;throw error;});
+  assert.equal(messages.length,1);
+  const response={list:'',version:3,updatedAt:'fresh',catalogVersion:1};
+  reply({id:messages[0].id,data:response});
+  reply({id:messages[0].id,error:'TIMEOUT'});
+  const result=await pending;
+  assert.equal(result.version,3);
+  assert.equal(settled,1);
+  assert.equal(messages.length,1,'successful call must not emit late cancel');
+});
+test('authorization timeout and sanitized network phases remain aligned across bridge and OkHttp',()=>{
+  const activity=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/MainActivity.java'),'utf8');
+  const native=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/NativeApi.java'),'utf8');
+  const downloader=fs.readFileSync(path.join(root,'android/app/src/main/java/il/kidsyoutube/ExtractorDownloader.java'),'utf8');
+  assert.match(adapter,/undefined,36000/); // JS bridge
+  assert.match(activity,/\?34000:14000/); // native task and queue budget
+  assert.match(native,/Math\.min\(32000,remaining\)/); // 32s or remaining total budget
+  assert.match(native,/tag\(Integer\.class,attempt\)/);
+  assert.match(downloader,/request-headers-sent/);
+  assert.match(downloader,/response-headers-wait-start/);
+  assert.match(downloader,/headers-.*response\.code\(\)/);
+  assert.doesNotMatch(downloader,/Log\.d\([^\n]*(?:url|authorizationHeader|cookie|body|password)/i);
+});
