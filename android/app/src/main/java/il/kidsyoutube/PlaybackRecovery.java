@@ -18,19 +18,23 @@ final class PlaybackRecovery {
 
     static boolean transientFailure(Throwable failure){
         // Classify the actual exception chain, not a generic UI NETWORK_ERROR.
+        boolean transientError=false;
         for(Throwable cause=failure;cause!=null;cause=cause.getCause()){
+            // Certificate/TLS errors veto every other classification, even if a
+            // wrapper supplies a misleading temporary-network message.
             if(cause instanceof javax.net.ssl.SSLException)return false;
             if(cause instanceof UnknownHostException
                     || cause instanceof ConnectException
                     || cause instanceof NoRouteToHostException
                     || cause instanceof SocketTimeoutException
-                    || cause instanceof SocketException)return true;
+                    || cause instanceof SocketException)transientError=true;
             if(cause instanceof IOException){
                 String reason=cause.getMessage();
-                if("AUTH_CHANGED_RETRY".equals(reason)||"AUTH_SUPERSEDED".equals(reason))return true;
+                if("AUTH_CHANGED_RETRY".equals(reason)||"AUTH_SUPERSEDED".equals(reason))
+                    transientError=true;
             }
         }
-        return false;
+        return transientError;
     }
 
     static <T> T run(RequestScope scope,Callable<T> operation,RetryNotice status) throws Exception{
