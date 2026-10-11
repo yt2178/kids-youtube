@@ -12,7 +12,7 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
   assert.match(html,/font-src 'self';/);assert.doesNotMatch(html,/web-share|clipboard-write/);assert.doesNotMatch(html,/fonts\.gstatic\.com|https:\/\/\*\./);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
-  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011search2/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
+  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011search3/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
@@ -287,7 +287,7 @@ test('leaving management during metadata loading prevents hidden iframe from app
   assert.equal(a.elements.preview.hidden,true);
 });
 
-test('YouTube search opens YouTube and adds through authenticated mutation exactly once',async()=>{
+test('parent search opens the official embedded YouTube player and adds once',async()=>{
  let finish,mutations=0;
  const app=await parentApp(async(action,options)=>{
   if(action==='list')return {list:'',version:7};if(action==='status')return {authenticated:true};
@@ -297,7 +297,18 @@ test('YouTube search opens YouTube and adds through authenticated mutation exact
  },{local:new Map([['kidsParentToken','parent']])});
  app.elements['search-query'].value='שיר';await app.fire('search-submit');
  const row=app.elements['search-results'].children[0],info=row.children[1],actions=info.children[2],add=actions.children[1];
- assert.equal(info.children[0].textContent,'<b>Song</b>');assert.equal(actions.children[0].href,video);assert.equal(actions.children[0].rel,'noopener noreferrer');
+ assert.equal(info.children[0].textContent,'<b>Song</b>');
+ assert.equal(info.children[0].type,'button');
+ await info.children[0].listeners.click[0]();
+ assert.equal(app.elements['catalog-player-dialog'].open,true);
+ assert.match(app.elements['catalog-player'].src,/youtube\\.com\\/embed\\/mVTlbvQ_010/);
+ assert.equal(app.elements['catalog-player-title'].textContent,'<b>Song</b>');
+ assert.equal(app.elements['catalog-player-loading'].hidden,false);
+ await app.fire('catalog-player','load');assert.equal(app.elements['catalog-player-loading'].hidden,true);
+ await app.fire('catalog-player-close');assert.equal(app.elements['catalog-player'].src,'');
+ await actions.children[0].listeners.click[0]();
+ assert.equal(app.elements['catalog-player-dialog'].open,true);
+ await app.fire('catalog-player-close');
  const first=add.listeners.click[0]();await new Promise(r=>setImmediate(r));await add.listeners.click[0]();assert.equal(mutations,1);
  finish({list:video+'\n',version:8,changed:true});await first;assert.equal(add.disabled,true);assert.equal(add.textContent,'כבר נוסף לילדים');
 });
