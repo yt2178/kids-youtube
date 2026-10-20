@@ -537,3 +537,11 @@ test('parent previews and approves a playlist source once, checks membership and
  assert.match(row.children.at(-1).textContent,/4 סרטונים/);
  await row.children.find(x=>x.textContent==='הסר').listeners.click[0]();await a.elements['confirm-remove'].listeners.click[0]();assert.equal(removes,1);assert.equal(stored,'');
 });
+
+test('parent viewing surfaces clearly warn about ads',()=>{
+ const html=fs.readFileSync('parents.html','utf8');
+ assert.equal((html.match(/class="official-player-notice"/g)||[]).length,2);
+ assert.match(html,/אין אפשרות להציג את הסרטון ללא פרסומות/);
+ assert.match(html,/התוכן מוגבל לסרטונים שאישרו ההורים/);
+ assert.match(html,/\\.official-player-notice\\{/);
+});
