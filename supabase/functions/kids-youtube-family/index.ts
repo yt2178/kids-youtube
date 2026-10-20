@@ -36,7 +36,7 @@ async function getUser(req:Request){
    signal:controller.signal,redirect:"error"});
   if(!res.ok)fail("UNAUTHORIZED",401);
   const user=await res.json();
-  if(!user||typeof user.id!=="string"||!/^[a-f0-9-]{36}$/i.test(user.id)||user.is_anonymous===true)
+  if(!user||!user.email_confirmed_at&&!user.confirmed_at||typeof user.id!=="string"||!/^[a-f0-9-]{36}$/i.test(user.id)||user.is_anonymous===true)
    fail("UNAUTHORIZED",401);
   return user.id as string;
  }finally{clearTimeout(timer);}
@@ -75,7 +75,7 @@ Deno.serve(async req=>{
    // independently authenticated, confirmed, non-anonymous Supabase Auth user.
    // Existing family is returned idempotently.
    const existing=await select("families","owner_id=eq."+encodeURIComponent(userId)+"&select=id&limit=1");
-   if(existing.length===1)return response({created:false,familyId:existing[0].id},200,origin);
+   if(existing.length===1){\n    // Repair a previous partial enrolment without modifying an existing list.\n    const id=existing[0].id;\n    await serviceRequest("/rest/v1/family_approvals",{method:"POST",\n     headers:{"Content-Type":"application/json","Prefer":"resolution=ignore-duplicates,return=minimal"},\n     body:JSON.stringify({family_id:id,list_text:"",version:1})});\n    return response({created:false,familyId:id},200,origin);\n   }
    const body=await parseBody(req);
    const name=typeof body.name==="string"?body.name.trim():"";
    if(name.length<1||name.length>80)fail("INVALID_NAME",400);
