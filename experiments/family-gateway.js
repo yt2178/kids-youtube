@@ -13,22 +13,24 @@ function validPrincipal(principal){
  return principal;
 }
 /**
- * Adapter methods must perform real, authoritative, same-family SQL operations.
+ * verifySession must independently authenticate the bearer session and resolve\n * family/role/revocation from authoritative server-side state, never caller JSON.\n * Adapter methods must perform real, authoritative, same-family SQL operations.
  * compareAndSwap MUST be a single conditional UPDATE ... WHERE version=? and return
  * one affected row; read/authorization must never trust a familyId from HTTP input.
  */
-function createFamilyGateway(adapter){
+function createFamilyGateway(adapter,verifySession){
  if(!adapter||typeof adapter.read!=='function'||typeof adapter.compareAndSwap!=='function')
    throw TypeError('INVALID_ADAPTER');
+ if(typeof verifySession!=='function')throw TypeError('MISSING_VERIFIER');
+ async function authenticate(session){return validPrincipal(await verifySession(session));}
  return Object.freeze({
-  async read(verifiedPrincipal){
-   const principal=validPrincipal(verifiedPrincipal);
+  async read(session){
+   const principal=await authenticate(session);
    const row=await adapter.read(principal.familyId);
    if(!row)throw failure('NOT_FOUND');
    return {list:row.list,version:row.version};
   },
-  async replace(verifiedPrincipal,{list,expectedVersion}={}){
-   const principal=validPrincipal(verifiedPrincipal);
+  async replace(session,{list,expectedVersion}={}){
+   const principal=await authenticate(session);
    if(principal.role!=='parent')throw failure('FORBIDDEN');
    if(typeof list!=='string'||list.length>1000000||
      !Number.isSafeInteger(expectedVersion)||expectedVersion<1)throw failure('INVALID_REQUEST');
@@ -38,4 +40,4 @@ function createFamilyGateway(adapter){
   }
  });
 }
-module.exports={createFamilyGateway,validPrincipal,LEGACY_ID};
+module.exports={createFamilyGateway};
