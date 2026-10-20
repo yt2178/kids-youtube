@@ -12,7 +12,7 @@ test('authorization source is live Supabase only and stale browser cache cannot 
   assert.match(app,/fetchAuthorization\('load'\)/);
   assert.match(app,/window\.KidsNative\.fetchAuthorization\(\{loadCycle,requestId,source\}\)/);
   assert.match(native,/JSONObject displayAuthorization\(\)/);
-  assert.match(edge,/const response=\{list:effective\.list,unavailablePlaylists:effective\.unavailable,version:s\.version,updatedAt:s\.updated_at,catalogVersion:1/);
+  assert.match(edge,/const response=\{list:effective\.list,playlistGroups:effective\.groups,unavailablePlaylists:effective\.unavailable,version:s\.version,updatedAt:s\.updated_at,catalogVersion:1/);
   assert.match(edge,/pinnedChannels:pins/);
   assert.match(edge,/latest\.version!==s\.version\|\|latest\.updated_at!==s\.updated_at\|\|latest\.list_text!==s\.list_text/);
   assert.doesNotMatch(app,/fetchText\('\.\/videos\.txt'|fetch\(['"]\.\/videos\.txt/);
