@@ -18,7 +18,9 @@ test('family service requires parent and uses version-constrained update',()=>{
  assert.match(fn,/expectedVersion\+1/);
  assert.match(fn,/VERSION_CONFLICT/);
  assert.match(fn,/rows\.length!==1/);
- assert.match(fn,/is_anonymous===true/);
+ assert.match(fn,/identity\.isAnonymous\|\|!identity\.confirmed/);
+ assert.match(fn,/!identity\.isAnonymous&&identity\.confirmed/);
+ assert.match(fn,/revoked_at=is\.null/);
  assert.match(fn,/email_confirmed_at/);
 });
 test('family table is additive with RLS and no client grants',()=>{
