@@ -1,0 +1,36 @@
+name: Compare NewPipe and yt-dlp (isolated metadata)
+on:
+  pull_request:
+    paths:
+      - 'tools/compare-ytdlp-readonly.py'
+      - 'android/app/src/test/java/il/kidsyoutube/ExtractorComparisonExperimentTest.java'
+      - '.github/workflows/extractor-comparison.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Install isolated yt-dlp
+        run: python -m pip install --disable-pip-version-check "yt-dlp[default]"
+      - name: Show yt-dlp metadata-only results (no URLs or payloads)
+        run: python tools/compare-ytdlp-readonly.py
+      - name: Show NewPipe metadata-only results (same IDs)
+        working-directory: android
+        env:
+          KIDS_COMPARE_EXTRACTORS: '1'
+        run: ./gradlew --no-daemon :app:testDebugUnitTest --tests il.kidsyoutube.ExtractorComparisonExperimentTest --console=plain --info | grep -E "COMPARE_NEWPIPE|BUILD SUCCESSFUL|BUILD FAILED" 
