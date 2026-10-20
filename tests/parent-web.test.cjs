@@ -510,6 +510,7 @@ test('playlist links are explicit, canonical and do not turn a watch link into a
  assert.equal(links.classify(video+'&list='+id).kind,'video');
  for(const input of ['https://youtube.com/playlist?list=WL','https://youtube.com/playlist?list=LL','https://youtube.com/playlist?list=RDabcdefghijk','https://youtube.com/playlist?list='+id+'&list='+id])assert.throws(()=>links.classify(input));
 });
+test('shared watch URL approves whole playlist when list parameter is present',()=>{const id='PL6S-FHVB7IevferUlLMPeomhONCnSgLzp';const parsed=links.classify('https://www.youtube.com/watch?v=yMTFOeNB7Hs&list='+id);assert.equal(parsed.kind,'playlist');assert.equal(parsed.url,'https://www.youtube.com/playlist?list='+id);});
 test('parent previews and approves a playlist source once, checks membership and removes the source',async()=>{
  const url='https://www.youtube.com/playlist?list=PLrfcruGtplwHxMQ6Wi2x0uVIrHF9uFcSz';
  const local=new Map([['kidsParentToken','token']]);let stored='',checks=0,adds=0,removes=0;
