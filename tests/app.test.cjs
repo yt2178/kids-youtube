@@ -88,6 +88,15 @@ test('public child CSP is exact and permits only required application origins',(
   assert.doesNotMatch(policy,/https:\/\/\*|\s\*\s|unsafe-eval|fonts\.gstatic/);
 });
 
+test('parent catalog thumbnails use alternate official host and graceful fallback',()=>{
+  const source=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  const sw=fs.readFileSync(path.join(root,'sw.js'),'utf8');
+  assert.match(source,/PARENT_CATALOG \? 'i\.ytimg\.com' : 'img\.youtube\.com'/);
+  assert.match(source,/fallbackTried = true/);
+  assert.match(source,/data-image-unavailable/);
+  assert.match(sw,/response\.type !== 'opaque'/);
+  assert.doesNotMatch(sw,/response\.ok\|\|response\.type==='opaque'/);
+});
 test('local JS and service worker parse, no third-party scripts/frameworks',()=>{
   scripts.forEach(s=>new vm.Script(s));new vm.Script(fs.readFileSync(path.join(root,'sw.js'),'utf8'));
   assert.equal(scripts.length,2);const external=[...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m=>m[1]);assert.equal(external.length,2);assert.match(external[0],/^\.\/providers\.js\?v=\d+[a-z]$/);assert.match(external[1],/^\.\/app\.js\?v=\d+[a-z]$/);new vm.Script(providerScript);
