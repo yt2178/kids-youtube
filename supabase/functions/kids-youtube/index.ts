@@ -109,6 +109,7 @@ function canonicalize(input:string){
     if(parts[0]==="watch"&&parts.length===1&&u.searchParams.getAll("v").length===1)id=u.searchParams.get("v");
     else if(["shorts","live","embed"].includes(parts[0])&&parts.length===2)id=parts[1];
     else{
+      if(parts[0]==="playlist"&&parts.length===1&&u.searchParams.getAll("list").length===1&&PLAYLIST_ID.test(u.searchParams.get("list")||""))return "https://www.youtube.com/playlist?list="+u.searchParams.get("list");
       const tail=["videos","shorts","streams","featured"];
       if(parts[0]==="channel"&&cid.test(parts[1]||"")&&(parts.length===2||(parts.length===3&&tail.includes(parts[2]))))return "https://www.youtube.com/channel/"+parts[1];
       let alias:string|null=null;
@@ -124,6 +125,80 @@ function canonicalize(input:string){
   if(!vid.test(id||""))throw Error("INVALID_LINK");
   return "https://www.youtube.com/watch?v="+id;
 }
+// Playlist membership is authority, not display cache. Fetch all pages afresh
+// for each authorization; never persist members as individual parent grants.
+const PLAYLIST_ID=/^PL[A-Za-z0-9_-]{10,98}$/;
+const MAX_PLAYLISTS=3, MAX_PLAYLIST_ITEMS=500, PLAYLIST_TIMEOUT_MS=9000;
+function playlistId(url:string){const u=new URL(url);return u.pathname==="/playlist"?u.searchParams.get("list"):null;}
+async function loadPlaylistLibrary(){return import("npm:youtubei.js@18.1.0/web");}
+async function readPlaylist(id:string){
+  if(!PLAYLIST_ID.test(id))throw Error("INVALID_PLAYLIST");
+  return timed(PLAYLIST_TIMEOUT_MS,async signal=>{
+    const {Innertube,Log}=await loadPlaylistLibrary();Log.setLevel(Log.Level.NONE);
+    const youtubeFetch=async(input:any,init:any={})=>{
+      if(signal.aborted)throw Error("PLAYLIST_UNAVAILABLE");
+      const target=new URL(typeof input==="string"?input:input.url||String(input));
+      if(target.protocol!=="https:"||target.hostname!=="www.youtube.com"||target.port||target.username||target.password)throw Error("PLAYLIST_TARGET_DENIED");
+      const response=await fetch(input,{...init,signal,redirect:"error"});
+      if(!response.ok){await response.body?.cancel();throw Error("PLAYLIST_UNAVAILABLE");}
+      const text=await readBounded(response.body,MAX_YOUTUBE_HTML_BYTES);
+      return new Response(text,{status:response.status,headers:{"Content-Type":response.headers.get("Content-Type")||"application/json"}});
+    };
+    const client=await Innertube.create({lang:"he",location:"IL",retrieve_player:false,enable_session_cache:false,fail_fast:true,fetch:youtubeFetch});
+    let page=await client.getPlaylist(id);
+    const title=safeNote(page.info?.title)||"פלייליסט YouTube",author=safeNote(page.info?.author?.name);
+    const members=new Map<string,{id:string,title:string}>();let scanned=0;
+    for(let pages=0;;pages++){
+      // items excludes recommended videos; videos can include recommendations.
+      if(!Array.isArray(page.items))throw Error("PLAYLIST_INVALID");
+      for(const node of page.items){
+        const item:any=node;
+        if(++scanned>MAX_PLAYLIST_ITEMS)throw Error("PLAYLIST_TOO_LARGE");
+        if(item.is_playable===false)continue;
+        const videoId=String(item.id||item.content_id||"");
+        if(!/^[A-Za-z0-9_-]{11}$/.test(videoId)||item.content_type&&item.content_type!=="VIDEO")throw Error("PLAYLIST_INVALID");
+        // LockupView must link to THIS playlist, not an adjacent recommendation.
+        const endpoint=item.renderer_context?.command_context?.on_tap?.payload;
+        if(item.type==="LockupView"&&endpoint?.playlistId!==id)throw Error("PLAYLIST_INVALID");
+        members.set(videoId,{id:videoId,title:safeNote(item.title||item.metadata?.title).slice(0,160)||"סרטון מאושר"});
+      }
+      if(!page.has_continuation)break;
+      if(pages>=9)throw Error("PLAYLIST_TOO_LARGE");
+      page=await page.getContinuation();
+    }
+    if(signal.aborted)throw Error("PLAYLIST_UNAVAILABLE");
+    return {title,author,videos:[...members.values()]};
+  });
+}
+function playlistSources(raw:string){return [...existingUrls(raw)].filter(url=>playlistId(url));}
+function checkPlaylistLimit(raw:string){if(playlistSources(raw).length>MAX_PLAYLISTS)throw Error("PLAYLIST_LIMIT");}
+async function effectiveApprovals(raw:string){
+  const sources=playlistSources(raw);checkPlaylistLimit(raw);
+  if(!sources.length)return {list:raw,rows:[] as any[],unavailable:[] as string[]};
+  const grants=new Map<string,string>();
+  for(const line of raw.split(/\r?\n/)){
+    const value=line.trim();if(!value||value.startsWith("//"))continue;
+    try{const entry=splitEntry(value);if(!playlistId(entry.url))grants.set(entry.url,entry.note);}catch{}
+  }
+  const rows:any[]=[],unavailable:string[]=[];
+  const results=await Promise.all(sources.map(async url=>{
+    try{return {url,result:await readPlaylist(playlistId(url)!)};}catch{return {url,result:null};}
+  }));
+  for(const {url,result} of results){
+    if(!result){unavailable.push(url);continue;} // No stale playlist-only grants.
+    const checked=new Date().toISOString();
+    for(const video of result.videos){
+      const videoUrl="https://www.youtube.com/watch?v="+video.id;
+      if(!grants.has(videoUrl))grants.set(videoUrl,video.title);
+      rows.push({approval_url:videoUrl,kind:"video",item_id:video.id,title:video.title,
+        thumbnail:"https://img.youtube.com/vi/"+video.id+"/mqdefault.jpg",checked_at:checked,published:0});
+    }
+  }
+  return {list:[...grants].map(([url,note])=>url+(note?" // "+note:"")).join("\n")+(grants.size?"\n":""),rows,unavailable};
+}
+function mergeDisplayRows(rows:any[],extra:any[]){return [...new Map([...extra,...rows].map(row=>[row.approval_url,row])).values()].slice(0,500);}
+async function unchangedState(s:any){const latest=await state();return latest.version===s.version&&latest.updated_at===s.updated_at&&latest.list_text===s.list_text;}
+
 function share(text:string){
   if(typeof text!=="string"||text.length>20000)throw Error("INVALID_LINK");
   const found=new Set<string>();
@@ -180,7 +255,7 @@ function providerTarget(raw:string){
   }
   if(u.pathname==="/api/v1/resolveurl"&&q.length===1&&q[0]==="url"){
     const approved=canonicalize(u.searchParams.get("url")||"");
-    if(new URL(approved).searchParams.has("v"))throw Error("INVALID_PROVIDER");
+    if(new URL(approved).searchParams.has("v")||playlistId(approved))throw Error("INVALID_PROVIDER");
     u.searchParams.set("url",approved);return u;
   }
   throw Error("INVALID_PROVIDER");
@@ -222,6 +297,9 @@ function validateList(raw:unknown){
 }
 async function metadata(input:string){
   const url=canonicalize(input), u=new URL(url), id=u.searchParams.get("v");
+  if(playlistId(url)){
+    const p=await readPlaylist(playlistId(url)!);return {url,kind:"playlist",id:playlistId(url),title:p.title,author:p.author,count:p.videos.length,thumbnail:p.videos.length?"https://img.youtube.com/vi/"+p.videos[0].id+"/mqdefault.jpg":""};
+  }
   if(id){
     const endpoint="https://www.youtube.com/oembed?url="+encodeURIComponent(url)+"&format=json";
     try{
@@ -375,6 +453,7 @@ async function youtubeFeedPage(channelId:string,deadline:number){
   }catch{return null;}
 }
 async function prepareCatalog(approvalUrl:string,requestedContinuation?:string|null){
+  if(playlistId(approvalUrl))return {prepared:false,reason:"FRESH_PLAYLIST"};
   const deadline=Date.now()+PREPARE_TIMEOUT_MS;
   const current=await state();
   if(!approvedCatalogUrls(current.list_text).has(approvalUrl))throw Error("NOT_APPROVED");
@@ -444,17 +523,21 @@ Deno.serve(async(req)=>{
       return proxyProvider(url.searchParams.get("target")||"",origin);
     }
     if(req.method==="GET"&&action==="catalog"){
-      const allowed=approvedCatalogUrls(s.list_text);
+      const effective=await effectiveApprovals(s.list_text);
+      const allowed=approvedCatalogUrls(effective.list);
       try{
         const entries=await catalogRows(allowed);
-        const ready=await catalogReadThrough(entries,s);
+        const ready=mergeDisplayRows(await catalogReadThrough(entries,s),effective.rows);
+        if(!await unchangedState(s))return json({error:"AUTH_CHANGED_RETRY"},409,origin);
         return json({version:s.version,updatedAt:s.updated_at,entries:ready},200,origin);
       }catch{return json({version:s.version,updatedAt:s.updated_at,entries:[],available:false},200,origin);}
     }
     if(req.method==="GET"&&action==="list"){
       const format=url.searchParams.get("format");
-      if(format==="text")return new Response(s.list_text,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}});
-      if(format==="native"){
+      const effective=["native","effective","text"].includes(format||"")?await effectiveApprovals(s.list_text):{list:s.list_text,rows:[],unavailable:[]};
+      if(format!=="native"&&format!=="effective"&&format&& !await unchangedState(s))return json({error:"AUTH_CHANGED_RETRY"},409,origin);
+      if(format==="text")return new Response(effective.list,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}});
+      if(format==="native"||format==="effective"){
         // detail=grants retains fresh parent grants and server-pinned @handles,
         // but deliberately omits display metadata on polls and playback checks.
         const grantsOnly=url.searchParams.get("detail")==="grants";
@@ -463,11 +546,11 @@ Deno.serve(async(req)=>{
         const pins:any[]=[];
         let preparedCatalog:any=null;
         try{
-          const approved=approvedCatalogUrls(s.list_text);
+          const approved=approvedCatalogUrls(effective.list);
           // The pins and the optional display cache come from the SAME
-          // already-performed catalog query. No extra HTTP connection, no
-          // provider scraping and no dependency of approval on metadata.
-          const rows=await catalogRows(approved,grantsOnly);
+          // catalog query plus the fresh playlist membership response.
+          // Display metadata never grants permission by itself.
+          const rows=mergeDisplayRows(await catalogRows(approved,grantsOnly),grantsOnly?[]:effective.rows);
           for(const row of rows){
             if(row.kind!=="channel"||!/^UC[A-Za-z0-9_-]{22}$/.test(row.item_id))continue;
             const time=Date.parse(row.checked_at||"");
@@ -488,14 +571,14 @@ Deno.serve(async(req)=>{
         try{latest=await state();}catch{return json({error:"STATE_RECHECK_FAILED"},503,origin);}
         if(latest.version!==s.version||latest.updated_at!==s.updated_at||latest.list_text!==s.list_text)
           return json({error:"AUTH_CHANGED_RETRY"},409,origin);
-        const response={list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,
+        const response={list:effective.list,unavailablePlaylists:effective.unavailable,version:s.version,updatedAt:s.updated_at,catalogVersion:1,
           pinnedChannels:pins,...(preparedCatalog?{preparedCatalog}:{})};
         // Fit the same strict upper bound used by the native bridge.
         if(JSON.stringify(response).length>800000)
-          return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,pinnedChannels:[]},200,origin);
+          return json({list:effective.list,unavailablePlaylists:effective.unavailable,version:s.version,updatedAt:s.updated_at,catalogVersion:1,pinnedChannels:[]},200,origin);
         return json(response,200,origin);
       }
-      return json({list:s.list_text,version:s.version,updatedAt:s.updated_at,catalogVersion:1,setupRequired:!s.password_hash},200,origin);
+      return json({list:effective.list,unavailablePlaylists:effective.unavailable,version:s.version,updatedAt:s.updated_at,catalogVersion:1,setupRequired:!s.password_hash},200,origin);
     }
     if(req.method!=="POST")return json({error:"METHOD"},405,origin);
     const declared=Number(req.headers.get("content-length")||0);
@@ -523,7 +606,7 @@ Deno.serve(async(req)=>{
     }
     if(action==="metadata"){
       if(!await auth(req,s))return json({error:"UNAUTHORIZED"},401,origin);
-      try{return json(await metadata(body.link||""),200,origin);}catch{return json({error:"INVALID_LINK"},400,origin);}
+      try{return json(await metadata(body.link||""),200,origin);}catch(e){return json({error:typeof body.link==="string"&&body.link.includes("playlist")?(e instanceof Error&&e.message==="PLAYLIST_TOO_LARGE"?"PLAYLIST_TOO_LARGE":"PLAYLIST_UNAVAILABLE"):"INVALID_LINK"},400,origin);}
     }
     if(action==="prepare"){
       if(!await auth(req,s))return json({error:"UNAUTHORIZED"},401,origin);
@@ -536,7 +619,7 @@ Deno.serve(async(req)=>{
     }
     if(action==="replace"){
       if(!await auth(req,s))return json({error:"UNAUTHORIZED"},401,origin);
-      let replacement:string; try{replacement=validateList(body.list);}catch{return json({error:"INVALID_LIST"},400,origin);}
+      let replacement:string; try{replacement=validateList(body.list);checkPlaylistLimit(replacement);}catch{return json({error:"INVALID_LIST"},400,origin);}
       // Whole-list replacement is NOT automatically rebased onto a newer state.
       // Its caller must have fetched precisely the version it is replacing.
       if(!Number.isSafeInteger(body.expectedVersion)||body.expectedVersion<0)return json({error:"EXPECTED_VERSION_REQUIRED"},400,origin);
@@ -553,7 +636,11 @@ Deno.serve(async(req)=>{
       // Newly approved @handles are pinned to a UC identifier if a trusted
       // provider can resolve them. Existing grants are left untouched.
       const originalUrl=url2;
-      if(op==="add"&&!new URL(url2).searchParams.has("v")&&!url2.includes("/channel/")
+      if(op==="add"&&playlistId(url2)&&!existingUrls(s.list_text).has(url2)){
+        try{checkPlaylistLimit(edit(s.list_text,op,url2,note));await readPlaylist(playlistId(url2)!);}
+        catch(e){return json({error:e instanceof Error&&["PLAYLIST_TOO_LARGE","PLAYLIST_LIMIT"].includes(e.message)?e.message:"PLAYLIST_UNAVAILABLE"},400,origin);}
+      }
+      if(op==="add"&&!playlistId(url2)&&!new URL(url2).searchParams.has("v")&&!url2.includes("/channel/")
           &&!existingUrls(s.list_text).has(url2)){
         try{
           const id=await stableChannelId(url2);
@@ -562,6 +649,7 @@ Deno.serve(async(req)=>{
       }
       for(let i=0;i<3;i++){
         const fresh=i?await state():s; const updated=edit(fresh.list_text,op,url2,note);
+        try{checkPlaylistLimit(updated);}catch{return json({error:"PLAYLIST_LIMIT"},400,origin);}
         if(updated===fresh.list_text)return json({ok:true,changed:false,list:fresh.list_text,version:fresh.version},200,origin);
         if(await patch(fresh.version,{list_text:updated})){
           let prepared:any={prepared:false,reason:"NOT_REQUESTED"};

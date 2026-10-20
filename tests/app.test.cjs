@@ -313,7 +313,7 @@ function metadataApi(url) {
 test('plain list ignores // comments, blank lines and BOM/CRLF without breaking https://',async()=>{
   const a=await app('\uFEFF// הערה\r\n\r\n'+link(1)+' // השיר שלנו\r\n  // עוד הערה\r\n'+channelLink(A),metadataApi);
   assert.equal(a.run('activeConfig.videos.length'),1);assert.equal(a.run('activeConfig.channels.length'),1);
-  assert.equal(a.run('displayed.size'),2);assert.match(a.calls[0].url,/\/functions\/v1\/kids-youtube\?action=list$/);assert.equal(a.calls[0].opts.cache,'no-store');
+  assert.equal(a.run('displayed.size'),2);assert.match(a.calls[0].url,/\/functions\/v1\/kids-youtube\?action=list&format=effective$/);assert.equal(a.calls[0].opts.cache,'no-store');
   assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם הסרטון האוטומטי');
   const videoCard=[...a.elements.grid.children].find(card=>card.dataset.videoId===id(1));assert.equal(videoCard.children[2].textContent,'יוצר הסרטון');
   assert.equal(a.run('activeConfig.channels[0].name'),'שם הערוץ האוטומטי');

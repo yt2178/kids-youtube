@@ -12,7 +12,7 @@ test('parent HTML has direct editor, row mode, removal confirmation and embedded
   assert.match(html,/עריכה ידנית/);assert.match(html,/תצוגת שורות/);assert.match(html,/שמור את הרשימה/);
   assert.match(html,/להסיר את הפריט הזה מהרשימה/);assert.match(html,/youtube-player/);assert.match(html,/frame-src 'self' https:\/\/www\.youtube\.com/);
   assert.match(html,/font-src 'self';/);assert.doesNotMatch(html,/web-share|clipboard-write/);assert.doesNotMatch(html,/fonts\.gstatic\.com|https:\/\/\*\./);assert.match(html,/id="channel-image"/);assert.match(html,/id="parent-catalog-loading"/);assert.doesNotMatch(html,/id="parent-catalog"[^>]+loading="lazy"/);
-  assert.match(html,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261011search3/);assert.match(html,/id="management-search-panel"[^>]*hidden/);assert.match(html,/id="management-search-toggle"[^>]*aria-expanded="false"/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
+  assert.match(html,/שם הסרטון\/הערוץ\/הפלייליסט\/הערה אחרת \(לא חובה\)/);assert.match(html,/parents\.js\?v=20261020a/);assert.match(html,/id="management-search-panel"[^>]*hidden/);assert.match(html,/id="management-search-toggle"[^>]*aria-expanded="false"/);assert.doesNotMatch(html,/פתח ב־YouTube|id="verify"/);
   assert.doesNotMatch(html,/מה עושים\?|ביטול אישור|פתחתי את הקישור ובדקתי|הערה לעצמי/);
   assert.match(script,/action,'replace'|api\('replace'/);assert.match(script,/api\('metadata'/);assert.match(script,/operation:'remove'/);
   assert.match(script,/youtube\.com\/embed/);assert.doesNotMatch(script,/github\.com|issues\/new|issueURL/);
@@ -502,4 +502,30 @@ test('refreshing an unchanged parent list preserves rendered row nodes and edit 
   await a.fire('refresh-list');
   assert.equal(a.elements['approved-cards'].children[0],first,'unchanged approval cards are not rebuilt');
   assert.equal(a.elements['approved-text'].value,video+'\\n');
+});
+
+test('playlist links are explicit, canonical and do not turn a watch link into a blanket approval',()=>{
+ const id='PLrfcruGtplwHxMQ6Wi2x0uVIrHF9uFcSz';
+ assert.deepEqual(links.classify('https://youtube.com/playlist?list='+id+'&si=share'),{kind:'playlist',id,url:'https://www.youtube.com/playlist?list='+id,label:'פלייליסט YouTube'});
+ assert.equal(links.classify(video+'&list='+id).kind,'video');
+ for(const input of ['https://youtube.com/playlist?list=WL','https://youtube.com/playlist?list=LL','https://youtube.com/playlist?list=RDabcdefghijk','https://youtube.com/playlist?list='+id+'&list='+id])assert.throws(()=>links.classify(input));
+});
+test('parent previews and approves a playlist source once, checks membership and removes the source',async()=>{
+ const url='https://www.youtube.com/playlist?list=PLrfcruGtplwHxMQ6Wi2x0uVIrHF9uFcSz';
+ const local=new Map([['kidsParentToken','token']]);let stored='',checks=0,adds=0,removes=0;
+ const a=await parentApp(async(action,options)=>{
+  if(action==='list')return {list:stored,version:8};
+  if(action==='status')return {authenticated:true};
+  if(action==='metadata'){checks++;assert.equal(JSON.parse(options.body).link,url);return {kind:'playlist',url,title:'שלנו',count:4,author:'הורה',thumbnail:''};}
+  if(action==='mutate'){const b=JSON.parse(options.body);assert.equal(b.link,url);if(b.operation==='add'){adds++;stored=url+' // שלנו\n';}else{removes++;stored='';}return {list:stored,version:9,changed:true};}
+  throw Error(action);
+ },{local});
+ a.elements.link.value=url;await a.elements.inspect.listeners.click[0]();
+ assert.match(a.elements.kind.textContent,/פלייליסט.*4/);assert.match(a.elements['channel-warning'].textContent,/הסרות/);
+ assert.equal(a.elements['youtube-player'].src,'');
+ await a.elements.save.listeners.click[0]();assert.equal(adds,1);assert.equal(stored.includes('watch?v='),false);
+ const row=a.elements['approved-cards'].children[0];
+ await row.children.find(x=>x.textContent==='בדוק פלייליסט').listeners.click[0]();assert.equal(checks,2);
+ assert.match(row.children.at(-1).textContent,/4 סרטונים/);
+ await row.children.find(x=>x.textContent==='הסר').listeners.click[0]();await a.elements['confirm-remove'].listeners.click[0]();assert.equal(removes,1);assert.equal(stored,'');
 });

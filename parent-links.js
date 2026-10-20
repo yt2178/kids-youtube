@@ -13,6 +13,8 @@
       if(parts[0]==='watch'&&parts.length===1&&u.searchParams.getAll('v').length===1)id=u.searchParams.get('v');
       else if(['shorts','live','embed'].includes(parts[0])&&parts.length===2)id=parts[1];
       else{
+        const playlist=u.searchParams.get('list');
+        if(parts[0]==='playlist'&&parts.length===1&&u.searchParams.getAll('list').length===1&&/^PL[A-Za-z0-9_-]{10,98}$/.test(playlist||''))return {kind:'playlist',id:playlist,url:'https://www.youtube.com/playlist?list='+playlist,label:'פלייליסט YouTube'};
         const tail=['videos','shorts','streams','featured'];
         if(parts[0]==='channel'&&CHANNEL.test(parts[1])&&(parts.length===2||(parts.length===3&&tail.includes(parts[2]))))
           return {kind:'channel',id:parts[1],url:'https://www.youtube.com/channel/'+parts[1],label:parts[1]};

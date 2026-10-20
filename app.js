@@ -469,7 +469,7 @@ async function fetchAuthorization(source='initial'){
       throw e;
     }
   }
-  return fetchJson(PARENT_API+'?action=list');
+  return fetchJson(PARENT_API+'?action=list&format=effective',30000);
 }
 
 // This parser runs only on the parent's published list, never on child input.
@@ -863,7 +863,7 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
       // Native authorization can carry the already-approved, prepared
       // display catalog in the SAME HTTPS response. This removes the extra
       // WebView request and its fixed 4s stall on slow physical devices.
-      const bundled= NATIVE_MODE && remote.preparedCatalog;
+      const bundled=remote.preparedCatalog;
       if(bundled && bundled.version===remote.version && bundled.updatedAt===remote.updatedAt
           && Array.isArray(bundled.entries)){
         catalog=bundled;
