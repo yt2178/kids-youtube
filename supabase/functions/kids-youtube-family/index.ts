@@ -60,6 +60,28 @@ async function parseBody(req:Request){
  try{const value=JSON.parse(raw);if(!value||typeof value!=="object"||Array.isArray(value))throw Error();return value;}
  catch{fail("INVALID_JSON",400);}
 }
+function validateApprovalList(list:string){
+ const seen=new Set<string>();
+ for(const raw of list.split(/\r?\n/)){
+  const line=raw.trim();if(!line||line.startsWith("//"))continue;
+  const match=line.match(/^(\S+)(?:\s+\/\/.*)?$/);
+  if(!match)fail("INVALID_APPROVALS",400);
+  let u:URL;try{u=new URL(match[1]);}catch{fail("INVALID_APPROVALS",400);}
+  if(u.protocol!=="https:"||!["youtube.com","www.youtube.com","youtu.be"].includes(u.hostname)||
+    u.username||u.password||u.port||u.hash)fail("INVALID_APPROVALS",400);
+  const path=u.pathname,keys=[...u.searchParams.keys()];
+  const isWatch=(u.hostname!=="youtu.be"&&path==="/watch"&&keys.length===1&&keys[0]==="v"&&/^[A-Za-z0-9_-]{11}$/.test(u.searchParams.get("v")||""));
+  const isShort=(u.hostname==="youtu.be"&&/^\/[A-Za-z0-9_-]{11}$/.test(path)&&keys.length===0);
+  const isChannel=(u.hostname!=="youtu.be"&&/^\/channel\/UC[A-Za-z0-9_-]{22}$/.test(path)&&keys.length===0);
+  const isHandle=(u.hostname!=="youtu.be"&&/^\/@[^/]{2,100}$/.test(path)&&keys.length===0);
+  const isPlaylist=(u.hostname!=="youtu.be"&&path==="/playlist"&&keys.length===1&&keys[0]==="list"&&/^PL[A-Za-z0-9_-]{10,}$/.test(u.searchParams.get("list")||""));
+  if(!(isWatch||isShort||isChannel||isHandle||isPlaylist)||seen.has(u.href))
+   fail("INVALID_APPROVALS",400);
+  seen.add(u.href);
+  if(seen.size>2000)fail("TOO_MANY_APPROVALS",400);
+ }
+}
+
 Deno.serve(async req=>{
  const origin=req.headers.get("origin");
  if(origin&&!ALLOWED.has(origin))return response({error:"ORIGIN_DENIED"},403,origin);
@@ -109,6 +131,7 @@ Deno.serve(async req=>{
   const body=await parseBody(req);
   if(typeof body.list!=="string"||body.list.length>1000000||
    !Number.isSafeInteger(body.expectedVersion)||body.expectedVersion<1)fail("INVALID_REQUEST",400);
+  validateApprovalList(body.list);
   // Both the family ID and old version are SQL equality predicates. Exactly one
   // row must match; a stale writer cannot overwrite another parent's change.
   const path="/rest/v1/family_approvals?family_id=eq."+encodeURIComponent(who.familyId)+
