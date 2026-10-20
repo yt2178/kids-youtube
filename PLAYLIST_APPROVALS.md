@@ -39,8 +39,8 @@ No fresh lookup is made for families with no playlist grants.
 
 Only normal `PL…` playlist IDs are accepted. Private playlists, Watch Later,
 Liked Videos, automatic mixes and account-dependent lists are unsupported.
-A watch URL with both `v` and `list` still approves **one video**; use the actual
-`/playlist?list=…` URL to approve a playlist. The preview explicitly explains that
+A watch URL with both `v` and a valid `list` approves the **playlist**, not only the current video.
+Use a watch URL without `list` to approve a single video. The preview explicitly explains that
 future additions are approved. Use a playlist whose editors the parent trusts.
 
 The implementation uses pinned YouTube.js 18.1.0, already used for parent search.
