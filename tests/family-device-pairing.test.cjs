@@ -11,6 +11,7 @@ test('pairing code is one use, expiring and securely resolved on server',()=>{
  assert.match(sql,/revoke all on function public\.claim_family_pairing\(text,uuid,text\) from public,anon,authenticated/);
  assert.match(sql,/grant execute on function public\.claim_family_pairing\(text,uuid,text\) to service_role/);
  assert.match(edge,/identity\.isAnonymous/);
+ assert.match(edge,/FAMILY_PILOT_ENROLL_ENABLED/);
  assert.match(edge,/already\.length/);
  assert.match(edge,/who\.role!=="parent"/);
  assert.match(edge,/sha256hex\(code\)/);
