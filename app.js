@@ -1324,20 +1324,25 @@ ui.more.addEventListener('click', loadMoreVideos);
 // Load additional cards only when the user approaches the end of the list.
 // Keep the button as an accessible fallback for older WebViews.
 if (typeof IntersectionObserver === 'function') {
-  let scrollArmed = false;
+  let scrollArmed = false, moreVisible = false;
   let lastScrollY = typeof window.scrollY === 'number' ? window.scrollY : 0;
-  window.addEventListener('scroll', () => {
-    const current = window.scrollY || 0;
-    if (current > lastScrollY + 1) scrollArmed = true;
-    lastScrollY = current;
-  }, {passive:true});
-  const moreObserver = new IntersectionObserver(entries => {
-    if (!scrollArmed || !entries.some(entry => entry.isIntersecting)) return;
+  const tryAutoLoad = () => {
+    if (!scrollArmed || !moreVisible) return;
     if (document.hidden || loading || paginationBusy || playback || ui.more.hidden || ui.more.disabled) return;
     scrollArmed = false;
     loadMoreVideos().catch(() => {
       // Preserve the manual retry button on intermittent network failures.
     });
+  };
+  window.addEventListener('scroll', () => {
+    const current = window.scrollY || 0;
+    if (current > lastScrollY + 1) scrollArmed = true;
+    lastScrollY = current;
+    tryAutoLoad();
+  }, {passive:true});
+  const moreObserver = new IntersectionObserver(entries => {
+    moreVisible = entries.some(entry => entry.isIntersecting);
+    tryAutoLoad();
   }, {rootMargin:'0px 0px 500px 0px',threshold:0});
   moreObserver.observe(ui.more);
 }
