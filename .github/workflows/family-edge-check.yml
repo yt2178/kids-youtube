@@ -1,0 +1,25 @@
+name: Check isolated family Edge Function
+on:
+  pull_request:
+    paths:
+      - 'supabase/functions/kids-youtube-family/**'
+      - 'supabase/migrations/20261020_family_approvals_isolated.sql'
+      - '.github/workflows/family-edge-check.yml'
+permissions:
+  contents: read
+jobs:
+  deno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Typecheck family function
+        run: deno check supabase/functions/kids-youtube-family/index.ts
+      - name: Audit source for no legacy singleton dependency
+        run: |
+          if grep -E 'kids_youtube_state|session_secret|password_hash' supabase/functions/kids-youtube-family/index.ts; then
+            echo 'Forbidden legacy dependency detected'
+            exit 1
+          fi
