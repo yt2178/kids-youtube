@@ -1,8 +1,8 @@
 'use strict';
 const CACHE_PREFIX = 'kids-youtube-shell:' + self.registration.scope + ':';
-const SHELL_CACHE = CACHE_PREFIX + 'v30';
+const SHELL_CACHE = CACHE_PREFIX + 'v31';
 const IMAGE_CACHE = 'kids-youtube-images:' + self.registration.scope + ':v1';
-const SHELL_FILES = ['./index.html','./app.js?v=20261020b','./providers.js?v=20261006h','./manifest.json','./icons/icon-192.png','./icons/icon-512.png'];
+const SHELL_FILES = ['./index.html','./app.js?v=20261020c','./providers.js?v=20261006h','./manifest.json','./icons/icon-192.png','./icons/icon-512.png'];
 const SCOPE_URL = new URL(self.registration.scope);
 const SHELL_URLS = new Set(SHELL_FILES.map(path => new URL(path,SCOPE_URL).href));
 const IMAGE_TTL = 7*24*60*60*1000;
@@ -40,7 +40,7 @@ async function thumbnail(request) {
       if(cached && age>=0 && age<IMAGE_TTL)return cached;
     } catch (_) { /* Network still works without writable cache. */ }
     const response=await fetch(request);
-    if(cache && (response.ok||response.type==='opaque')) {
+    if(cache && response.ok && response.type !== 'opaque') {
       try {
         await cache.put(url,response.clone());await cache.put(stampURL,new Response(String(Date.now())));
         const keys=await cache.keys();
