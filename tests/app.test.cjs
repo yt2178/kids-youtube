@@ -313,7 +313,7 @@ function metadataApi(url) {
 test('plain list ignores // comments, blank lines and BOM/CRLF without breaking https://',async()=>{
   const a=await app('\uFEFF// הערה\r\n\r\n'+link(1)+' // השיר שלנו\r\n  // עוד הערה\r\n'+channelLink(A),metadataApi);
   assert.equal(a.run('activeConfig.videos.length'),1);assert.equal(a.run('activeConfig.channels.length'),1);
-  assert.equal(a.run('displayed.size'),2);assert.match(a.calls[0].url,/\/functions\/v1\/kids-youtube\?action=list$/);assert.equal(a.calls[0].opts.cache,'no-store');
+  assert.equal(a.run('displayed.size'),2);assert.match(a.calls[0].url,/\/functions\/v1\/kids-youtube\?action=list&format=effective$/);assert.equal(a.calls[0].opts.cache,'no-store');
   assert.equal(a.run(`displayed.get('${id(1)}').title`),'שם הסרטון האוטומטי');
   const videoCard=[...a.elements.grid.children].find(card=>card.dataset.videoId===id(1));assert.equal(videoCard.children[2].textContent,'יוצר הסרטון');
   assert.equal(a.run('activeConfig.channels[0].name'),'שם הערוץ האוטומטי');
@@ -419,6 +419,19 @@ test('default video tab combines manual approvals and approved channels',async()
   assert.deepEqual(visibleVideoIds(a),[id(3),id(1),id(2)]);
   assert.equal(a.elements['all-tab'].getAttribute('aria-pressed'),'true');
   assert.equal(a.elements['channels-tab'].getAttribute('aria-pressed'),'false');
+});
+test('child tabs are ordered all channels videos in RTL and playlists appear inside channels',async()=>{
+  const tabs=html.slice(html.indexOf('<nav class="tabs"'),html.indexOf('</nav>')+6);
+  assert.ok(tabs.indexOf('id="all-tab"')<tabs.indexOf('id="channels-tab"'));
+  assert.ok(tabs.indexOf('id="channels-tab"')<tabs.indexOf('id="videos-tab"'));
+  const config={videos:[{id:id(1),title:'פרק ראשון'},{id:id(2),title:'פרק שני'},{id:id(3),title:'סרטון נפרד'}],channels:[]};
+  const a=await app(config,metadataApi,new Map(),{listFetch:()=>json({list:JSON.stringify(config),version:3,updatedAt:'date',playlistGroups:[{id:'playlist:PL6S-FHVB7IevferUlLMPeomhONCnSgLzp',name:'קורס מימון',videoIds:[id(1),id(2)],thumbnail:''}]})});
+  a.elements['channels-tab'].listeners.click[0]();
+  assert.equal(a.elements.grid.children.length,1);
+  assert.equal(a.elements.grid.children[0].children[1].textContent,'קורס מימון');
+  clickGrid(a,a.elements.grid.children[0]);
+  assert.deepEqual(visibleVideoIds(a),[id(1),id(2)]);
+  assert.equal(a.elements['channel-name'].textContent,'קורס מימון');
 });
 test('channel tab lists only whole-channel approvals, not creators of manual videos',async()=>{
   const a=await app({videos:[{id:id(3),title:'סרטון',author:'יוצר לא מאושר'}],channels:[{id:A,name:'מאיר'}]},metadataApi);

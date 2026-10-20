@@ -8,11 +8,11 @@ const activity=read('android/app/src/main/java/il/kidsyoutube/MainActivity.java'
 
 test('authorization source is live Supabase only and stale browser cache cannot become a grant',()=>{
   assert.match(app,/const PARENT_API = 'https:\/\/jxhelpxhrmwvzrrfrjuh\.supabase\.co\/functions\/v1\/kids-youtube'/);
-  assert.match(app,/return fetchJson\(PARENT_API\+'\?action=list'\)/);
+  assert.match(app,/return fetchJson\(PARENT_API\+'\?action=list&format=effective',30000\)/);
   assert.match(app,/fetchAuthorization\('load'\)/);
   assert.match(app,/window\.KidsNative\.fetchAuthorization\(\{loadCycle,requestId,source\}\)/);
   assert.match(native,/JSONObject displayAuthorization\(\)/);
-  assert.match(edge,/const response=\{list:s\.list_text,version:s\.version,updatedAt:s\.updated_at,catalogVersion:1/);
+  assert.match(edge,/const response=\{list:effective\.list,playlistGroups:effective\.groups,unavailablePlaylists:effective\.unavailable,version:s\.version,updatedAt:s\.updated_at,catalogVersion:1/);
   assert.match(edge,/pinnedChannels:pins/);
   assert.match(edge,/latest\.version!==s\.version\|\|latest\.updated_at!==s\.updated_at\|\|latest\.list_text!==s\.list_text/);
   assert.doesNotMatch(app,/fetchText\('\.\/videos\.txt'|fetch\(['"]\.\/videos\.txt/);
@@ -49,7 +49,7 @@ test('native playback remains fail-closed with fresh checks before and after ext
 });
 
 test('parent UI keeps official YouTube iframe, exact requested label and no external-open button',()=>{
-  assert.match(parents,/שם הסרטון\/הערוץ\/הערה אחרת \(לא חובה\)/);
+  assert.match(parents,/שם הסרטון\/הערוץ\/הפלייליסט\/הערה אחרת \(לא חובה\)/);
   assert.match(parents,/https:\/\/www\.youtube\.com/);
   assert.doesNotMatch(parents,/פתח ב־YouTube|id="verify"/);
   assert.match(parentJs,/youtube\.com\/embed/);
@@ -58,7 +58,7 @@ test('parent UI keeps official YouTube iframe, exact requested label and no exte
 test('cache-bust version and service-worker shell version are audited together',()=>{
   const appVersion=(html.match(/app\.js\?v=([^"']+)/)||[])[1];
   assert.ok(appVersion);assert.match(sw,new RegExp("app\\.js\\?v="+appVersion.replace(/[.*+?^$()|[\]\\]/g,'\\$&')));
-  assert.match(sw,/SHELL_CACHE = CACHE_PREFIX \+ 'v28'/);
+  assert.match(sw,/SHELL_CACHE = CACHE_PREFIX \+ 'v30'/);
 });
 
 

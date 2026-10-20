@@ -69,6 +69,7 @@ let returnFocus = null;
 let returnVideoId = null;
 let returnScrollY = 0;
 let viewMode = 'all';
+let approvedPlaylistGroups = []; // Presentation only; IDs never grant playback.
 let selectedChannelId = null;
 let searchQuery = '';
 const browseStates = new Map();
@@ -275,7 +276,7 @@ function rememberBrowse() {
 function scrollToPosition(top) { if (typeof window.scrollTo === 'function') window.scrollTo({top, behavior:'instant'}); }
 function switchBrowse(mode, channelId = null) {
   if (playback || !['videos','channels','all'].includes(mode)) return;
-  if (channelId && !activeConfig.channels.some(channel => channel.id === channelId)) return;
+  if (channelId && !activeConfig.channels.some(channel => channel.id === channelId) && !approvedPlaylistGroups.some(group => group.id === channelId)) return;
   flushSearch();
   rememberBrowse();
   viewMode = mode; selectedChannelId = channelId;
@@ -302,7 +303,7 @@ function render(config, lists) {
   ui['view-grid'].setAttribute('aria-pressed',String(viewStyle==='grid'));
   ui['view-list'].setAttribute('aria-pressed',String(viewStyle==='list'));
   activeLists = lists;
-  if (selectedChannelId && !config.channels.some(channel => channel.id === selectedChannelId)) {
+  if (selectedChannelId && !config.channels.some(channel => channel.id === selectedChannelId) && !approvedPlaylistGroups.some(group => group.id === selectedChannelId)) {
     browseStates.delete('channel:' + selectedChannelId);
     selectedChannelId = null; viewMode = 'channels'; searchQuery = ''; visibleCount = SETTINGS.cardsPerPage;
   }
@@ -314,7 +315,8 @@ function render(config, lists) {
   const manualIds = new Set(config.videos.map(v=>v.id));
   const approvedChannelIds = new Set(config.channels.map(c=>c.id));
   const isChannels = viewMode === 'channels' && !selectedChannelId;
-  const selected = config.channels.find(channel => channel.id === selectedChannelId);
+  const browseGroups = [...config.channels,...approvedPlaylistGroups];
+  const selected = browseGroups.find(channel => channel.id === selectedChannelId);
   const videoChannels = new Map();
   for (const channel of config.channels) {
     for (const video of cleanChannelVideos(lists[channel.id], channel)) {
@@ -323,17 +325,17 @@ function render(config, lists) {
   }
   // Membership comes from the approved channel list, even when a manual
   // approval wins deduplication and does not carry a channelId itself.
-  const channelVideos = selected ? new Set(cleanChannelVideos(lists[selected.id], selected).map(video => video.id)) : null;
-  let items = isChannels ? config.channels.filter(channel => matchesSearch(channel.name)) : [...displayed.values()].filter(video =>
-    (!channelVideos || channelVideos.has(video.id)) && (viewMode !== 'videos' || (manualIds.has(video.id) && !approvedChannelIds.has(video.authorId) && !videoChannels.has(video.id))) && (viewMode === 'videos' || !channelFilter || selected || video.authorId === channelFilter || (lists[channelFilter] || []).some(v => v.id === video.id)) && matchesSearch(video.title + ' ' + (video.author || '') + ' ' + (videoChannels.get(video.id) || '')));
+  const channelVideos = selected ? new Set(selected.id.startsWith('playlist:') ? selected.videoIds : cleanChannelVideos(lists[selected.id], selected).map(video => video.id)) : null;
+  let items = isChannels ? browseGroups.filter(channel => matchesSearch(channel.name)) : [...displayed.values()].filter(video =>
+    (!channelVideos || channelVideos.has(video.id)) && (viewMode !== 'videos' || (manualIds.has(video.id) && !approvedChannelIds.has(video.authorId) && !videoChannels.has(video.id))) && (viewMode === 'videos' || !channelFilter || selected || video.authorId === channelFilter || (approvedPlaylistGroups.find(g => g.id===channelFilter)?.videoIds.includes(video.id) || (lists[channelFilter] || []).some(v => v.id === video.id))) && matchesSearch(video.title + ' ' + (video.author || '') + ' ' + (videoChannels.get(video.id) || '')));
   if (!isChannels && sortMode === 'newest') items.sort((a,b) => b.published-a.published || a.title.localeCompare(b.title,'he'));
   if (!isChannels && sortMode === 'name') items.sort((a,b) => a.title.localeCompare(b.title,'he'));
   ui.filters.hidden = isChannels;ui['sort-options'].hidden=isChannels;
   ui.sort.value=sortMode;
   const options = document.createDocumentFragment();
   const allOption = document.createElement('option'); allOption.value = ''; allOption.textContent = 'כל הערוצים'; options.append(allOption);
-  for (const c of config.channels) { const option = document.createElement('option'); option.value = c.id; option.textContent = c.name; options.append(option); }
-  if (!config.channels.some(c => c.id === channelFilter)) {channelFilter = '';storageSet(CHANNEL_FILTER_KEY,'');}
+  for (const c of browseGroups) { const option = document.createElement('option'); option.value = c.id; option.textContent = c.name; options.append(option); }
+  if (!browseGroups.some(c => c.id === channelFilter)) {channelFilter = '';storageSet(CHANNEL_FILTER_KEY,'');}
   ui['channel-filter'].replaceChildren(options); ui['channel-filter'].value = viewMode==='videos' ? '' : selected ? selected.id : channelFilter; ui['channel-filter'].disabled = !!selected || viewMode==='videos';
   ui['all-tab'].setAttribute('aria-pressed', String(viewMode === 'all'));
   ui['videos-tab'].setAttribute('aria-pressed', String(viewMode === 'videos'));
@@ -349,7 +351,7 @@ function render(config, lists) {
   ui.grid.setAttribute('aria-label', isChannels ? 'הערוצים המאושרים' : 'הסרטונים המאושרים');
   const fragment = document.createDocumentFragment();
   for (const item of items.slice(0, visibleCount)) {
-    const key = (isChannels ? 'channel:' : 'video:') + item.id + ':' + (isChannels ? JSON.stringify([item.name,item.thumbnail,(lists[item.id] || []).length]) : '');
+    const key = (isChannels ? 'channel:' : 'video:') + item.id + ':' + (isChannels ? JSON.stringify([item.name,item.thumbnail,item.id.startsWith('playlist:') ? item.videoIds.join(',') : (lists[item.id] || []).length]) : '');
     const cachedCard = cardCache.get(key);
     if (cachedCard) {
       if (!isChannels) {
@@ -378,7 +380,7 @@ function render(config, lists) {
         thumb.append(image);
       }
       const title = document.createElement('span'); title.className = 'card-title'; title.dir = 'auto'; title.textContent = item.name;
-      const count = document.createElement('span'); count.className = 'card-author'; count.textContent = (lists[item.id] || []).length + ' סרטונים נטענו' + (channelProgress.get(item.id)?.continuation ? ' · יש עוד' : '');
+      const count = document.createElement('span'); count.className = 'card-author'; count.textContent = (item.id.startsWith('playlist:') ? item.videoIds.filter(id => displayed.has(id)).length : (lists[item.id] || []).length) + ' סרטונים נטענו' + (channelProgress.get(item.id)?.continuation ? ' · יש עוד' : '');
       card.append(thumb, title, count);
     } else {
       card.dataset.videoId = item.id;
@@ -469,7 +471,7 @@ async function fetchAuthorization(source='initial'){
       throw e;
     }
   }
-  return fetchJson(PARENT_API+'?action=list');
+  return fetchJson(PARENT_API+'?action=list&format=effective',30000);
 }
 
 // This parser runs only on the parent's published list, never on child input.
@@ -846,6 +848,7 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
     let raw;
     const remote = await fetchAuthorization('load');
     if(!stillAuthorized())return;
+    approvedPlaylistGroups = Array.isArray(remote?.playlistGroups) ? remote.playlistGroups.filter(g => g && typeof g.id==='string' && /^playlist:PL[A-Za-z0-9_-]{10,98}$/.test(g.id) && typeof g.name==='string' && Array.isArray(g.videoIds) && g.videoIds.every(id => /^[A-Za-z0-9_-]{11}$/.test(id))).map(g=>({id:g.id,name:g.name.slice(0,300),videoIds:g.videoIds,thumbnail:typeof g.thumbnail==='string' && /^https:\/\/img\.youtube\.com\/vi\/[A-Za-z0-9_-]{11}\/mqdefault\.jpg$/.test(g.thumbnail) ? g.thumbnail : ''})) : [];
     catalogMetrics.authorizationMs=Date.now()-startedAt;
     debugCatalog('authorization-ok',{loadCycle:thisCycle,ms:catalogMetrics.authorizationMs,version:remote&&remote.version,catalogVersion:remote&&remote.catalogVersion});
     if (!remote || typeof remote.list !== 'string') throw new Error('INVALID_REMOTE_LIST');
@@ -863,7 +866,7 @@ async function loadApp({forceCatalog=false,trigger='unspecified'}={}) {
       // Native authorization can carry the already-approved, prepared
       // display catalog in the SAME HTTPS response. This removes the extra
       // WebView request and its fixed 4s stall on slow physical devices.
-      const bundled= NATIVE_MODE && remote.preparedCatalog;
+      const bundled=remote.preparedCatalog;
       if(bundled && bundled.version===remote.version && bundled.updatedAt===remote.updatedAt
           && Array.isArray(bundled.entries)){
         catalog=bundled;

@@ -4,7 +4,7 @@ const {webcrypto,createHash}=require('node:crypto');
 const API_ORIGIN='https://yt2178.github.io';
 const A='https://www.youtube.com/watch?v=mVTlbvQ_010',B='https://www.youtube.com/watch?v=AAAAAAAAAAA';
 const hash=(pass,secret)=>createHash('sha256').update(secret+'\0'+pass).digest('base64url');
-async function createFixture({upstream,configured=true,onCatalogRead}={}){
+async function createFixture({upstream,configured=true,onCatalogRead,playlistLibrary}={}){
  const db={list_text:A+'\n',password_hash:configured?hash('familyPassword!','secret123'):null,session_secret:'secret123',version:7,updated_at:'date'};
  let serve,patches=0,conflict=false,stateReads=0,catalogReads=0;const catalog=new Map();
  async function fetcher(input,opts={}){
@@ -31,8 +31,9 @@ async function createFixture({upstream,configured=true,onCatalogRead}={}){
  }
  const source=stripTypeScriptTypes(fs.readFileSync('supabase/functions/kids-youtube/index.ts','utf8'),{mode:'strip'});
  const ctx=vm.createContext({Deno:{env:{get:k=>k==='SUPABASE_URL'?'https://test.supabase.co':'servicekey'},serve:f=>serve=f},
- fetch:fetcher,crypto:webcrypto,URL,Request,Response,TextEncoder,TextDecoder,AbortController,DOMException,Uint8Array,ReadableStream,atob,btoa,setTimeout,clearTimeout,console});
+ __playlistLibrary:playlistLibrary,fetch:fetcher,crypto:webcrypto,URL,Request,Response,TextEncoder,TextDecoder,AbortController,DOMException,Uint8Array,ReadableStream,atob,btoa,setTimeout,clearTimeout,console});
  vm.runInContext(source,ctx);
+ if(playlistLibrary)vm.runInContext("loadPlaylistLibrary=async()=>__playlistLibrary",ctx);
  async function request(action,{method='POST',body,token,origin=API_ORIGIN,query={}}={}){
    const headers={origin};if(token)headers.authorization='Bearer '+token;
    if(body!==undefined)headers['content-type']='application/json';
@@ -404,4 +405,80 @@ test('runtime: compact native polls retain fresh permissions and pins without di
   assert.equal(revoked.data.version,f.db.version);
   assert.equal(revoked.data.list,A+'\n');
   assert.equal(revoked.data.pinnedChannels.length,0);
+});
+
+const PL='PLrfcruGtplwHxMQ6Wi2x0uVIrHF9uFcSz',PU='https://www.youtube.com/playlist?list='+PL;
+function fakePlaylists(loader){
+ return {Log:{setLevel(){},Level:{NONE:0}},Innertube:{create:async()=>({getPlaylist:loader})}};
+}
+function playlistPage(ids,{next,title='רשימת המשפחה'}={}){
+ return {info:{title,author:{name:'Parent'}},items:ids.map(id=>({id,title:'שם '+id,is_playable:true})),has_continuation:!!next,getContinuation:next};
+}
+test('playlist authority follows live additions/removals without persisting members as parent grants',async()=>{
+ let ids=['BBBBBBBBBBB'];let reads=0;
+ const f=await createFixture({playlistLibrary:fakePlaylists(async()=>{reads++;return playlistPage(ids);})});
+ const add=await f.request('mutate',{token:f.token,body:{operation:'add',link:PU,note:'Family'}});
+ assert.equal(add.status,200);assert.match(f.db.list_text,/playlist\?list=/);assert.doesNotMatch(f.db.list_text,/BBBBBBBBBBB/);
+ const one=await f.request('list',{method:'GET',query:{format:'native'}});
+ assert.match(one.data.list,/BBBBBBBBBBB/);assert.match(one.data.list,/mVTlbvQ_010/);assert.doesNotMatch(one.data.list,/playlist\?/);
+ assert.equal(one.data.preparedCatalog.entries.find(v=>v.item_id==='BBBBBBBBBBB').title,'שם BBBBBBBBBBB');
+ ids=['CCCCCCCCCCC'];
+ const two=await f.request('list',{method:'GET',query:{format:'native',detail:'grants'}});
+ assert.doesNotMatch(two.data.list,/BBBBBBBBBBB/);assert.match(two.data.list,/CCCCCCCCCCC/);assert.equal(two.data.version,one.data.version);
+ assert.ok(reads>=3);assert.equal(two.data.preparedCatalog,undefined);
+ const parent=await f.request('list',{method:'GET'});assert.match(parent.data.list,/playlist\?/);assert.doesNotMatch(parent.data.list,/CCCCCCCCCCC/);
+ await f.request('mutate',{token:f.token,body:{operation:'remove',link:PU}});
+ const removed=await f.request('list',{method:'GET',query:{format:'native'}});assert.doesNotMatch(removed.data.list,/CCCCCCCCCCC/);
+});
+test('playlist failure or empty membership grants nothing from that source; direct approvals survive',async()=>{
+ let broken=false;
+ const f=await createFixture({playlistLibrary:fakePlaylists(async()=>{if(broken)throw Error('upstream');return playlistPage(['mVTlbvQ_010','BBBBBBBBBBB']);})});
+ f.db.list_text+=PU+'\n';
+ assert.match((await f.request('list',{method:'GET',query:{format:'native'}})).data.list,/BBBBBBBBBBB/);
+ broken=true;
+ const fail=await f.request('list',{method:'GET',query:{format:'native'}});
+ assert.equal(fail.status,200);assert.match(fail.data.list,/mVTlbvQ_010/);assert.doesNotMatch(fail.data.list,/BBBBBBBBBBB/);assert.equal(fail.data.unavailablePlaylists.length,1);
+});
+test('playlist fully follows continuations; incomplete later page never approves first page',async()=>{
+ let fail=false;
+ const f=await createFixture({playlistLibrary:fakePlaylists(async()=>playlistPage(['BBBBBBBBBBB'],{next:async()=>{if(fail)throw Error('page2');return playlistPage(['CCCCCCCCCCC']);}}))});
+ f.db.list_text=PU+'\n';
+ const good=await f.request('list',{method:'GET',query:{format:'effective'}});
+ assert.match(good.data.list,/BBBBBBBBBBB/);assert.match(good.data.list,/CCCCCCCCCCC/);
+ fail=true;const bad=await f.request('list',{method:'GET',query:{format:'native'}});assert.equal(bad.data.list,'');assert.equal(bad.data.unavailablePlaylists.length,1);
+});
+test('playlist empty is a successful empty authorization, not a stale snapshot',async()=>{
+ const f=await createFixture({playlistLibrary:fakePlaylists(async()=>playlistPage([]))});f.db.list_text=PU+'\n';
+ const r=await f.request('list',{method:'GET',query:{format:'native'}});assert.equal(r.data.list,'');assert.equal(r.data.unavailablePlaylists.length,0);
+});
+test('parent removal during playlist lookup returns conflict, not the old grant',async()=>{
+ let fixture;
+ const f=fixture=await createFixture({playlistLibrary:fakePlaylists(async()=>{fixture.db.list_text='';fixture.db.version++;return playlistPage(['BBBBBBBBBBB']);})});f.db.list_text=PU+'\n';
+ for(const format of ['native','effective']){f.db.list_text=PU+'\n';const r=await f.request('list',{method:'GET',query:{format}});assert.equal(r.status,409);assert.equal(r.data.error,'AUTH_CHANGED_RETRY');}
+});
+test('playlist source validation rejects private/unavailable, over-limit and unsafe targets before writes',async()=>{
+ const f=await createFixture({playlistLibrary:fakePlaylists(async()=>{throw Error('private');})});
+ const before=f.patches();
+ assert.equal((await f.request('mutate',{token:f.token,body:{operation:'add',link:PU}})).data.error,'PLAYLIST_UNAVAILABLE');
+ for(const link of ['https://youtube.com/playlist?list=WL','https://youtube.com/playlist?list=RDabcdefghijk','https://evil.example/playlist?list='+PL,'https://youtube.com/playlist?list='+PL+'&list='+PL])assert.equal((await f.request('mutate',{token:f.token,body:{operation:'add',link}})).status,400);
+ assert.equal((await f.request('mutate',{body:{operation:'add',link:PU}})).status,401);assert.equal(f.patches(),before);
+});
+test('playlist size is bounded and no partial oversized playlist becomes a grant',async()=>{
+ const f=await createFixture({playlistLibrary:fakePlaylists(async()=>playlistPage(Array(501).fill('BBBBBBBBBBB')))});
+ assert.equal((await f.request('metadata',{token:f.token,body:{link:PU}})).data.error,'PLAYLIST_TOO_LARGE');
+ f.db.list_text=PU+'\n';assert.equal((await f.request('list',{method:'GET',query:{format:'native'}})).data.list,'');
+ const list=Array.from({length:4},(_,i)=>PU+i).join('\n');
+ assert.equal((await f.request('replace',{token:f.token,body:{list,expectedVersion:f.db.version}})).status,400);
+});
+test('multiple playlist overlap and direct approval are deduplicated without losing independent permission',async()=>{
+ const f=await createFixture({playlistLibrary:fakePlaylists(async id=>playlistPage(id===PL?['mVTlbvQ_010','BBBBBBBBBBB']:['BBBBBBBBBBB']))});
+ f.db.list_text+=PU+'\n'+PU+'1\n';
+ let r=await f.request('list',{method:'GET',query:{format:'native'}});assert.equal((r.data.list.match(/BBBBBBBBBBB/g)||[]).length,2); // URL + display note
+ f.db.list_text=A+'\n'+PU+'1\n';r=await f.request('list',{method:'GET',query:{format:'native'}});assert.match(r.data.list,/BBBBBBBBBBB/);assert.match(r.data.list,/mVTlbvQ_010/);
+});
+test('playlist parser reads items only, rejects foreign LockupView and never approves recommendations',async()=>{
+ let foreign=false;
+ const f=await createFixture({playlistLibrary:fakePlaylists(async()=>({info:{title:'test'},items:[{type:'LockupView',content_id:'BBBBBBBBBBB',content_type:'VIDEO',metadata:{title:'Member'},renderer_context:{command_context:{on_tap:{payload:{playlistId:foreign?'OTHER':PL}}}}}],videos:[{id:'CCCCCCCCCCC'}],has_continuation:false}))});
+ f.db.list_text=PU+'\n';let r=await f.request('list',{method:'GET',query:{format:'native'}});assert.match(r.data.list,/BBBBBBBBBBB/);assert.doesNotMatch(r.data.list,/CCCCCCCCCCC/);
+ foreign=true;r=await f.request('list',{method:'GET',query:{format:'native'}});assert.equal(r.data.list,'');
 });
