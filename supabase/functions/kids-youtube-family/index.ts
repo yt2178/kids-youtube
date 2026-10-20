@@ -75,7 +75,14 @@ Deno.serve(async req=>{
    // independently authenticated, confirmed, non-anonymous Supabase Auth user.
    // Existing family is returned idempotently.
    const existing=await select("families","owner_id=eq."+encodeURIComponent(userId)+"&select=id&limit=1");
-   if(existing.length===1){\n    // Repair a previous partial enrolment without modifying an existing list.\n    const id=existing[0].id;\n    await serviceRequest("/rest/v1/family_approvals",{method:"POST",\n     headers:{"Content-Type":"application/json","Prefer":"resolution=ignore-duplicates,return=minimal"},\n     body:JSON.stringify({family_id:id,list_text:"",version:1})});\n    return response({created:false,familyId:id},200,origin);\n   }
+   if(existing.length===1){
+    // Repair a previous partial enrolment without modifying an existing list.
+    const id=existing[0].id;
+    await serviceRequest("/rest/v1/family_approvals",{method:"POST",
+     headers:{"Content-Type":"application/json","Prefer":"resolution=ignore-duplicates,return=minimal"},
+     body:JSON.stringify({family_id:id,list_text:"",version:1})});
+    return response({created:false,familyId:id},200,origin);
+   }
    const body=await parseBody(req);
    const name=typeof body.name==="string"?body.name.trim():"";
    if(name.length<1||name.length>80)fail("INVALID_NAME",400);
