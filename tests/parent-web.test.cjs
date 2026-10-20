@@ -543,5 +543,5 @@ test('parent viewing surfaces clearly warn about ads',()=>{
  assert.equal((html.match(/class="official-player-notice"/g)||[]).length,2);
  assert.match(html,/אין אפשרות להציג את הסרטון ללא פרסומות/);
  assert.match(html,/התוכן מוגבל לסרטונים שאישרו ההורים/);
- assert.match(html,/\\.official-player-notice\\{/);
+ assert.ok(html.includes('.official-player-notice{'));
 });
