@@ -107,6 +107,8 @@ Deno.serve(async req=>{
   const identity=await getUser(req);
   const userId=identity.id;
   if(action==="enroll"){
+   // Public self-service enrolment is disabled until the pilot is approved.
+   if(Deno.env.get("FAMILY_PILOT_ENROLL_ENABLED")!=="true")fail("ENROLLMENT_CLOSED",403);
    if(identity.isAnonymous||!identity.confirmed)fail("UNAUTHORIZED",401);
    if(req.method!=="POST")fail("METHOD",405);
    // Account creation is deliberately not exposed here. Enrolment requires an
