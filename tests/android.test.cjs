@@ -458,7 +458,7 @@ test('Android WebView 83 gets replaceChildren before app startup; modern WebView
     assert.ok(compat>=0);
     assert.ok(compat<scripts.indexOf('providers.js?v=20261006h'));
     assert.ok(compat<scripts.indexOf('native-adapter.js'));
-    assert.ok(compat<scripts.indexOf('app.js?v=20261020a'));
+    assert.ok(compat<scripts.indexOf('app.js?v=20261020b'));
     const shim=fs.readFileSync(path.join(out,'legacy-webview.js'),'utf8');
     new vm.Script(shim);
     class OldElement{
