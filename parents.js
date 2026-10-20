@@ -130,7 +130,7 @@ ui['reset-list'].addEventListener('click',async()=>{
   if(ui['reset-list'].disabled || !currentList.trim())return;
   if(!Number.isSafeInteger(currentVersion)){ui['list-status'].textContent='יש לרענן את הרשימה לפני איפוס.';return;}
   if(!confirm('איפוס מוחק את כל אישורי הסרטונים, הערוצים והפלייליסטים ברשימה הנוכחית. להמשיך?'))return;
-  if(!confirm('אישור סופי: הרשימה תתרוקן ולא ניתן לשחזר אותה מתוך האתר. האם לאפס?'))return;
+  if(!confirm('אישור סופי: הרשימה תתרוקן. ניתן לשחזר רק אם שמרתם קודם קובץ גיבוי. האם לאפס?'))return;
   const epoch=sessionEpoch,expectedVersion=currentVersion;
   setBusy(ui['reset-list'],true);ui['list-status'].textContent='מאפסים אישורים…';
   try{
