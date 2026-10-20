@@ -17,7 +17,7 @@ as $$
 declare v_family uuid;
 begin
  if p_code_hash !~ '^[a-f0-9]{64}$' or p_device_user is null
-  or length(btrim(p_device_name)) not between 1 and 80 then
+  or p_device_name is null or length(btrim(p_device_name)) not between 1 and 80 then
   return null;
  end if;
  select family_id into v_family
