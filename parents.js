@@ -164,7 +164,7 @@ ui['restore-file'].addEventListener('change',async()=>{
     backup=JSON.parse(await file.text());
     if(!backup||backup.format!=='kids-youtube-approvals-backup'||backup.schemaVersion!==1
       ||typeof backup.list!=='string'||backup.list.length>1000000
-      ||!Array.isArray(entries(backup.list)))throw Error('INVALID_BACKUP');
+      ||entries(backup.list).some(item=>item.kind==='unknown'))throw Error('INVALID_BACKUP');
   }catch(_){ui['list-status'].textContent='קובץ הגיבוי אינו בפורמט הנתמך.';return;}
   if(!Number.isSafeInteger(currentVersion)){ui['list-status'].textContent='רעננו את הרשימה לפני שחזור.';return;}
   const count=entries(backup.list).length;
