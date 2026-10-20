@@ -545,3 +545,16 @@ test('parent viewing surfaces clearly warn about ads',()=>{
  assert.match(html,/התוכן מוגבל לסרטונים שאישרו ההורים/);
  assert.ok(html.includes('.official-player-notice{'));
 });
+
+test('backup and restore protect parent approvals from accidental loss',()=>{
+ const html=fs.readFileSync('parents.html','utf8');
+ const source=fs.readFileSync('parents.js','utf8');
+ for(const id of ['backup-list','restore-list','restore-file'])assert.ok(html.includes('id="'+id+'"'));
+ assert.match(source,/kids-youtube-approvals-backup/);
+ assert.match(source,/schemaVersion:1/);
+ assert.match(source,/JSON\.parse\(await file\.text\(\)\)/);
+ assert.match(source,/file\.size>1500000/);
+ assert.match(source,/entries\(backup\.list\)\.some\(/);
+ assert.match(source,/list:backup\.list,expectedVersion/);
+ assert.match(source,/e\.status===409/);
+});
