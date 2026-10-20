@@ -21,14 +21,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.13'
       - name: Install isolated yt-dlp
         run: python -m pip install --disable-pip-version-check "yt-dlp[default]"
       - name: Show yt-dlp metadata-only results (no URLs or payloads)
         run: python tools/compare-ytdlp-readonly.py
+      - uses: android-actions/setup-android@v3
+        continue-on-error: true
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
       - name: Show NewPipe metadata-only results (same IDs)
         working-directory: android
         env:
