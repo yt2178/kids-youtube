@@ -7,7 +7,7 @@ test('family approvals draft cannot mutate singleton and enforces isolation',()=
  assert.match(sql,/family_id uuid primary key references public\.families\(id\)/);
  assert.match(sql,/enable row level security/);
  assert.match(sql,/revoke all on public\.family_approvals from public, anon, authenticated/);
- assert.match(sql,/private\.is_parent\(family_id\)/);
+ assert.doesNotMatch(sql,/create policy family_approval_(?:insert|update|delete)/i);
  assert.match(sql,/private\.can_read_family\(family_id\)/);
  assert.doesNotMatch(sql,/\b(?:update|delete|drop|truncate|alter)\s+(?:table\s+)?public\.kids_youtube_state\b/i);
  assert.doesNotMatch(sql,/\bdrop\s+policy\b/i);
