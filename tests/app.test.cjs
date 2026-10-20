@@ -414,6 +414,14 @@ async function inputSearch(a,query) {
 function clickGrid(a,card) {
   a.elements.grid.listeners.click[0]({target:{closest:()=>card}});
 }
+test('infinite scrolling uses a guarded observer and preserves manual load-more fallback',()=>{
+  const script=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  assert.match(script,/typeof IntersectionObserver === 'function'/);
+  assert.match(script,/moreObserver\.observe\(ui\.more\)/);
+  assert.match(script,/scrollArmed = false;\s*loadMoreVideos\(\)/);
+  assert.match(script,/ui\.more\.hidden \|\| ui\.more\.disabled/);
+  assert.match(script,/ui\.more\.addEventListener\('click', loadMoreVideos\)/);
+});
 test('default video tab combines manual approvals and approved channels',async()=>{
   const a=await app({videos:[{id:id(3),title:'ידני'}],channels:[{id:A,name:'מאיר'}]},metadataApi);
   assert.deepEqual(visibleVideoIds(a),[id(3),id(1),id(2)]);
