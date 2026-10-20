@@ -87,6 +87,15 @@ function validateApprovalList(list:string){
  }
 }
 
+async function sha256hex(input:string){
+ const data=new TextEncoder().encode(input);
+ return [...new Uint8Array(await crypto.subtle.digest("SHA-256",data))].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+function newPairCode(){
+ const bytes=crypto.getRandomValues(new Uint8Array(12));
+ return btoa(String.fromCharCode(...bytes)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+
 Deno.serve(async req=>{
  const origin=req.headers.get("origin");
  if(origin&&!ALLOWED.has(origin))return response({error:"ORIGIN_DENIED"},403,origin);
@@ -94,10 +103,12 @@ Deno.serve(async req=>{
  try{
   if(!BASE.startsWith("https://")||!SERVICE)fail("NOT_CONFIGURED",503);
   const action=new URL(req.url).searchParams.get("action")||"list";
-  if(!["list","replace","enroll"].includes(action))fail("UNKNOWN_ACTION",404);
+  if(!["list","replace","enroll","create-code","pair-device"].includes(action))fail("UNKNOWN_ACTION",404);
   const identity=await getUser(req);
   const userId=identity.id;
   if(action==="enroll"){
+   // Public self-service enrolment is disabled until the pilot is approved.
+   if(Deno.env.get("FAMILY_PILOT_ENROLL_ENABLED")!=="true")fail("ENROLLMENT_CLOSED",403);
    if(identity.isAnonymous||!identity.confirmed)fail("UNAUTHORIZED",401);
    if(req.method!=="POST")fail("METHOD",405);
    // Account creation is deliberately not exposed here. Enrolment requires an
@@ -128,7 +139,36 @@ Deno.serve(async req=>{
     body:JSON.stringify({family_id:familyId,list_text:"",version:1})});
    return response({created:true,familyId},201,origin);
   }
+  if(action==="pair-device"){
+   if(req.method!=="POST")fail("METHOD",405);
+   if(!identity.isAnonymous)fail("FORBIDDEN",403);
+   // Existing devices cannot re-pair, including revoked devices.
+   const already=await select("devices","auth_user_id=eq."+encodeURIComponent(userId)+"&select=id&limit=1");
+   if(already.length)fail("ALREADY_PAIRED",409);
+   const body=await parseBody(req);
+   const code=typeof body.code==="string"?body.code.trim():"";
+   const name=typeof body.name==="string"?body.name.trim():"";
+   if(!/^[A-Za-z0-9_-]{16}$/.test(code)||name.length<1||name.length>80)
+    fail("INVALID_REQUEST",400);
+   const claimed=await serviceRequest("/rest/v1/rpc/claim_family_pairing",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({p_code_hash:await sha256hex(code),p_device_user:userId,p_device_name:name})});
+   const familyId=await claimed.json();
+   if(typeof familyId!=="string"||!/^[a-f0-9-]{36}$/i.test(familyId))fail("PAIRING_DENIED",403);
+   return response({paired:true},200,origin);
+  }
   const who=await principal(identity);
+  if(action==="create-code"){
+   if(req.method!=="POST")fail("METHOD",405);
+   if(who.role!=="parent")fail("FORBIDDEN",403);
+   const code=newPairCode();
+   const expires=new Date(Date.now()+10*60*1000).toISOString();
+   await serviceRequest("/rest/v1/family_pair_codes?on_conflict=family_id",{method:"POST",
+    headers:{"Content-Type":"application/json","Prefer":"resolution=merge-duplicates,return=minimal"},
+    body:JSON.stringify({family_id:who.familyId,code_hash:await sha256hex(code),
+     expires_at:expires,consumed_at:null})});
+   return response({code,expiresAt:expires},200,origin);
+  }
   if(action==="list"){
    if(req.method!=="GET")fail("METHOD",405);
    return response(await readRow(who.familyId),200,origin);
