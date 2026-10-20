@@ -27,7 +27,8 @@ async function select(table:string,query:string){
  if(!Array.isArray(rows))fail("STORAGE_UNAVAILABLE",503);
  return rows;
 }
-async function getUser(req:Request){
+type Identity={id:string;isAnonymous:boolean;confirmed:boolean};
+async function getUser(req:Request):Promise<Identity>{
  const authorization=req.headers.get("authorization")||"";
  if(!/^Bearer [A-Za-z0-9._-]{20,4000}$/.test(authorization))fail("UNAUTHORIZED",401);
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),TIMEOUT);
@@ -36,15 +37,19 @@ async function getUser(req:Request){
    signal:controller.signal,redirect:"error"});
   if(!res.ok)fail("UNAUTHORIZED",401);
   const user=await res.json();
-  if(!user||!user.email_confirmed_at&&!user.confirmed_at||typeof user.id!=="string"||!/^[a-f0-9-]{36}$/i.test(user.id)||user.is_anonymous===true)
+  if(!user||typeof user.id!=="string"||!/^[a-f0-9-]{36}$/i.test(user.id))
    fail("UNAUTHORIZED",401);
-  return user.id as string;
+  return {id:user.id,isAnonymous:user.is_anonymous===true,confirmed:!!(user.email_confirmed_at||user.confirmed_at)};
  }finally{clearTimeout(timer);}
 }
-async function principal(userId:string){
- const parents=await select("families","owner_id=eq."+encodeURIComponent(userId)+"&select=id&limit=1");
- if(parents.length===1)return {familyId:parents[0].id as string,role:"parent"};
- const devices=await select("devices","auth_user_id=eq."+encodeURIComponent(userId)+"&revoked_at=is.null&select=family_id&limit=1");
+async function principal(identity:Identity){
+ // Anonymous identities are never parents. A device must be explicitly bound
+ // in the database and not revoked, even when its Auth user is anonymous.
+ if(!identity.isAnonymous&&identity.confirmed){
+  const parents=await select("families","owner_id=eq."+encodeURIComponent(identity.id)+"&select=id&limit=1");
+  if(parents.length===1)return {familyId:parents[0].id as string,role:"parent"};
+ }
+ const devices=await select("devices","auth_user_id=eq."+encodeURIComponent(identity.id)+"&revoked_at=is.null&select=family_id&limit=1");
  if(devices.length===1)return {familyId:devices[0].family_id as string,role:"device"};
  fail("NO_FAMILY",403);
 }
@@ -90,8 +95,10 @@ Deno.serve(async req=>{
   if(!BASE.startsWith("https://")||!SERVICE)fail("NOT_CONFIGURED",503);
   const action=new URL(req.url).searchParams.get("action")||"list";
   if(!["list","replace","enroll"].includes(action))fail("UNKNOWN_ACTION",404);
-  const userId=await getUser(req);
+  const identity=await getUser(req);
+  const userId=identity.id;
   if(action==="enroll"){
+   if(identity.isAnonymous||!identity.confirmed)fail("UNAUTHORIZED",401);
    if(req.method!=="POST")fail("METHOD",405);
    // Account creation is deliberately not exposed here. Enrolment requires an
    // independently authenticated, confirmed, non-anonymous Supabase Auth user.
@@ -121,7 +128,7 @@ Deno.serve(async req=>{
     body:JSON.stringify({family_id:familyId,list_text:"",version:1})});
    return response({created:true,familyId},201,origin);
   }
-  const who=await principal(userId);
+  const who=await principal(identity);
   if(action==="list"){
    if(req.method!=="GET")fail("METHOD",405);
    return response(await readRow(who.familyId),200,origin);
