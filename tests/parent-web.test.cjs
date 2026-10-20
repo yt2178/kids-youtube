@@ -504,10 +504,10 @@ test('refreshing an unchanged parent list preserves rendered row nodes and edit 
   assert.equal(a.elements['approved-text'].value,video+'\\n');
 });
 
-test('playlist links are explicit, canonical and do not turn a watch link into a blanket approval',()=>{
+test('playlist links are canonical and shared watch URLs identify their playlists',()=>{
  const id='PLrfcruGtplwHxMQ6Wi2x0uVIrHF9uFcSz';
  assert.deepEqual(links.classify('https://youtube.com/playlist?list='+id+'&si=share'),{kind:'playlist',id,url:'https://www.youtube.com/playlist?list='+id,label:'פלייליסט YouTube'});
- assert.equal(links.classify(video+'&list='+id).kind,'video');
+ assert.equal(links.classify(video+'&list='+id).kind,'playlist');
  for(const input of ['https://youtube.com/playlist?list=WL','https://youtube.com/playlist?list=LL','https://youtube.com/playlist?list=RDabcdefghijk','https://youtube.com/playlist?list='+id+'&list='+id])assert.throws(()=>links.classify(input));
 });
 test('shared watch URL approves whole playlist when list parameter is present',()=>{const id='PL6S-FHVB7IevferUlLMPeomhONCnSgLzp';const parsed=links.classify('https://www.youtube.com/watch?v=yMTFOeNB7Hs&list='+id);assert.equal(parsed.kind,'playlist');assert.equal(parsed.url,'https://www.youtube.com/playlist?list='+id);});
