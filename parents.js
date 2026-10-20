@@ -2,7 +2,7 @@
 'use strict';
 const API='https://jxhelpxhrmwvzrrfrjuh.supabase.co/functions/v1/kids-youtube';
 const PARENT_REQUEST_TIMEOUT_MS=20000, CHANNEL_IMAGE_TIMEOUT_MS=8000; // no automatic retry of parent writes
-const ids=['management-search-toggle','management-search-panel','search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','reset-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
+const ids=['management-search-toggle','management-search-panel','search-query','search-submit','search-status','search-results','search-more','auth','auth-title','auth-help','auth-spinner','password','remember','login','auth-status','parent-area','link','inspect','status','preview','kind','media-title','media-author','youtube-player-shell','youtube-player-loading','youtube-player','channel-image-loading','channel-image','channel-symbol','canonical','note','save','channel-warning','approved-cards','approved-text','manual-editor','cards-mode','manual-mode','save-list','list-status','refresh-list','backup-list','restore-list','restore-file','reset-list','management-tab','catalog-tab','management-view','catalog-view','parent-catalog','parent-catalog-loading','catalog-player-dialog','catalog-player-title','catalog-player-loading','catalog-player','catalog-player-close','logout','remove-dialog','remove-name','remove-link','cancel-remove','confirm-remove'];
 const ui=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));let parentLink=null,setupRequired=false,currentList='',currentVersion=null,manualVersion=null,pendingRemove=null,channelImageTimer=null,channelImageDeadline=null,previewGeneration=0,sessionEpoch=0,listSequence=0;let catalogSupported=false,catalogBackfillStarted=false;const pendingRequests=new Set();
 const TRUSTED_FRAME=window.top===window;
 function token(){try{return localStorage.getItem('kidsParentToken')||sessionStorage.getItem('kidsParentToken')||'';}catch(_){return '';}}
@@ -143,6 +143,45 @@ ui['reset-list'].addEventListener('click',async()=>{
     if(e.status===401){expireSession();location.reload();return;}
     ui['list-status'].textContent=e.status===409?'הרשימה השתנתה בינתיים. לא בוצע איפוס. רעננו ובדקו שוב.':'האיפוס נכשל. הרשימה נשארה ללא שינוי.';
   }finally{setBusy(ui['reset-list'],false);}
+});
+// Backups never include passwords, session tokens or server metadata.
+ui['backup-list'].addEventListener('click',()=>{
+  if(!Number.isSafeInteger(currentVersion)){ui['list-status'].textContent='רעננו את הרשימה לפני יצירת גיבוי.';return;}
+  const content=JSON.stringify({format:'kids-youtube-approvals-backup',schemaVersion:1,createdAt:new Date().toISOString(),list:currentList},null,2);
+  const blob=new Blob([content],{type:'application/json'}),url=URL.createObjectURL(blob);
+  try{
+    const a=document.createElement('a');a.href=url;a.download='kids-youtube-approvals-'+new Date().toISOString().slice(0,10)+'.json';
+    a.style.display='none';document.body.append(a);a.click();a.remove();
+    ui['list-status'].textContent='קובץ הגיבוי הוכן להורדה. בדקו שהוא נשמר במכשיר לפני איפוס.';
+  }finally{setTimeout(()=>URL.revokeObjectURL(url),10000);}
+});
+ui['restore-list'].addEventListener('click',()=>{if(!ui['restore-list'].disabled){ui['restore-file'].value='';ui['restore-file'].click();}});
+ui['restore-file'].addEventListener('change',async()=>{
+  const file=ui['restore-file'].files?.[0];if(!file)return;
+  if(file.size>1500000){ui['list-status'].textContent='קובץ הגיבוי גדול מדי.';return;}
+  let backup;
+  try{
+    backup=JSON.parse(await file.text());
+    if(!backup||backup.format!=='kids-youtube-approvals-backup'||backup.schemaVersion!==1
+      ||typeof backup.list!=='string'||backup.list.length>1000000
+      ||!Array.isArray(entries(backup.list)))throw Error('INVALID_BACKUP');
+  }catch(_){ui['list-status'].textContent='קובץ הגיבוי אינו בפורמט הנתמך.';return;}
+  if(!Number.isSafeInteger(currentVersion)){ui['list-status'].textContent='רעננו את הרשימה לפני שחזור.';return;}
+  const count=entries(backup.list).length;
+  if(!confirm('שחזור מגיבוי יחליף את כל הרשימה הנוכחית ב־'+count+' אישורים מהקובץ. להמשיך?'))return;
+  if(!confirm('אישור סופי: הרשימה הנוכחית תוחלף. מומלץ לגבות אותה תחילה. לשחזר?'))return;
+  const epoch=sessionEpoch,expectedVersion=currentVersion;
+  setBusy(ui['restore-list'],true);ui['list-status'].textContent='משחזרים את האישורים…';
+  try{
+    const d=await api('replace',{method:'POST',auth:true,body:{list:backup.list,expectedVersion}});
+    if(epoch!==sessionEpoch)return;
+    listSequence++;setListMode(false);renderList(d.list,d.version);
+    ui['list-status'].textContent='הרשימה שוחזרה בהצלחה.';
+  }catch(e){
+    if(epoch!==sessionEpoch)return;
+    if(e.status===401){expireSession();location.reload();return;}
+    ui['list-status'].textContent=e.status===409?'הרשימה השתנתה. לא בוצע שחזור; רעננו אותה ונסו שוב.':'השחזור לא הצליח. הרשימה הנוכחית נשארה ללא שינוי.';
+  }finally{setBusy(ui['restore-list'],false);}
 });
 ui['management-tab'].addEventListener('click',()=>setParentView(false));
 ui['catalog-tab'].addEventListener('click',()=>setParentView(true));
