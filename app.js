@@ -387,9 +387,23 @@ function render(config, lists) {
       card.setAttribute('aria-label', (PARENT_CATALOG ? 'צפייה בסרטון: ' : 'פתיחה באפליקציה: ') + item.title);
       const thumb = document.createElement('span'); thumb.className = 'thumb';
       const image = document.createElement('img');
-      image.src = 'https://img.youtube.com/vi/' + item.id + '/mqdefault.jpg';
       image.alt = ''; image.loading = PARENT_CATALOG ? 'eager' : 'lazy'; image.decoding = 'async'; image.referrerPolicy = 'no-referrer';
-      image.addEventListener('error', () => { image.hidden = true; }, {once:true});
+      // In the parent iframe prefer the alternate official thumbnail host,
+      // avoiding any previous img.youtube.com service-worker image cache.
+      // An image failure must not silently leave a blank thumbnail forever.
+      const primaryHost = PARENT_CATALOG ? 'i.ytimg.com' : 'img.youtube.com';
+      const secondaryHost = PARENT_CATALOG ? 'img.youtube.com' : 'i.ytimg.com';
+      let fallbackTried = false;
+      image.addEventListener('error', () => {
+        if (!fallbackTried) {
+          fallbackTried = true;
+          image.src = 'https://' + secondaryHost + '/vi/' + item.id + '/mqdefault.jpg';
+        } else {
+          image.hidden = true;
+          thumb.setAttribute('data-image-unavailable', 'true');
+        }
+      });
+      image.src = 'https://' + primaryHost + '/vi/' + item.id + '/mqdefault.jpg';
       const play = document.createElement('span'); play.className = 'play'; play.setAttribute('aria-hidden','true');
       play.textContent = '▶';
       const title = document.createElement('span'); title.className = 'card-title'; title.dir = 'auto'; title.textContent = item.title;
