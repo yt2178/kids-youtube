@@ -421,7 +421,7 @@ test('default video tab combines manual approvals and approved channels',async()
   assert.equal(a.elements['channels-tab'].getAttribute('aria-pressed'),'false');
 });
 test('child tabs are ordered all channels videos in RTL and playlists appear inside channels',async()=>{
-  const tabs=html.match(/<nav class="tabs"[\\s\\S]*?<\\/nav>/)[0];
+  const tabs=html.slice(html.indexOf('<nav class="tabs"'),html.indexOf('</nav>')+6);
   assert.ok(tabs.indexOf('id="all-tab"')<tabs.indexOf('id="channels-tab"'));
   assert.ok(tabs.indexOf('id="channels-tab"')<tabs.indexOf('id="videos-tab"'));
   const config={videos:[{id:id(1),title:'פרק ראשון'},{id:id(2),title:'פרק שני'},{id:id(3),title:'סרטון נפרד'}],channels:[]};
