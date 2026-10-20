@@ -175,19 +175,20 @@ function playlistSources(raw:string){return [...existingUrls(raw)].filter(url=>p
 function checkPlaylistLimit(raw:string){if(playlistSources(raw).length>MAX_PLAYLISTS)throw Error("PLAYLIST_LIMIT");}
 async function effectiveApprovals(raw:string){
   const sources=playlistSources(raw);checkPlaylistLimit(raw);
-  if(!sources.length)return {list:raw,rows:[] as any[],unavailable:[] as string[]};
+  if(!sources.length)return {list:raw,rows:[] as any[],unavailable:[] as string[],groups:[] as any[]};
   const grants=new Map<string,string>();
   for(const line of raw.split(/\r?\n/)){
     const value=line.trim();if(!value||value.startsWith("//"))continue;
     try{const entry=splitEntry(value);if(!playlistId(entry.url))grants.set(entry.url,entry.note);}catch{}
   }
-  const rows:any[]=[],unavailable:string[]=[];
+  const rows:any[]=[],unavailable:string[]=[],groups:any[]=[];
   const results=await Promise.all(sources.map(async url=>{
     try{return {url,result:await readPlaylist(playlistId(url)!)};}catch{return {url,result:null};}
   }));
   for(const {url,result} of results){
     if(!result){unavailable.push(url);continue;} // No stale playlist-only grants.
     const checked=new Date().toISOString();
+    groups.push({id:"playlist:"+playlistId(url),name:result.title||"פלייליסט",videoIds:result.videos.map((v:any)=>v.id),thumbnail:result.videos[0]?"https://img.youtube.com/vi/"+result.videos[0].id+"/mqdefault.jpg":""});
     for(const video of result.videos){
       const videoUrl="https://www.youtube.com/watch?v="+video.id;
       if(!grants.has(videoUrl))grants.set(videoUrl,video.title);
@@ -195,7 +196,7 @@ async function effectiveApprovals(raw:string){
         thumbnail:"https://img.youtube.com/vi/"+video.id+"/mqdefault.jpg",checked_at:checked,published:0});
     }
   }
-  return {list:[...grants].map(([url,note])=>url+(note?" // "+note:"")).join("\n")+(grants.size?"\n":""),rows,unavailable};
+  return {list:[...grants].map(([url,note])=>url+(note?" // "+note:"")).join("\n")+(grants.size?"\n":""),rows,unavailable,groups};
 }
 function mergeDisplayRows(rows:any[],extra:any[]){return [...new Map([...extra,...rows].map(row=>[row.approval_url,row])).values()].slice(0,500);}
 async function unchangedState(s:any){const latest=await state();return latest.version===s.version&&latest.updated_at===s.updated_at&&latest.list_text===s.list_text;}
@@ -535,7 +536,7 @@ Deno.serve(async(req)=>{
     }
     if(req.method==="GET"&&action==="list"){
       const format=url.searchParams.get("format");
-      const effective=["native","effective","text"].includes(format||"")?await effectiveApprovals(s.list_text):{list:s.list_text,rows:[],unavailable:[]};
+      const effective=["native","effective","text"].includes(format||"")?await effectiveApprovals(s.list_text):{list:s.list_text,rows:[],unavailable:[],groups:[]};
       if(format!=="native"&&format!=="effective"&&format&& !await unchangedState(s))return json({error:"AUTH_CHANGED_RETRY"},409,origin);
       if(format==="text")return new Response(effective.list,{status:200,headers:{...cors(origin),"Content-Type":"text/plain; charset=utf-8"}});
       if(format==="native"||format==="effective"){
@@ -572,7 +573,7 @@ Deno.serve(async(req)=>{
         try{latest=await state();}catch{return json({error:"STATE_RECHECK_FAILED"},503,origin);}
         if(latest.version!==s.version||latest.updated_at!==s.updated_at||latest.list_text!==s.list_text)
           return json({error:"AUTH_CHANGED_RETRY"},409,origin);
-        const response={list:effective.list,unavailablePlaylists:effective.unavailable,version:s.version,updatedAt:s.updated_at,catalogVersion:1,
+        const response={list:effective.list,playlistGroups:effective.groups,unavailablePlaylists:effective.unavailable,version:s.version,updatedAt:s.updated_at,catalogVersion:1,
           pinnedChannels:pins,...(preparedCatalog?{preparedCatalog}:{})};
         // Fit the same strict upper bound used by the native bridge.
         if(JSON.stringify(response).length>800000)
