@@ -142,7 +142,8 @@ Deno.serve(async req=>{
   if(!Array.isArray(rows)||rows.length!==1)fail("VERSION_CONFLICT",409);
   return response({list:rows[0].list_text,version:rows[0].version},200,origin);
  }catch(e){
-  const status=typeof e?.status==="number"?e.status:503;
-  return response({error:status===503?"SERVICE_UNAVAILABLE":String(e?.message||"FAILED")},status,origin);
+  const error=e as {status?:number;message?:string}|null;
+  const status=typeof error?.status==="number"?error.status:503;
+  return response({error:status===503?"SERVICE_UNAVAILABLE":String(error?.message||"FAILED")},status,origin);
  }
 });
