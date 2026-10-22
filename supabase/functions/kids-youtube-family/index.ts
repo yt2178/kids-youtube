@@ -47,7 +47,7 @@ async function getVerifiedEmail(req:Request){
  const response=await fetch(BASE+"/auth/v1/user",{headers:{apikey:SERVICE,Authorization:auth},redirect:"error"});
  if(!response.ok)return "";
  const profile=await response.json();
- if(!profile.email_confirmed_at&&!profile.confirmed_at)return "";
+ if(!profile.email_confirmed_at)return "";
  return typeof profile.email==="string"?profile.email.trim():"";
 }
 async function principal(identity:Identity){
@@ -111,7 +111,7 @@ Deno.serve(async req=>{
  try{
   if(!BASE.startsWith("https://")||!SERVICE)fail("NOT_CONFIGURED",503);
   const action=new URL(req.url).searchParams.get("action")||"list";
-  if(!["list","replace","enroll","create-code","pair-device","age-packs","apply-age-pack"].includes(action))fail("UNKNOWN_ACTION",404);
+  if(!["list","replace","enroll","create-code","pair-device","devices","revoke-device","age-packs","apply-age-pack"].includes(action))fail("UNKNOWN_ACTION",404);
   const identity=await getUser(req);
   const userId=identity.id;
   if(action==="enroll"){
@@ -153,6 +153,31 @@ Deno.serve(async req=>{
    return response({paired:true},200,origin);
   }
   const who=await principal(identity);
+  if(action==="devices"){
+   if(req.method!=="GET")fail("METHOD",405);
+   if(who.role!=="parent")fail("FORBIDDEN",403);
+   const devices=await select("devices","family_id=eq."+encodeURIComponent(who.familyId)+
+    "&select=id,name,created_at,revoked_at&order=created_at.desc&limit=100");
+   return response({devices},200,origin);
+  }
+  if(action==="revoke-device"){
+   if(req.method!=="POST")fail("METHOD",405);
+   if(who.role!=="parent")fail("FORBIDDEN",403);
+   const body=await parseBody(req);
+   const id=typeof body.deviceId==="string"?body.deviceId:"";
+   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(id))
+    fail("INVALID_DEVICE",400);
+   // Always match both the requested device and the VERIFIED parent's family.
+   const url="/rest/v1/devices?id=eq."+encodeURIComponent(id)+
+    "&family_id=eq."+encodeURIComponent(who.familyId)+"&revoked_at=is.null";
+   const updated=await serviceRequest(url,{
+    method:"PATCH",headers:{"Content-Type":"application/json","Prefer":"return=representation"},
+    body:JSON.stringify({revoked_at:new Date().toISOString()})
+   });
+   const rows=await updated.json();
+   if(!Array.isArray(rows)||rows.length!==1)fail("DEVICE_NOT_FOUND",404);
+   return response({revoked:true},200,origin);
+  }
   const ageBands=new Set(["0-3","3-6","6-10","10-13"]);
   if(action==="age-packs"){
    if(req.method!=="GET")fail("METHOD",405);
