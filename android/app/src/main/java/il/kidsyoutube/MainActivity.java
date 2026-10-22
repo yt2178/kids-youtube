@@ -332,6 +332,16 @@ public final class MainActivity extends Activity {
 
         overlay.addView(playerContainer,new LinearLayout.LayoutParams(-1,0,1));
         root.addView(overlay,new FrameLayout.LayoutParams(-1,-1));
+        // Pilot entry is visible only in debug APKs; existing release UI is unchanged.
+        if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0){
+            Button familyPilot=button("ניסוי משפחות");
+            familyPilot.setTextSize(12);
+            familyPilot.setOnClickListener(v->startActivity(
+                    new android.content.Intent(this,FamilyPairingActivity.class)));
+            FrameLayout.LayoutParams pilotParams=new FrameLayout.LayoutParams(dp(132),dp(42));
+            pilotParams.gravity=Gravity.TOP|Gravity.END;
+            root.addView(familyPilot,pilotParams);
+        }
         setContentView(root);
         debugStartup("view-hierarchy-ready");
         setupWeb();

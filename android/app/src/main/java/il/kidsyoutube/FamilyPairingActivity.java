@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package il.kidsyoutube;
+
+import android.app.Activity;
+import android.graphics.Color;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.*;
+import java.util.concurrent.*;
+import java.io.IOException;
+import java.util.concurrent.TimeUnit;
+import okhttp3.OkHttpClient;
+import org.json.JSONObject;
+
+/**
+ * Pilot-only family pairing. It does not switch the production playback/approval source.
+ * No token is displayed or logged. Network operations never run on the UI thread.
+ */
+public final class FamilyPairingActivity extends Activity {
+    private final ExecutorService worker=Executors.newSingleThreadExecutor();
+    private final Handler main=new Handler(Looper.getMainLooper());
+    private volatile boolean destroyed;
+    private EditText codeInput,nameInput;
+    private Button pairButton,verifyButton;
+    private TextView message;
+    private FamilySessionStore store;
+    private FamilyAuthClient auth;
+    private FamilyPairingClient pairing;
+    interface Job {String run() throws Exception;}
+    private int dp(int size){return Math.round(getResources().getDisplayMetrics().density*size);}
+    private void run(Job job) {
+        pairButton.setEnabled(false);verifyButton.setEnabled(false);
+        message.setText("מתבצעת בדיקה מול השרת…");
+        worker.execute(()->{
+            String result;
+            try{result=job.run();}
+            catch(Exception error){
+                String reason=error instanceof IOException?error.getMessage():"UNAVAILABLE";
+                result="הפעולה לא הושלמה ("+reason+"). אין שינוי בנגן הקיים.";
+            }
+            final String text=result;
+            main.post(()->{if(!destroyed){message.setText(text);pairButton.setEnabled(true);verifyButton.setEnabled(true);}});
+        });
+    }
+    private EditText input(String hint){
+        EditText field=new EditText(this);
+        field.setHint(hint);field.setSingleLine(true);
+        field.setTextColor(Color.WHITE);field.setHintTextColor(Color.LTGRAY);
+        return field;
+    }
+    @Override public void onCreate(Bundle state){
+        super.onCreate(state);
+        store=new FamilySessionStore(this);
+        OkHttpClient client=new OkHttpClient.Builder()
+                .connectTimeout(15,TimeUnit.SECONDS).readTimeout(20,TimeUnit.SECONDS)
+                .callTimeout(35,TimeUnit.SECONDS).retryOnConnectionFailure(false).build();
+        auth=new FamilyAuthClient(client);
+        pairing=new FamilyPairingClient(client);
+        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);
+        root.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        root.setPadding(dp(18),dp(30),dp(18),dp(20));root.setBackgroundColor(Color.rgb(26,26,46));
+        TextView title=new TextView(this);title.setText("שיוך מכשיר למשפחה — פיילוט");
+        title.setTextSize(23);title.setTextColor(Color.WHITE);title.setGravity(Gravity.CENTER);
+        root.addView(title);
+        TextView warning=new TextView(this);
+        warning.setText("זהו ניסוי נפרד. עד להפעלת מצב משפחתי מאומת, הצפייה באפליקציה ממשיכה להשתמש ברשימה הרגילה. יש להשתמש רק בקוד שההורה יצר.");
+        warning.setTextColor(Color.rgb(255,225,166));warning.setTextSize(15);
+        warning.setPadding(0,dp(18),0,dp(18));root.addView(warning);
+        codeInput=input("קוד שיוך בן 16 תווים");codeInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        root.addView(codeInput);
+        nameInput=input("שם המכשיר שיופיע אצל ההורה");root.addView(nameInput);
+        pairButton=new Button(this);pairButton.setText("שיוך מכשיר");root.addView(pairButton);
+        verifyButton=new Button(this);verifyButton.setText("בדיקת שיוך קיים");root.addView(verifyButton);
+        message=new TextView(this);message.setTextColor(Color.WHITE);message.setTextSize(16);
+        message.setPadding(0,dp(20),0,0);message.setText("יש להזין קוד שההורה יצר באתר המשפחות.");
+        root.addView(message);
+        ScrollView scroll=new ScrollView(this);scroll.addView(root);
+        setContentView(scroll);
+        pairButton.setOnClickListener(v->{
+            final String code=codeInput.getText().toString().trim();
+            final String name=nameInput.getText().toString().trim();
+            try{FamilyPairingClient.validate(code,name);}
+            catch(IllegalArgumentException invalid){message.setText("יש להזין קוד תקין ושם מכשיר.");return;}
+            run(()->{
+                if(store.load()!=null)return "קיים שיוך שמור. השתמשו בבדיקת השיוך.";
+                FamilyAuthClient.Session session=auth.createAnonymous();
+                pairing.pair(session.accessToken,code,name);
+                store.save(session.refreshToken);
+                try{
+                    JSONObject list=auth.list(session.accessToken);
+                    if(!list.has("list")||!list.has("version"))throw new IOException("INVALID_FAMILY_LIST");
+                    return "המכשיר שויך למשפחה בהצלחה. מצב הצפייה המשפחתי עדיין לא מופעל.";
+                }catch(IOException verification){
+                    return "השיוך נרשם, אך בדיקת הרשימה נכשלה ("+verification.getMessage()+"). אפשר לבדוק שוב.";
+                }
+            });
+        });
+        verifyButton.setOnClickListener(v->run(()->{
+            String saved=store.load();
+            if(saved==null)return "אין התחברות שמורה. יש לקבל קוד חדש מההורה.";
+            FamilyAuthClient.Session session=auth.refresh(saved);
+            JSONObject list=auth.list(session.accessToken);
+            if(!list.has("list")||!list.has("version"))throw new IOException("INVALID_FAMILY_LIST");
+            store.save(session.refreshToken);
+            return "השיוך מאומת. הרשימה המשפחתית נגישה, אך הנגן הקיים עדיין לא הועבר אליה.";
+        }));
+    }
+    @Override protected void onDestroy(){destroyed=true;worker.shutdownNow();super.onDestroy();}
+}
