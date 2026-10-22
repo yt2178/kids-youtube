@@ -1,0 +1,1 @@
+The family pilot currently has zero families and accepts existing confirmed Auth users only. Enrollment is disabled by default. Next: invite-only signup, verified email, real two-family isolation tests. Do not modify the legacy state.
