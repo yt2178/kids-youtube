@@ -111,7 +111,7 @@ Deno.serve(async req=>{
  try{
   if(!BASE.startsWith("https://")||!SERVICE)fail("NOT_CONFIGURED",503);
   const action=new URL(req.url).searchParams.get("action")||"list";
-  if(!["list","replace","enroll","create-code","pair-device","devices","revoke-device"].includes(action))fail("UNKNOWN_ACTION",404);
+  if(!["list","replace","enroll","create-code","pair-device","devices","revoke-device","age-packs","apply-age-pack"].includes(action))fail("UNKNOWN_ACTION",404);
   const identity=await getUser(req);
   const userId=identity.id;
   if(action==="enroll"){
@@ -177,6 +177,41 @@ Deno.serve(async req=>{
    const rows=await updated.json();
    if(!Array.isArray(rows)||rows.length!==1)fail("DEVICE_NOT_FOUND",404);
    return response({revoked:true},200,origin);
+  }
+  const ageBands=new Set(["0-3","3-6","6-10","10-13"]);
+  if(action==="age-packs"){
+   if(req.method!=="GET")fail("METHOD",405);
+   if(who.role!=="parent")fail("FORBIDDEN",403);
+   const items=await select("kids_age_pack_items","review_state=eq.approved&select=age_band,approval_url,title&order=age_band.asc,approval_url.asc&limit=2000");
+   const packs=Object.fromEntries([...ageBands].map(age=>[age,[] as unknown[]]));
+   for(const item of items){
+    if(ageBands.has(item.age_band)&&Array.isArray(packs[item.age_band]))
+      packs[item.age_band].push({title:item.title,url:item.approval_url});
+   }
+   return response({packs},200,origin);
+  }
+  if(action==="apply-age-pack"){
+   if(req.method!=="POST")fail("METHOD",405);
+   if(who.role!=="parent")fail("FORBIDDEN",403);
+   const body=await parseBody(req);
+   const age=typeof body.age==="string"?body.age:"";
+   const version=body.expectedVersion;
+   if(!ageBands.has(age)||!Number.isSafeInteger(version)||version<1)
+    fail("INVALID_REQUEST",400);
+   const items=await select("kids_age_pack_items","age_band=eq."+encodeURIComponent(age)+
+    "&review_state=eq.approved&select=approval_url&order=approval_url.asc&limit=501");
+   if(items.length<1)fail("PACK_EMPTY",409);
+   if(items.length>500)fail("PACK_TOO_LARGE",409);
+   const list=items.map(item=>item.approval_url).join("\n");
+   validateApprovalList(list);
+   const url="/rest/v1/family_approvals?family_id=eq."+encodeURIComponent(who.familyId)+
+     "&version=eq."+version;
+   const changed=await serviceRequest(url,{method:"PATCH",
+    headers:{"Content-Type":"application/json","Prefer":"return=representation"},
+    body:JSON.stringify({list_text:list,version:version+1,updated_at:new Date().toISOString()})});
+   const rows=await changed.json();
+   if(!Array.isArray(rows)||rows.length!==1)fail("VERSION_CONFLICT",409);
+   return response({list:rows[0].list_text,version:rows[0].version,ageBand:age},200,origin);
   }
   if(action==="create-code"){
    if(req.method!=="POST")fail("METHOD",405);
