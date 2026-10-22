@@ -3,7 +3,7 @@
 <title>משפחות — סביבת ניסוי להורים</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src https://jxhelpxhrmwvzrrfrjuh.supabase.co; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
 <meta name="referrer" content="no-referrer">
-<style>body{background:#1a1a2e;color:#fff;font:16px/1.5 system-ui,sans-serif;margin:auto;max-width:740px;padding:24px}section{border:1px solid #5b5471;border-radius:14px;padding:20px;margin:16px 0;background:#24243c}h1{font-size:24px}p{color:#e0dbe9}label{display:block;margin:12px 0 6px}input,textarea,button{font:inherit;border-radius:8px;box-sizing:border-box;padding:11px;min-height:45px;width:100%}input,textarea{background:#111221;color:white;border:1px solid #807699}button{background:#e94560;color:#fff;border:none;font-weight:bold;margin-top:12px;cursor:pointer}button:disabled{opacity:.55}textarea{height:200px;direction:ltr;text-align:left}.note{background:#473b24;border:1px solid #e8be6b;border-radius:12px;padding:14px;color:#fff2d2}#status{min-height:1.5em}a{color:#ffb9c7}[hidden]{display:none!important}</style><script src="./family-pilot.js?v=1" defer></script></head>
+<style>body{background:#1a1a2e;color:#fff;font:16px/1.5 system-ui,sans-serif;margin:auto;max-width:740px;padding:24px}section{border:1px solid #5b5471;border-radius:14px;padding:20px;margin:16px 0;background:#24243c}h1{font-size:24px}p{color:#e0dbe9}label{display:block;margin:12px 0 6px}input,textarea,select,button{font:inherit;border-radius:8px;box-sizing:border-box;padding:11px;min-height:45px;width:100%}input,textarea,select{background:#111221;color:white;border:1px solid #807699}button{background:#e94560;color:#fff;border:none;font-weight:bold;margin-top:12px;cursor:pointer}button:disabled{opacity:.55}textarea{height:200px;direction:ltr;text-align:left}.note{background:#473b24;border:1px solid #e8be6b;border-radius:12px;padding:14px;color:#fff2d2}#status{min-height:1.5em}a{color:#ffb9c7}[hidden]{display:none!important}</style><script src="./family-pilot.js?v=1" defer></script></head>
 <body><main><h1>ניהול משפחה — סביבת ניסוי</h1><p class="note">זו סביבת ניסוי נפרדת. היא אינה מחוברת עדיין לנגן הילדים ואינה משנה את הרשימה המשפחתית הקיימת. נדרש חשבון Supabase Auth מאומת. אין כאן הרשמה ציבורית או תשלום.</p>
 <section id="login-area"><h2>כניסת הורה לניסוי</h2><p>כרגע הכניסה מיועדת לחשבון Supabase קיים ומאומת בלבד. אין עדיין הרשמה עצמאית למשפחות חדשות. אין להשתמש כאן בסיסמת אתר ההורים הרגיל.</p><label for="email">כתובת דוא״ל</label><input id="email" type="email" autocomplete="username"><label for="password">סיסמה</label><input id="password" type="password" autocomplete="current-password"><button id="login" type="button">כניסה לחשבון קיים</button></section>
 <section id="setup-area" hidden><h2>פתיחת משפחה</h2><p>השלב הזה יוצר רשימה חדשה וריקה, שאינה מחליפה את הרשימה הנוכחית.</p><label for="family-name">שם המשפחה</label><input id="family-name" maxlength="80"><button id="enroll" type="button">יצירת משפחה ניסיונית</button></section>
@@ -12,4 +12,16 @@
 <p>מכשיר שבוטלה הרשאתו לא יוכל עוד לקבל את רשימת האישורים המשפחתית. ביטול ההרשאה אינו מוחק נתונים מהמכשיר.</p>
 <button id="refresh-devices" type="button">רענון רשימת מכשירים</button>
 <div id="device-list" role="list" aria-live="polite"></div></section>
+<section id="age-packs-area" hidden><h2>ספריות תוכן לפי גיל</h2>
+<p>רק סרטונים שעברו בדיקת תוכן מפורשת ייכללו בספריות. ספרייה שטרם נבדקה לא תהיה זמינה לבחירה.</p>
+<label for="age-band">בחירת קבוצת גיל</label><select id="age-band">
+<option value="0-3">גילאי 0–3</option>
+<option value="3-6">גילאי 3–6</option>
+<option value="6-10">גילאי 6–10</option>
+<option value="10-13">גילאי 10–13</option></select>
+<p id="age-pack-count" aria-live="polite">טוען נתונים…</p>
+<button id="refresh-age-packs" type="button">בדיקת ספריות זמינות</button>
+<button id="apply-age-pack" type="button" disabled>החלף את רשימת המשפחה בספרייה שנבחרה</button>
+<p>החלפת ספרייה משפיעה רק על המשפחה הניסיונית. הרשימה הישנה אינה משתנה.</p>
+</section>
 <section id="pairing-area" hidden><h2>שיוך מכשיר ילד</h2><p>יצירת קוד חד־פעמי לשיוך מכשיר למשפחה. הקוד תקף לעשר דקות ולשימוש אחד בלבד. עדיין אין באפליקציית הילדים מסך להזנת קוד זה.</p><button id="create-code" type="button">צור קוד שיוך</button><p id="pair-code" dir="ltr" style="font-size:22px;letter-spacing:2px;font-weight:bold;text-align:center"></p><p id="pair-expires"></p></section><p id="status" role="status" aria-live="polite"></p><button id="logout" hidden type="button">יציאה וסיום ההתחברות</button><p><a href="./parents.html">חזרה לאתר ההורים הרגיל</a></p></main></body></html>
