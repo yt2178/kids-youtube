@@ -47,7 +47,7 @@ async function getVerifiedEmail(req:Request){
  const response=await fetch(BASE+"/auth/v1/user",{headers:{apikey:SERVICE,Authorization:auth},redirect:"error"});
  if(!response.ok)return "";
  const profile=await response.json();
- if(!profile.email_confirmed_at&&!profile.confirmed_at)return "";
+ if(!profile.email_confirmed_at)return "";
  return typeof profile.email==="string"?profile.email.trim():"";
 }
 async function principal(identity:Identity){
