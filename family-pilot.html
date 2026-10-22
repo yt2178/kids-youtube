@@ -8,6 +8,10 @@
 <section id="login-area"><h2>כניסת הורה לניסוי</h2><p>כרגע הכניסה מיועדת לחשבון Supabase קיים ומאומת בלבד. אין עדיין הרשמה עצמאית למשפחות חדשות. אין להשתמש כאן בסיסמת אתר ההורים הרגיל.</p><label for="email">כתובת דוא״ל</label><input id="email" type="email" autocomplete="username"><label for="password">סיסמה</label><input id="password" type="password" autocomplete="current-password"><button id="login" type="button">כניסה לחשבון קיים</button></section>
 <section id="setup-area" hidden><h2>פתיחת משפחה</h2><p>השלב הזה יוצר רשימה חדשה וריקה, שאינה מחליפה את הרשימה הנוכחית.</p><label for="family-name">שם המשפחה</label><input id="family-name" maxlength="80"><button id="enroll" type="button">יצירת משפחה ניסיונית</button></section>
 <section id="editor-area" hidden><h2>רשימת האישורים של המשפחה הניסיונית</h2><p>כל שורה: קישור YouTube אחד, ואפשר להוסיף אחריו <code>//</code> והערה. רק אחרי שמירה הרשימה תשתנה.</p><label for="approvals">קישורים מאושרים</label><textarea id="approvals"></textarea><button id="save" type="button">שמירת הרשימה</button><button id="refresh" type="button">רענון הרשימה</button></section>
+<section id="devices-area" hidden><h2>מכשירים של המשפחה</h2>
+<p>מכשיר שבוטלה הרשאתו לא יוכל עוד לקבל את רשימת האישורים המשפחתית. ביטול ההרשאה אינו מוחק נתונים מהמכשיר.</p>
+<button id="refresh-devices" type="button">רענון רשימת מכשירים</button>
+<div id="device-list" role="list" aria-live="polite"></div></section>
 <section id="age-packs-area" hidden><h2>ספריות תוכן לפי גיל</h2>
 <p>רק סרטונים שעברו בדיקת תוכן מפורשת ייכללו בספריות. ספרייה שטרם נבדקה לא תהיה זמינה לבחירה.</p>
 <label for="age-band">בחירת קבוצת גיל</label><select id="age-band">
