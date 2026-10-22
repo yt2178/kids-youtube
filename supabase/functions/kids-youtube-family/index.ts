@@ -150,6 +150,7 @@ Deno.serve(async req=>{
    await serviceRequest("/rest/v1/family_approvals",{method:"POST",
     headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
     body:JSON.stringify({family_id:familyId,list_text:"",version:1})});
+   await serviceRequest("/rest/v1/family_pilot_invites?email=eq."+encodeURIComponent(inviteEmail)+"&used_at=is.null",{method:"PATCH",headers:{"Content-Type":"application/json","Prefer":"return=minimal"},body:JSON.stringify({used_at:new Date().toISOString()})});
    return response({created:true,familyId},201,origin);
   }
   if(action==="pair-device"){
