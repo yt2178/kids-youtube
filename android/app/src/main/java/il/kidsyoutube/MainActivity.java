@@ -56,6 +56,7 @@ public final class MainActivity extends Activity {
     private String qualityMode="auto";
     private List<Integer> sourceOrder=List.of();
     private int mediaHttpSwitches;
+    private MediaSourceFailures mediaFailures=new MediaSourceFailures();
     private long observedBandwidthBps=-1;
     private long playbackStartedAt;
     private DefaultBandwidthMeter bandwidthMeter;
@@ -625,6 +626,7 @@ public final class MainActivity extends Activity {
         web.evaluateJavascript("window.dispatchEvent(new Event('kids-native-playback-open'))",null);
         logPlayback(generation,"request",null);
         sourceIndex=0;sourceOrder=List.of();mediaHttpSwitches=0;resumeAt=Math.max(0,resumePosition);
+        mediaFailures=new MediaSourceFailures();
         playbackStartedAt=android.os.SystemClock.elapsedRealtime();
         overlay.setVisibility(View.VISIBLE);web.setVisibility(View.INVISIBLE);
         title.setText(initialTitle);showLoading(true);showMessage("מתחבר...");retry.setVisibility(View.GONE);
@@ -680,6 +682,11 @@ public final class MainActivity extends Activity {
     }
     static OkHttpClient mediaClient(OkHttpClient base,String role,long generation,
             int sourceNumber,java.util.concurrent.atomic.AtomicInteger calls,boolean debug) {
+        return mediaClient(base,role,generation,sourceNumber,calls,debug,new MediaSourceFailures());
+    }
+    static OkHttpClient mediaClient(OkHttpClient base,String role,long generation,
+            int sourceNumber,java.util.concurrent.atomic.AtomicInteger calls,boolean debug,
+            MediaSourceFailures failures) {
         // Extractor requests intentionally keep redirects disabled. Signed Googlevideo
         // media URLs can redirect between HTTPS media hosts. Follow those redirects
         // ourselves so every Location target is validated before connecting to it.
@@ -702,6 +709,9 @@ public final class MainActivity extends Activity {
                         if(!response.isRedirect()){
                             if(response.code()==401 || response.code()==403 || response.code()==429){
                                 int status=response.code();
+                                // Keep the original source identity even after a redirect.
+                                // Both audio/video failures must survive Media3 selecting only one.
+                                failures.record(chain.request().url().toString(),status);
                                 response.close();
                                 // A signed CDN response is not a provider-wide
                                 // NewPipe ban. Keep status/track but no URL.
@@ -734,6 +744,7 @@ public final class MainActivity extends Activity {
         showLoading(true);showMessage(sourceIndex==0?"מתחבר בחיבור איטי…":"מנסה איכות חלופית…");
         NativeApi.Source source=active.sources.get(sourceOrder.get(sourceIndex++));
         final int playingSourceIndex=sourceIndex;
+        final MediaSourceFailures attemptFailures=mediaFailures;
         final java.util.concurrent.atomic.AtomicInteger mediaCalls=new java.util.concurrent.atomic.AtomicInteger();
         final boolean traceMedia=(getApplicationInfo().flags
                 & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0;
@@ -741,7 +752,7 @@ public final class MainActivity extends Activity {
                 " height="+source.height+" bitrate="+source.bitrate,null);
         OkHttpDataSource.Factory videoData=new OkHttpDataSource.Factory(
                 mediaClient(api.downloader.client,"video",generation,
-                        playingSourceIndex,mediaCalls,traceMedia))
+                        playingSourceIndex,mediaCalls,traceMedia,attemptFailures))
                 .setTransferListener(bandwidthMeter.getTransferListener());
         ProgressiveMediaSource.Factory videoFactory=new ProgressiveMediaSource.Factory(videoData)
                 .setLoadErrorHandlingPolicy(new MediaSourceLoadPolicy());
@@ -751,7 +762,7 @@ public final class MainActivity extends Activity {
         else {
             OkHttpDataSource.Factory audioData=new OkHttpDataSource.Factory(
                     mediaClient(api.downloader.client,"audio",generation,
-                            playingSourceIndex,mediaCalls,traceMedia))
+                            playingSourceIndex,mediaCalls,traceMedia,attemptFailures))
                     .setTransferListener(bandwidthMeter.getTransferListener());
             ProgressiveMediaSource.Factory audioFactory=new ProgressiveMediaSource.Factory(audioData)
                     .setLoadErrorHandlingPolicy(new MediaSourceLoadPolicy());
@@ -805,13 +816,14 @@ public final class MainActivity extends Activity {
                     // audio stream; log only role/status, never signed addresses.
                     logPlayback(generation,"media-http-"+mediaFault.status+
                             "-"+mediaFault.track+" source="+playingSourceIndex,null);
-                    if("audio".equals(mediaFault.track)){
-                        // Avoid hitting exactly the same rejected audio URL
-                        // across multiple video-only resolutions.
-                        while(sourceIndex<sourceOrder.size() && sourceIndex<6
-                                && java.util.Objects.equals(
-                                  active.sources.get(sourceOrder.get(sourceIndex)).audio,source.audio))
-                            sourceIndex++;
+                    // The player can report video even when audio has already failed too.
+                    // Use all observed terminal responses, not just the chosen exception.
+                    int previousNext=sourceIndex;
+                    sourceIndex=attemptFailures.nextEligible(active.sources,sourceOrder,sourceIndex);
+                    if(previousNext!=sourceIndex)logPlayback(generation,
+                            "media-sources-skipped-known-rejection count="+(sourceIndex-previousNext),null);
+                    if(attemptFailures.rateLimited()){
+                        unavailable("MEDIA_SOURCE_RATE_LIMITED");return;
                     }
                     if(MediaHttpFailure.canSwitch(mediaFault.status,mediaHttpSwitches,
                             sourceIndex,sourceOrder.size())){
