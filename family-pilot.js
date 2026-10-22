@@ -2,11 +2,12 @@
 'use strict';
 const BASE='https://jxhelpxhrmwvzrrfrjuh.supabase.co';
 const KEY='sb_publishable_DBqKHRzGSVN0YvvXVS6w4g_-dv416mu';
-const els=Object.fromEntries(['login-area','setup-area','editor-area','email','password','login','family-name','enroll','approvals','save','refresh','logout','status','pairing-area','create-code','pair-code','pair-expires'].map(id=>[id,document.getElementById(id)]));
+const els=Object.fromEntries(['login-area','setup-area','editor-area','email','password','login','family-name','enroll','approvals','save','refresh','logout','status','pairing-area','create-code','pair-code','pair-expires','age-packs-area','age-band','age-pack-count','refresh-age-packs','apply-age-pack'].map(id=>[id,document.getElementById(id)]));
 let token='',version=0,busy=false;
+let agePacks=Object.create(null);
 function status(t){els.status.textContent=t;}
-function view(part){els['login-area'].hidden=part!=='login';els['setup-area'].hidden=part!=='setup';els['editor-area'].hidden=part!=='editor';els.logout.hidden=part==='login';els['pairing-area'].hidden=part!=='editor';if(part!=='editor'){els['pair-code'].textContent='';els['pair-expires'].textContent='';}}
-function loading(on){busy=on;for(const key of ['login','enroll','save','refresh','create-code'])els[key].disabled=on;}
+function view(part){els['login-area'].hidden=part!=='login';els['setup-area'].hidden=part!=='setup';els['editor-area'].hidden=part!=='editor';els.logout.hidden=part==='login';els['pairing-area'].hidden=part!=='editor';els['age-packs-area'].hidden=part!=='editor';if(part!=='editor'){els['pair-code'].textContent='';els['pair-expires'].textContent='';}}
+function loading(on){busy=on;for(const key of ['login','enroll','save','refresh','create-code','refresh-age-packs'])els[key].disabled=on;const items=agePacks[els['age-band'].value];els['apply-age-pack'].disabled=on||!Array.isArray(items)||items.length===0;}
 async function request(path,body,access){
  const c=new AbortController(),timeout=setTimeout(()=>c.abort(),15000);
  try{
@@ -17,7 +18,7 @@ async function request(path,body,access){
  }finally{clearTimeout(timeout);}
 }
 async function getList(){
- try{const d=await request('/functions/v1/kids-youtube-family?action=list',undefined,token);version=d.version;els.approvals.value=d.list;view('editor');status('הרשימה הניסיונית נטענה.');}
+ try{const d=await request('/functions/v1/kids-youtube-family?action=list',undefined,token);version=d.version;els.approvals.value=d.list;view('editor');status('הרשימה הניסיונית נטענה.');await refreshAgePacks().catch(()=>{status('הרשימה נטענה, אך לא ניתן לקבל נתוני ספריות גיל.');});}
  catch(e){if(e.httpStatus===403||e.httpStatus===404){view('setup');status('עדיין לא נוצרה רשימת אישורים עבור החשבון.');}else throw e;}
 }
 async function guarded(fn){if(busy)return;loading(true);try{await fn();}catch(e){status(e.name==='AbortError'?'הבקשה ארכה זמן רב מדי.':e.httpStatus===401?'ההתחברות פגה. בצעו כניסה מחדש.':'הפעולה נכשלה: '+e.message);}finally{loading(false);}}
@@ -41,6 +42,31 @@ els.save.addEventListener('click',()=>guarded(async()=>{
  version=d.version;els.approvals.value=d.list;status('הרשימה הניסיונית נשמרה.');
 }));
 els.refresh.addEventListener('click',()=>guarded(getList));
+function renderAgePack(){
+ const age=els['age-band'].value;
+ const items=agePacks[age];
+ const count=Array.isArray(items)?items.length:0;
+ els['age-pack-count'].textContent=count===0?'עדיין אין סרטונים שעברו בדיקה לספרייה הזאת. לא ניתן להחיל אותה.':'נבדקו ואושרו '+count+' סרטונים בקבוצת הגיל '+age+'.';
+ els['apply-age-pack'].disabled=busy||count===0;
+}
+async function refreshAgePacks(){
+ const result=await request('/functions/v1/kids-youtube-family?action=age-packs',undefined,token);
+ if(!result.packs||typeof result.packs!=='object')throw Error('INVALID_AGE_PACKS');
+ agePacks=result.packs;
+ renderAgePack();
+}
+els['age-band'].addEventListener('change',renderAgePack);
+els['refresh-age-packs'].addEventListener('click',()=>guarded(refreshAgePacks));
+els['apply-age-pack'].addEventListener('click',()=>guarded(async()=>{
+ const age=els['age-band'].value,items=agePacks[age];
+ if(!Array.isArray(items)||!items.length||version<1)throw Error('PACK_UNAVAILABLE');
+ if(!confirm('להחליף את כל רשימת האישורים של משפחת הניסוי בספריית גיל '+age+'? ההחלפה אינה משנה את המערכת המשפחתית הרגילה.'))return;
+ const result=await request('/functions/v1/kids-youtube-family?action=apply-age-pack',
+  {age,expectedVersion:version},token);
+ if(typeof result.list!=='string'||!Number.isSafeInteger(result.version))throw Error('INVALID_PACK_RESPONSE');
+ version=result.version;els.approvals.value=result.list;
+ status('הספרייה שנבדקה לגילאי '+age+' הוחלה על משפחת הניסוי.');
+}));
 els['create-code'].addEventListener('click',()=>guarded(async()=>{
  const d=await request('/functions/v1/kids-youtube-family?action=create-code',{},token);
  if(typeof d.code!=='string'||!/^[A-Za-z0-9_-]{16}$/.test(d.code))throw Error('INVALID_PAIR_CODE');
