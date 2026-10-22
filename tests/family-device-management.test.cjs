@@ -2,7 +2,10 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const edge=fs.readFileSync('supabase/functions/kids-youtube-family/index.ts','utf8');
 const html=fs.readFileSync('family-pilot.html','utf8');
 const ui=fs.readFileSync('family-pilot.js','utf8');
-test('pilot invitations require email_verified_at evidence, not a generic confirmed account',()=>{\n assert.match(edge,/if\(!profile\.email_confirmed_at\)return \"\"/);\n});\ntest('devices can only be listed and revoked by verified parents',()=>{
+test('pilot invitations require email_verified_at evidence, not a generic confirmed account',()=>{
+ assert.match(edge,/if\(!profile\.email_confirmed_at\)return \"\"/);
+});
+test('devices can only be listed and revoked by verified parents',()=>{
  const list=edge.slice(edge.indexOf('if(action==="devices")'),edge.indexOf('if(action==="create-code")'));
  assert.match(list,/who\.role!=="parent"/);
  assert.match(list,/family_id=eq\./);
