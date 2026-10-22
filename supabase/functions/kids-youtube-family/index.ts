@@ -42,6 +42,14 @@ async function getUser(req:Request):Promise<Identity>{
   return {id:user.id,isAnonymous:user.is_anonymous===true,confirmed:!!(user.email_confirmed_at||user.confirmed_at)};
  }finally{clearTimeout(timer);}
 }
+async function getVerifiedEmail(req:Request){
+ const auth=req.headers.get("authorization")||"";
+ const response=await fetch(BASE+"/auth/v1/user",{headers:{apikey:SERVICE,Authorization:auth},redirect:"error"});
+ if(!response.ok)return "";
+ const profile=await response.json();
+ if(!profile.email_confirmed_at&&!profile.confirmed_at)return "";
+ return typeof profile.email==="string"?profile.email.trim():"";
+}
 async function principal(identity:Identity){
  // Anonymous identities are never parents. A device must be explicitly bound
  // in the database and not revoked, even when its Auth user is anonymous.
@@ -111,6 +119,10 @@ Deno.serve(async req=>{
    if(Deno.env.get("FAMILY_PILOT_ENROLL_ENABLED")!=="true")fail("ENROLLMENT_CLOSED",403);
    if(identity.isAnonymous||!identity.confirmed)fail("UNAUTHORIZED",401);
    if(Deno.env.get("FAMILY_PILOT_INVITES_READY")!=="true")fail("ENROLLMENT_CLOSED",403);
+   const inviteEmail=String((await getVerifiedEmail(req))||"").toLowerCase();
+   if(!inviteEmail)fail("INVITATION_REQUIRED",403);
+   const invites=await select("family_pilot_invites","email=eq."+encodeURIComponent(inviteEmail)+"&used_at=is.null&expires_at=gt."+encodeURIComponent(new Date().toISOString())+"&select=email&limit=1");
+   if(invites.length!==1)fail("INVITATION_REQUIRED",403);
    if(req.method!=="POST")fail("METHOD",405);
    // Account creation is deliberately not exposed here. Enrolment requires an
    // independently authenticated, confirmed, non-anonymous Supabase Auth user.
