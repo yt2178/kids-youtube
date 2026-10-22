@@ -42,6 +42,14 @@ async function getUser(req:Request):Promise<Identity>{
   return {id:user.id,isAnonymous:user.is_anonymous===true,confirmed:!!(user.email_confirmed_at||user.confirmed_at)};
  }finally{clearTimeout(timer);}
 }
+async function getVerifiedEmail(req:Request){
+ const auth=req.headers.get("authorization")||"";
+ const response=await fetch(BASE+"/auth/v1/user",{headers:{apikey:SERVICE,Authorization:auth},redirect:"error"});
+ if(!response.ok)return "";
+ const profile=await response.json();
+ if(!profile.email_confirmed_at&&!profile.confirmed_at)return "";
+ return typeof profile.email==="string"?profile.email.trim():"";
+}
 async function principal(identity:Identity){
  // Anonymous identities are never parents. A device must be explicitly bound
  // in the database and not revoked, even when its Auth user is anonymous.
@@ -110,33 +118,20 @@ Deno.serve(async req=>{
    // Public self-service enrolment is disabled until the pilot is approved.
    if(Deno.env.get("FAMILY_PILOT_ENROLL_ENABLED")!=="true")fail("ENROLLMENT_CLOSED",403);
    if(identity.isAnonymous||!identity.confirmed)fail("UNAUTHORIZED",401);
+   if(Deno.env.get("FAMILY_PILOT_INVITES_READY")!=="true")fail("ENROLLMENT_CLOSED",403);
+   const inviteEmail=String((await getVerifiedEmail(req))||"").toLowerCase();
+   if(!inviteEmail)fail("INVITATION_REQUIRED",403);
    if(req.method!=="POST")fail("METHOD",405);
-   // Account creation is deliberately not exposed here. Enrolment requires an
-   // independently authenticated, confirmed, non-anonymous Supabase Auth user.
-   // Existing family is returned idempotently.
-   const existing=await select("families","owner_id=eq."+encodeURIComponent(userId)+"&select=id&limit=1");
-   if(existing.length===1){
-    // Repair a previous partial enrolment without modifying an existing list.
-    const id=existing[0].id;
-    await serviceRequest("/rest/v1/family_approvals",{method:"POST",
-     headers:{"Content-Type":"application/json","Prefer":"resolution=ignore-duplicates,return=minimal"},
-     body:JSON.stringify({family_id:id,list_text:"",version:1})});
-    return response({created:false,familyId:id},200,origin);
-   }
    const body=await parseBody(req);
    const name=typeof body.name==="string"?body.name.trim():"";
    if(name.length<1||name.length>80)fail("INVALID_NAME",400);
-   const inserted=await serviceRequest("/rest/v1/families",{method:"POST",
-    headers:{"Content-Type":"application/json","Prefer":"return=representation"},
-    body:JSON.stringify({owner_id:userId,name})});
-   if(inserted.status===409)fail("CONFLICT_RETRY",409);
-   const rows=await inserted.json();
-   if(!Array.isArray(rows)||rows.length!==1)fail("STORAGE_UNAVAILABLE",503);
-   // An incomplete enrolment is recoverable: list will return NOT_FOUND, not fallback.
-   const familyId=rows[0].id;
-   await serviceRequest("/rest/v1/family_approvals",{method:"POST",
-    headers:{"Content-Type":"application/json","Prefer":"return=minimal"},
-    body:JSON.stringify({family_id:familyId,list_text:"",version:1})});
+   const enrolled=await serviceRequest("/rest/v1/rpc/enroll_invited_family",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({p_email:inviteEmail,p_user_id:userId,p_name:name})
+   });
+   const familyId=await enrolled.json();
+   if(typeof familyId!=="string"||!/^[a-f0-9-]{36}$/i.test(familyId))
+     fail("INVITATION_REQUIRED",403);
    return response({created:true,familyId},201,origin);
   }
   if(action==="pair-device"){
