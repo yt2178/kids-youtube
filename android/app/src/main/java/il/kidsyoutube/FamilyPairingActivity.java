@@ -85,10 +85,30 @@ public final class FamilyPairingActivity extends Activity {
             try{FamilyPairingClient.validate(code,name);}
             catch(IllegalArgumentException invalid){message.setText("יש להזין קוד תקין ושם מכשיר.");return;}
             run(()->{
-                if(store.load()!=null)return "קיים שיוך שמור. השתמשו בבדיקת השיוך.";
-                FamilyAuthClient.Session session=auth.createAnonymous();
+                String saved=store.load();
+                FamilyAuthClient.Session session;
+                if(saved!=null){
+                    session=auth.refresh(saved);
+                    // Rotation must be durable before any further network operation.
+                    store.save(session.refreshToken);
+                    try{
+                        JSONObject existing=auth.list(session.accessToken);
+                        if(existing.has("list")&&existing.has("version"))
+                            return "המכשיר כבר משויך למשפחה. אין צורך בקוד נוסף.";
+                        throw new IOException("INVALID_FAMILY_LIST");
+                    }catch(IOException prior){
+                        // Only an explicitly unbound/revoked device may attempt pairing.
+                        // A revoked device is always refused again by the server.
+                        if(!"FAMILY_HTTP_403".equals(prior.getMessage()))
+                            throw prior;
+                    }
+                }else{
+                    session=auth.createAnonymous();
+                    // Persist BEFORE redeeming the one-time pairing code. If the
+                    // process dies after the server commits, this identity survives.
+                    store.save(session.refreshToken);
+                }
                 pairing.pair(session.accessToken,code,name);
-                store.save(session.refreshToken);
                 try{
                     JSONObject list=auth.list(session.accessToken);
                     if(!list.has("list")||!list.has("version"))throw new IOException("INVALID_FAMILY_LIST");
@@ -102,9 +122,10 @@ public final class FamilyPairingActivity extends Activity {
             String saved=store.load();
             if(saved==null)return "אין התחברות שמורה. יש לקבל קוד חדש מההורה.";
             FamilyAuthClient.Session session=auth.refresh(saved);
+            // A refresh token can rotate. Save the replacement before any list check.
+            store.save(session.refreshToken);
             JSONObject list=auth.list(session.accessToken);
             if(!list.has("list")||!list.has("version"))throw new IOException("INVALID_FAMILY_LIST");
-            store.save(session.refreshToken);
             return "השיוך מאומת. הרשימה המשפחתית נגישה, אך הנגן הקיים עדיין לא הועבר אליה.";
         }));
     }
