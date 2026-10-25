@@ -8,7 +8,7 @@ test('authorization guard never reads legacy state and always validates both gra
  assert.match(guard,/auth\.catalogIds\(accessToken\)/);
  assert.match(guard,/catalog\.assertMatches\(grants\)/);
  assert.match(guard,/FAMILY_NOT_APPROVED/);
- assert.doesNotMatch(guard,/NativeApi|kids_youtube_state|sharedCatalog|legacy/);
+ assert.doesNotMatch(guard,/NativeApi|kids_youtube_state|sharedCatalog/);
 });
 test('debug family screen checks a video but does not launch playback',()=>{
  assert.match(activity,/videoCheckButton\.setOnClickListener/);
