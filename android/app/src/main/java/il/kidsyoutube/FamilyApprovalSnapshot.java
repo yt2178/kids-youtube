@@ -18,6 +18,13 @@ final class FamilyApprovalSnapshot {
         this.version=version;this.list=list;this.policy=policy;
     }
 
+    static FamilyApprovalSnapshot fromDevicePlaybackGrants(JSONObject response) throws IOException {
+        if(response==null || !(response.opt("contract") instanceof Number)
+                || response.optInt("contract",-1)!=1)
+            throw new IOException("INVALID_PLAYBACK_GRANTS_CONTRACT");
+        return fromAuthorizedResponse(response);
+    }
+
     static FamilyApprovalSnapshot fromAuthorizedResponse(JSONObject response) throws IOException {
         if(response==null || !response.has("list") || !response.has("version")
                 || !(response.opt("list") instanceof String)
