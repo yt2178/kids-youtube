@@ -44,7 +44,7 @@ public final class FamilyPlaybackLeaseGateTest {
  @Test public void invalidIdNeverCallsAuthorization() throws Exception {
   AtomicInteger calls=new AtomicInteger();
   FamilyPlaybackLeaseGate gate=new FamilyPlaybackLeaseGate(id->calls.incrementAndGet());
-  try{gate.request("not_a_video");fail("invalid ID");}
+  try{gate.request("invalid video id");fail("invalid ID");}
   catch(IOException expected){assertEquals("INVALID_VIDEO_ID",expected.getMessage());}
   assertEquals(0,calls.get());
  }
