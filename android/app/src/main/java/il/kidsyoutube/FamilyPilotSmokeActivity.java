@@ -34,9 +34,10 @@ public final class FamilyPilotSmokeActivity extends Activity {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
     private volatile boolean destroyed;
+    private volatile boolean visible;
+    private volatile FamilyPlaybackLeaseGate gate;
     private ExoPlayer player;
     private TextView status;
-    private FamilyPlaybackLeaseGate gate;
     private FamilyPlaybackLeaseGate.Permit permit;
     private Runnable expiry;
     private String videoId;
@@ -108,7 +109,7 @@ public final class FamilyPilotSmokeActivity extends Activity {
                     guard.authorizeVideo(session.accessToken,id));
                 FamilyPlaybackLeaseGate.Permit checked=gate.request(videoId);
                 main.post(()->{
-                    if(destroyed){gate.invalidate();return;}
+                    if(destroyed||!visible){gate.invalidate();return;}
                     try{
                         gate.requireAuthorized(checked,videoId);
                         if(!ApprovalPolicy.safeMedia(url))
@@ -149,7 +150,8 @@ public final class FamilyPilotSmokeActivity extends Activity {
             }
         });
     }
-    @Override protected void onStop(){stopPlayback();super.onStop();}
+    @Override protected void onStart(){super.onStart();visible=true;}
+    @Override protected void onStop(){visible=false;stopPlayback();super.onStop();}
     @Override protected void onDestroy(){
         destroyed=true;stopPlayback();worker.shutdownNow();super.onDestroy();
     }
