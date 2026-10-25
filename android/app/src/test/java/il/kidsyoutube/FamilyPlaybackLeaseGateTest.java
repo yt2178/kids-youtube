@@ -48,4 +48,64 @@ public final class FamilyPlaybackLeaseGateTest {
   catch(IOException expected){assertEquals("INVALID_VIDEO_ID",expected.getMessage());}
   assertEquals(0,calls.get());
  }
+ @Test public void stopInvalidatesImmediatelyWhileRemoteAuthorizationIsPending() throws Exception {
+  java.util.concurrent.CountDownLatch started=new java.util.concurrent.CountDownLatch(1);
+  java.util.concurrent.CountDownLatch release=new java.util.concurrent.CountDownLatch(1);
+  java.util.concurrent.atomic.AtomicReference<Throwable> background=new java.util.concurrent.atomic.AtomicReference<>();
+  FamilyPlaybackLeaseGate gate=new FamilyPlaybackLeaseGate(id->{
+   started.countDown();
+   try{
+    if(!release.await(5,java.util.concurrent.TimeUnit.SECONDS))
+     throw new IOException("REMOTE_TIMEOUT");
+   }catch(InterruptedException interrupted){
+    Thread.currentThread().interrupt();
+    throw new IOException("INTERRUPTED",interrupted);
+   }
+  });
+  Thread request=new Thread(()->{
+   try{gate.request(A);background.set(new AssertionError("late permit was granted"));}
+   catch(Throwable caught){background.set(caught);}
+  });
+  request.start();
+  assertTrue("remote authorization did not begin",started.await(2,java.util.concurrent.TimeUnit.SECONDS));
+  Thread stopper=new Thread(gate::invalidate);
+  stopper.start();
+  stopper.join(500);
+  boolean canceled=!stopper.isAlive();
+  release.countDown();
+  request.join(3000);stopper.join(3000);
+  assertTrue("stop blocked on remote network call",canceled);
+  assertFalse("authorization worker failed to finish",request.isAlive());
+  assertTrue("late remote success resurrected playback: "+background.get(),
+    background.get() instanceof IOException);
+  assertEquals("AUTH_SUPERSEDED",background.get().getMessage());
+ }
+ @Test public void secondAttemptSupersedesInFlightAuthorization() throws Exception {
+  java.util.concurrent.CountDownLatch firstStarted=new java.util.concurrent.CountDownLatch(1);
+  java.util.concurrent.CountDownLatch releaseFirst=new java.util.concurrent.CountDownLatch(1);
+  java.util.concurrent.atomic.AtomicReference<Throwable> oldResult=new java.util.concurrent.atomic.AtomicReference<>();
+  FamilyPlaybackLeaseGate gate=new FamilyPlaybackLeaseGate(id->{
+   if(A.equals(id)){
+    firstStarted.countDown();
+    try{if(!releaseFirst.await(5,java.util.concurrent.TimeUnit.SECONDS))
+      throw new IOException("REMOTE_TIMEOUT");
+    }catch(InterruptedException e){Thread.currentThread().interrupt();throw new IOException(e);}
+   }
+  });
+  Thread first=new Thread(()->{
+   try{gate.request(A);oldResult.set(new AssertionError("superseded request accepted"));}
+   catch(Throwable error){oldResult.set(error);}
+  });
+  first.start();
+  assertTrue(firstStarted.await(2,java.util.concurrent.TimeUnit.SECONDS));
+  FamilyPlaybackLeaseGate.Permit second=gate.request(B);
+  gate.requireAuthorized(second,B);
+  releaseFirst.countDown();
+  first.join(3000);
+  assertFalse(first.isAlive());
+  assertTrue(oldResult.get() instanceof IOException);
+  assertEquals("AUTH_SUPERSEDED",oldResult.get().getMessage());
+  gate.requireAuthorized(second,B);
+ }
+
 }
