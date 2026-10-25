@@ -35,16 +35,24 @@ final class FamilyPlaybackLeaseGate {
         this.authorization=authorization;
         this.clock=clock;
     }
-    synchronized Permit request(String videoId) throws IOException {
-        active=null; // Any attempted switch invalidates the previous permit.
-        long epoch=generation.incrementAndGet();
+    Permit request(String videoId) throws IOException {
+        final long epoch;
+        synchronized(this){
+            // Any new request invalidates the previous permit immediately.
+            active=null;
+            epoch=generation.incrementAndGet();
+        }
         if(videoId==null||!ApprovalPolicy.VIDEO.matcher(videoId).matches())
             throw new IOException("INVALID_VIDEO_ID");
+        // Never hold the gate lock across remote I/O. A stop/revocation may
+        // invalidate this attempt while its authorization request is pending.
         authorization.authorize(videoId);
-        if(generation.get()!=epoch)throw new IOException("AUTH_SUPERSEDED");
-        Permit granted=new Permit(epoch,videoId,clock.getAsLong()+PERMIT_TTL_MS);
-        active=granted;
-        return granted;
+        synchronized(this){
+            if(generation.get()!=epoch)throw new IOException("AUTH_SUPERSEDED");
+            Permit granted=new Permit(epoch,videoId,clock.getAsLong()+PERMIT_TTL_MS);
+            active=granted;
+            return granted;
+        }
     }
     synchronized void requireAuthorized(Permit permit,String videoId) throws IOException {
         Permit current=active;
