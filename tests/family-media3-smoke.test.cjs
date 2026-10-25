@@ -32,3 +32,11 @@ test('authorization and restricted media origin are checked after extraction and
  assert.ok(extracted>=0&&extracted<authorized&&authorized<media&&media<started);
  assert.ok(src.indexOf('gate.requireAuthorized(permit,videoId)',media)<started);
 });
+
+test('network and extractor errors never display raw signed URLs or server response bodies',()=>{
+ assert.match(src,/MEDIA_TEST_UNAVAILABLE/);
+ assert.match(src,/message\.matches\(/);
+ assert.match(src,/error instanceof IOException\?error\.getMessage\(\)/);
+ assert.doesNotMatch(src,/note\([^)]*error\.getMessage\(\)/);
+ assert.doesNotMatch(src,/android\.util\.Log\.[a-z]+\(/);
+});
