@@ -111,7 +111,7 @@ Deno.serve(async req=>{
  try{
   if(!BASE.startsWith("https://")||!SERVICE)fail("NOT_CONFIGURED",503);
   const action=new URL(req.url).searchParams.get("action")||"list";
-  if(!["list","replace","enroll","create-code","pair-device","devices","revoke-device","age-packs","apply-age-pack"].includes(action))fail("UNKNOWN_ACTION",404);
+  if(!["list","replace","enroll","create-code","pair-device","devices","revoke-device","age-packs","apply-age-pack","playback-grants"].includes(action))fail("UNKNOWN_ACTION",404);
   const identity=await getUser(req);
   const userId=identity.id;
   if(action==="enroll"){
@@ -223,6 +223,17 @@ Deno.serve(async req=>{
     body:JSON.stringify({family_id:who.familyId,code_hash:await sha256hex(code),
      expires_at:expires,consumed_at:null})});
    return response({code,expiresAt:expires},200,origin);
+  }
+  if(action==="playback-grants"){
+   // Device authorization is resolved from a verified token and active device
+   // row on EVERY request; revoked devices cannot retrieve stale grants.
+   if(req.method!=="GET")fail("METHOD",405);
+   if(who.role!=="device")fail("FORBIDDEN",403);
+   const current=await readRow(who.familyId);
+   if(typeof current.list!=="string"||!Number.isSafeInteger(current.version)||
+      current.version<1)fail("INVALID_GRANTS",503);
+   validateApprovalList(current.list);
+   return response({contract:1,list:current.list,version:current.version},200,origin);
   }
   if(action==="list"){
    if(req.method!=="GET")fail("METHOD",405);
