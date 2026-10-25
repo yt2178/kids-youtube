@@ -22,6 +22,21 @@ public final class FamilyApprovalSnapshotTest {
    catch(IOException expected){}
   }
  }
+ @Test public void devicePlaybackRequiresExplicitContract() throws Exception {
+  JSONObject good=new JSONObject().put("contract",1).put("version",3)
+    .put("list","https://www.youtube.com/watch?v=abcdefghijk");
+  FamilyApprovalSnapshot grants=FamilyApprovalSnapshot.fromDevicePlaybackGrants(good);
+  assertEquals(3,grants.version);
+  assertTrue(grants.policy.videos.contains("abcdefghijk"));
+  for(JSONObject bad:new JSONObject[]{
+    new JSONObject().put("version",3).put("list",""),
+    new JSONObject().put("contract",2).put("version",3).put("list",""),
+    new JSONObject().put("contract","1").put("version",3).put("list","")
+  }){
+   try{FamilyApprovalSnapshot.fromDevicePlaybackGrants(bad);fail("accepted invalid playback contract");}
+   catch(IOException expected){}
+  }
+ }
  @Test public void emptyFamilyIsNotLegacyFamily() throws Exception {
   FamilyApprovalSnapshot snap=FamilyApprovalSnapshot.fromAuthorizedResponse(
     new JSONObject().put("list","").put("version",1));
