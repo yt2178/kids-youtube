@@ -78,6 +78,18 @@ public final class FamilyPairingActivity extends Activity {
         root.addView(catalogButton);
         EditText videoIdInput=input("מזהה סרטון YouTube לבדיקה (11 תווים)");root.addView(videoIdInput);
         videoCheckButton=new Button(this);videoCheckButton.setText("בדיקת הרשאה לסרטון (ללא ניגון)");root.addView(videoCheckButton);
+        Button smokeButton=new Button(this);
+        smokeButton.setText("ניסוי ניגון Media3 עד 5 שניות (Debug בלבד)");
+        smokeButton.setOnClickListener(v->{
+            String id=videoIdInput.getText().toString().trim();
+            if(!ApprovalPolicy.VIDEO.matcher(id).matches()){
+                message.setText("יש להזין מזהה סרטון חוקי לפני ניסיון ניגון.");
+                return;
+            }
+            startActivity(new android.content.Intent(this,FamilyPilotSmokeActivity.class)
+                    .putExtra("videoId",id));
+        });
+        root.addView(smokeButton);
         message=new TextView(this);message.setTextColor(Color.WHITE);message.setTextSize(16);
         message.setPadding(0,dp(20),0,0);message.setText("יש להזין קוד שההורה יצר באתר המשפחות.");
         root.addView(message);
