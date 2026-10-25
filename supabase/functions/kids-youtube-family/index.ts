@@ -111,7 +111,7 @@ Deno.serve(async req=>{
  try{
   if(!BASE.startsWith("https://")||!SERVICE)fail("NOT_CONFIGURED",503);
   const action=new URL(req.url).searchParams.get("action")||"list";
-  if(!["list","replace","enroll","create-code","pair-device","devices","revoke-device","age-packs","apply-age-pack","playback-grants"].includes(action))fail("UNKNOWN_ACTION",404);
+  if(!["list","replace","enroll","create-code","pair-device","devices","revoke-device","age-packs","apply-age-pack","playback-grants","catalog-ids"].includes(action))fail("UNKNOWN_ACTION",404);
   const identity=await getUser(req);
   const userId=identity.id;
   if(action==="enroll"){
@@ -223,6 +223,30 @@ Deno.serve(async req=>{
     body:JSON.stringify({family_id:who.familyId,code_hash:await sha256hex(code),
      expires_at:expires,consumed_at:null})});
    return response({code,expiresAt:expires},200,origin);
+  }
+  if(action==="catalog-ids"){
+   // Minimal safe catalog bootstrap, not a third-party media search.
+   // No channel/playlist expansion until provenance is family-authorized.
+   if(req.method!=="GET")fail("METHOD",405);
+   if(who.role!=="device")fail("FORBIDDEN",403);
+   const current=await readRow(who.familyId);
+   if(typeof current.list!=="string"||!Number.isSafeInteger(current.version)||
+      current.version<1)fail("INVALID_GRANTS",503);
+   validateApprovalList(current.list);
+   const ids=new Set<string>();
+   for(const original of current.list.split(/\\r?\\n/)){
+    const line=original.trim();
+    if(!line||line.startsWith("//"))continue;
+    const url=line.split(/\\s+\\/\\//,1)[0];
+    let parsed:URL;
+    try{parsed=new URL(url);}catch{fail("INVALID_GRANTS",503);}
+    if(parsed.hostname==="youtu.be"&&/^\\/[A-Za-z0-9_-]{11}$/.test(parsed.pathname))
+      ids.add(parsed.pathname.slice(1));
+    else if(["youtube.com","www.youtube.com"].includes(parsed.hostname)&&
+      parsed.pathname==="/watch"&&/^[A-Za-z0-9_-]{11}$/.test(parsed.searchParams.get("v")||""))
+      ids.add(parsed.searchParams.get("v")!);
+   }
+   return response({contract:1,version:current.version,videos:[...ids].sort()},200,origin);
   }
   if(action==="playback-grants"){
    // Device authorization is resolved from a verified token and active device
