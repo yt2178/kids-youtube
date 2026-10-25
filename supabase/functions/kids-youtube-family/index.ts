@@ -234,13 +234,13 @@ Deno.serve(async req=>{
       current.version<1)fail("INVALID_GRANTS",503);
    validateApprovalList(current.list);
    const ids=new Set<string>();
-   for(const original of current.list.split(/\\r?\\n/)){
+   for(const original of current.list.split(/\r?\n/)){
     const line=original.trim();
     if(!line||line.startsWith("//"))continue;
-    const url=line.split(/\\s+\\/\\//,1)[0];
+    const url=line.split(/\s+\/\//,1)[0];
     let parsed:URL;
     try{parsed=new URL(url);}catch{fail("INVALID_GRANTS",503);}
-    if(parsed.hostname==="youtu.be"&&/^\\/[A-Za-z0-9_-]{11}$/.test(parsed.pathname))
+    if(parsed.hostname==="youtu.be"&&/^\/[A-Za-z0-9_-]{11}$/.test(parsed.pathname))
       ids.add(parsed.pathname.slice(1));
     else if(["youtube.com","www.youtube.com"].includes(parsed.hostname)&&
       parsed.pathname==="/watch"&&/^[A-Za-z0-9_-]{11}$/.test(parsed.searchParams.get("v")||""))
