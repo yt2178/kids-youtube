@@ -93,7 +93,7 @@ public final class FamilyPairingActivity extends Activity {
                     store.save(session.refreshToken);
                     try{
                         JSONObject existing=auth.list(session.accessToken);
-                        if(existing.has("list")&&existing.has("version"))
+                        if(FamilyApprovalSnapshot.fromAuthorizedResponse(existing).version>=1)
                             return "המכשיר כבר משויך למשפחה. אין צורך בקוד נוסף.";
                         throw new IOException("INVALID_FAMILY_LIST");
                     }catch(IOException prior){
@@ -111,7 +111,7 @@ public final class FamilyPairingActivity extends Activity {
                 pairing.pair(session.accessToken,code,name);
                 try{
                     JSONObject list=auth.list(session.accessToken);
-                    if(!list.has("list")||!list.has("version"))throw new IOException("INVALID_FAMILY_LIST");
+                    FamilyApprovalSnapshot.fromAuthorizedResponse(list);
                     return "המכשיר שויך למשפחה בהצלחה. מצב הצפייה המשפחתי עדיין לא מופעל.";
                 }catch(IOException verification){
                     return "השיוך נרשם, אך בדיקת הרשימה נכשלה ("+verification.getMessage()+"). אפשר לבדוק שוב.";
