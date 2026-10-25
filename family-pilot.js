@@ -19,9 +19,9 @@ async function request(path,body,access){
 }
 async function getList(){
  try{const d=await request('/functions/v1/kids-youtube-family?action=list',undefined,token);version=d.version;els.approvals.value=d.list;view('editor');status('הרשימה הניסיונית נטענה.');await refreshDevices().catch(()=>{status('הרשימה נטענה, אך לא ניתן להציג את המכשירים כרגע.');});await refreshAgePacks().catch(()=>{status('הרשימה נטענה, אך ספריות הגיל אינן זמינות כרגע.');});}
- catch(e){if(e.httpStatus===403||e.httpStatus===404){view('setup');status('עדיין לא נוצרה רשימת אישורים עבור החשבון.');}else throw e;}
+ catch(e){if(e.httpStatus===403&&e.message==='NO_FAMILY'){view('setup');status('אין עדיין משפחת ניסוי לחשבון זה. ההרשמה מוגבלת להזמנות מאושרות.');}else throw e;}
 }
-async function guarded(fn){if(busy)return;loading(true);try{await fn();}catch(e){status(e.name==='AbortError'?'הבקשה ארכה זמן רב מדי.':e.httpStatus===401?'ההתחברות פגה. בצעו כניסה מחדש.':'הפעולה נכשלה: '+e.message);}finally{loading(false);}}
+async function guarded(fn){if(busy)return;loading(true);try{await fn();}catch(e){status(e.name==='AbortError'?'הבקשה ארכה זמן רב מדי.':e.httpStatus===401?'ההתחברות פגה. בצעו כניסה מחדש.':e.message==='ENROLLMENT_CLOSED'?'הרשמת משפחות חדשה עדיין סגורה; אין שינוי בחשבון.':e.message==='INVITATION_REQUIRED'?'אין הזמנה מאושרת לחשבון זה.':'הפעולה נכשלה: '+e.message);}finally{loading(false);}}
 els.login.addEventListener('click',()=>guarded(async()=>{
  status('מתחבר…');const email=els.email.value.trim(),password=els.password.value;
  if(!email||!password){status('הזינו כתובת דוא״ל וסיסמה.');return;}
