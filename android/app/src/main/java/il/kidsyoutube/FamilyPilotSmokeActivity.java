@@ -91,15 +91,15 @@ public final class FamilyPilotSmokeActivity extends Activity {
         worker.execute(()->{
             try {
                 FamilySessionStore store=new FamilySessionStore(getApplicationContext());
-                String saved=store.load();
-                if(saved==null)throw new IOException("NO_PAIRED_DEVICE");
+                String storedRefreshToken=store.load();
+                if(storedRefreshToken==null)throw new IOException("NO_PAIRED_DEVICE");
                 okhttp3.OkHttpClient http=new okhttp3.OkHttpClient.Builder()
                     .connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(20,java.util.concurrent.TimeUnit.SECONDS)
                     .callTimeout(35,java.util.concurrent.TimeUnit.SECONDS)
                     .retryOnConnectionFailure(false).build();
                 FamilyAuthClient auth=new FamilyAuthClient(http);
-                FamilyAuthClient.Session session=auth.refresh(saved);
+                FamilyAuthClient.Session session=auth.refresh(storedRefreshToken);
                 store.save(session.refreshToken);
                 // Extraction is untrusted and never authorizes a media item.
                 String url=extractApprovedSource(videoId);
