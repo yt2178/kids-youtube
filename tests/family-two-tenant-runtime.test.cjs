@@ -109,3 +109,22 @@ test('stale version and cross-family attempts cannot overwrite another household
  assert.equal(approvals.get(F1).version,1);
  assert.equal(approvals.get(F2).version,1);
 });
+
+test('family catalog only lists explicit approved video IDs for the verified device',async()=>{
+ const {call}=fixture();
+ const aa=await call('deviceA','catalog-ids');
+ const bb=await call('deviceB','catalog-ids');
+ assert.equal(aa.status,200);
+ assert.equal(bb.status,200);
+ assert.deepEqual(Array.from(aa.json.videos),['abcdefghijk']);
+ assert.deepEqual(Array.from(bb.json.videos),['ABCDEFGHIJK']);
+ assert.equal(aa.json.contract,1);
+ assert.equal(aa.json.version,1);
+ assert.equal((await call('parentA','catalog-ids')).status,403);
+});
+test('revoked family device cannot fetch its catalog',async()=>{
+ const {call}=fixture();
+ assert.equal((await call('parentA','revoke-device',{deviceId:D1})).status,200);
+ assert.equal((await call('deviceA','catalog-ids')).status,403);
+ assert.equal((await call('deviceB','catalog-ids')).status,200);
+});
