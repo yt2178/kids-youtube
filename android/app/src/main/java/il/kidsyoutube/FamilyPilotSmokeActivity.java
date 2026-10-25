@@ -145,7 +145,12 @@ public final class FamilyPilotSmokeActivity extends Activity {
                     }
                 });
             }catch(Exception error){
-                final String result=error instanceof IOException?error.getMessage():"UNAVAILABLE";
+                // Extraction/network exception messages can include signed URLs.
+                // Display an allowlisted category only, never the raw message.
+                String message=error instanceof IOException?error.getMessage():"";
+                final String result=message!=null &&
+                        message.matches("(NO_PAIRED_DEVICE|VIDEO_UNAVAILABLE|NO_SUPPORTED_STREAM|AUTH_HTTP_[0-9]{3}|FAMILY_GRANTS_HTTP_[0-9]{3}|FAMILY_CATALOG_HTTP_[0-9]{3}|FAMILY_NOT_APPROVED|FAMILY_CATALOG_VERSION_CHANGED|FAMILY_CATALOG_GRANTS_MISMATCH)")
+                        ?message:"MEDIA_TEST_UNAVAILABLE";
                 main.post(()->note("לא ניתן להתחיל בדיקה: "+result));
             }
         });
