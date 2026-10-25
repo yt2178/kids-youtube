@@ -24,7 +24,7 @@ public final class FamilyPairingActivity extends Activity {
     private final Handler main=new Handler(Looper.getMainLooper());
     private volatile boolean destroyed;
     private EditText codeInput,nameInput;
-    private Button pairButton,verifyButton,catalogButton;
+    private Button pairButton,verifyButton,catalogButton,videoCheckButton;
     private TextView message;
     private FamilySessionStore store;
     private FamilyAuthClient auth;
@@ -32,7 +32,7 @@ public final class FamilyPairingActivity extends Activity {
     interface Job {String run() throws Exception;}
     private int dp(int size){return Math.round(getResources().getDisplayMetrics().density*size);}
     private void run(Job job) {
-        pairButton.setEnabled(false);verifyButton.setEnabled(false);catalogButton.setEnabled(false);
+        pairButton.setEnabled(false);verifyButton.setEnabled(false);catalogButton.setEnabled(false);videoCheckButton.setEnabled(false);
         message.setText("מתבצעת בדיקה מול השרת…");
         worker.execute(()->{
             String result;
@@ -42,7 +42,7 @@ public final class FamilyPairingActivity extends Activity {
                 result="הפעולה לא הושלמה ("+reason+"). אין שינוי בנגן הקיים.";
             }
             final String text=result;
-            main.post(()->{if(!destroyed){message.setText(text);pairButton.setEnabled(true);verifyButton.setEnabled(true);catalogButton.setEnabled(true);}});
+            main.post(()->{if(!destroyed){message.setText(text);pairButton.setEnabled(true);verifyButton.setEnabled(true);catalogButton.setEnabled(true);videoCheckButton.setEnabled(true);}});
         });
     }
     private EditText input(String hint){
@@ -76,6 +76,8 @@ public final class FamilyPairingActivity extends Activity {
         verifyButton=new Button(this);verifyButton.setText("בדיקת שיוך קיים");root.addView(verifyButton);
         catalogButton=new Button(this);catalogButton.setText("בדיקת סרטונים מאושרים למשפחה");
         root.addView(catalogButton);
+        EditText videoIdInput=input("מזהה סרטון YouTube לבדיקה (11 תווים)");root.addView(videoIdInput);
+        videoCheckButton=new Button(this);videoCheckButton.setText("בדיקת הרשאה לסרטון (ללא ניגון)");root.addView(videoCheckButton);
         message=new TextView(this);message.setTextColor(Color.WHITE);message.setTextSize(16);
         message.setPadding(0,dp(20),0,0);message.setText("יש להזין קוד שההורה יצר באתר המשפחות.");
         root.addView(message);
@@ -130,6 +132,17 @@ public final class FamilyPairingActivity extends Activity {
             if(!list.has("list")||!list.has("version"))throw new IOException("INVALID_FAMILY_LIST");
             return "השיוך מאומת. הרשימה המשפחתית נגישה, אך הנגן הקיים עדיין לא הועבר אליה.";
         }));
+        videoCheckButton.setOnClickListener(v->{
+            final String videoId=videoIdInput.getText().toString().trim();
+            run(()->{
+                String saved=store.load();
+                if(saved==null)return "אין שיוך שמור. יש לשייך את המכשיר תחילה.";
+                FamilyAuthClient.Session session=auth.refresh(saved);
+                store.save(session.refreshToken);
+                new FamilyPlaybackGuard(auth).authorizeVideo(session.accessToken,videoId);
+                return "הרשאת צפייה לסרטון אומתה למשפחה זו. הנגן טרם הופעל.";
+            });
+        });
         catalogButton.setOnClickListener(v->run(()->{
             String saved=store.load();
             if(saved==null)return "אין שיוך שמור. יש לשייך את המכשיר תחילה.";
