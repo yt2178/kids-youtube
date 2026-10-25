@@ -59,6 +59,23 @@ final class FamilyAuthClient {
         try{body.put("refresh_token",token);}catch(JSONException impossible){throw new IOException("AUTH_INVALID_REFRESH",impossible);}
         return parse(execute("auth/v1/token","refresh_token",body,null));
     }
+    JSONObject catalogIds(String token) throws IOException {
+        if(token==null||token.length()<20||token.length()>4000)
+            throw new IOException("AUTH_MISSING_ACCESS");
+        HttpUrl url=base.newBuilder().addPathSegments("functions/v1/kids-youtube-family")
+                .addQueryParameter("action","catalog-ids").build();
+        Request request=new Request.Builder().url(url).get()
+                .header("apikey",PUBLISHABLE).header("Authorization","Bearer "+token)
+                .header("Cache-Control","no-store").build();
+        try(Response response=http.newCall(request).execute()){
+            if(!response.isSuccessful())throw new IOException("FAMILY_CATALOG_HTTP_"+response.code());
+            if(response.body()==null)throw new IOException("FAMILY_CATALOG_EMPTY");
+            String raw=response.body().string();
+            if(raw.length()>250000)throw new IOException("FAMILY_CATALOG_OVERSIZED");
+            try{return new JSONObject(raw);}
+            catch(JSONException e){throw new IOException("FAMILY_CATALOG_INVALID_JSON",e);}
+        }
+    }
     JSONObject playbackGrants(String token) throws IOException {
         if(token==null||token.length()<20||token.length()>4000)
             throw new IOException("AUTH_MISSING_ACCESS");
