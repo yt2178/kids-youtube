@@ -52,3 +52,12 @@ Update this file as actual evidence changes. Do not label a gate complete withou
 4. For HTTP 403, determine whether failure occurs during authentication, source extraction, media request, or playback. Correlate safely using fixed event names and HTTP class, not signed media URLs. Avoid speculative timeout or extraction-provider changes.
 5. Before enabling the actual family player, prove two-family isolation and revocation with real separate identities and devices, including deny-on-error and no legacy fallback; design explicit expiry/revalidation and offline policy for an already playing video.
 6. Keep active playback and public registration unchanged until physical evidence, relevant tests and a separate rollout decision. Log test outcomes here with date, device class, build SHA and sanitized verdict (never tokens, personal IDs or media URLs).
+
+## Live Supabase read-only preflight — 2026-10-26
+- Confirmed project ref `jxhelpxhrmwvzrrfrjuh` (the public family-pilot frontend uses this ref); the project status was `ACTIVE_HEALTHY`.
+- `kids-youtube-family` Edge Function was ACTIVE at version 7. This is a deployment-state check, **not** an authenticated end-to-end exercise.
+- Confirmed database counts at inspection: `families=0`, `devices=0`, `family_pilot_invites=0`, `kids_age_pack_items=0`.
+- RLS enabled for inspected public tables `families`, `family_approvals`, `devices`, `family_pilot_invites`, `kids_age_pack_items`. This by itself does **not** prove correct policies or tenant isolation.
+- Family approval, device pairing, invite, and age-pack migrations appeared in Supabase migration history.
+- A real invitation and two separate verified test identities are still prerequisites to the actual cross-family access tests. Do not create production accounts or turn on enrollment flags implicitly.
+- GitHub PR #72 passed both website and Android workflow checks and was merged into `main` as `394274dfc9b772b221a3b56dd8961ade039719d0`.
