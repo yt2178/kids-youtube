@@ -28,7 +28,9 @@ els.login.addEventListener('click',()=>guarded(async()=>{
  let d;try{d=await request('/auth/v1/token?grant_type=password',{email,password});}
  catch(e){if(e.httpStatus===400||e.httpStatus===401)e.loginRejected=true;throw e;}
  if(typeof d.access_token!=='string')throw Error('TOKEN_MISSING');
- token=d.access_token;els.password.value='';await getList();
+ token=d.access_token;els.password.value='';
+ try{await getList();}
+ catch(e){token='';version=0;els.approvals.value='';view('login');throw e;}
 }));
 els.enroll.addEventListener('click',()=>guarded(async()=>{
  const name=els['family-name'].value.trim();if(!name){status('יש להזין שם משפחה.');return;}
