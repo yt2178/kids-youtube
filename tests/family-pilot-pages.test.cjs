@@ -11,3 +11,10 @@ test('the experimental family login page is packaged for GitHub Pages',()=>{
  }
  assert.match(yml,/upload-pages-artifact@v3/);
 });
+
+test('pairing guidance accurately describes debug-only Android availability',()=>{
+ const html=fs.readFileSync('family-pilot.html','utf8');
+ assert.match(html,/מסך הזנת הקוד קיים כרגע בגרסת Debug/);
+ assert.match(html,/הנגן הפעיל עדיין אינו משתמש באישורים המשפחתיים/);
+ assert.doesNotMatch(html,/עדיין אין באפליקציית הילדים מסך להזנת קוד זה/);
+});
