@@ -37,3 +37,18 @@ Last reconciled: 2026-10-25. Keep this roadmap in Git and update evidence after 
 - Physical Android test access is needed to prove pairing, playback and token persistence.
 
 Update this file as actual evidence changes. Do not label a gate complete without test logs, verified deployment and the stated acceptance criteria.
+
+## Reconciliation — 2026-10-26 (post-PR #70)
+- GitHub `main` verified at `54e2839aad5482a3bfa90c96633011df23e45323` (PR #70). PR #69 at `5d2818e8d0b97d6701c2d01003e640f8c0246991` is already included.
+- PR #69 added a non-destructive Windows ADB capture entrypoint (`capture-family-playback.cmd`) and allowlisted `KidsFamilyPilot` diagnostic stages. Reports are local-only, under `family-pilot-diagnostics/`, and excluded from Git.
+- PR #70 distinguishes `outcome-first-frame-confirmed`, `outcome-no-first-frame`, and player failure. A `media3-play-request` event **does not** establish successful playback. The capture script analyzes the latest smoke-start attempt only.
+- These GitHub merges and source inspections do **not** establish that a Debug APK has been installed or tested on physical Android, or that pairing, cross-family isolation, media loading or HTTP 403 issues are resolved.
+- Deployment/version status of live Supabase and the current database counts have **not** been independently rechecked in this reconciliation; the 2026-10-25 counts above are historical observations, not today's state.
+
+### Immediate next gate — physical evidence, then fail-closed production integration
+1. In a controlled development environment, build/install the current Debug app to an explicitly chosen authorized tablet; do not uninstall the current working app or erase its data. Record build SHA and Android version.
+2. Use separately authorized family test account, paired test device and an explicitly approved video. Do not use or modify legacy-family approvals. Avoid claiming readiness when no authorized test identity exists.
+3. Run the isolated Media3 smoke test, then double-click `capture-family-playback.cmd` from the repository root. Inspect the locally saved **sanitized** report. Only `FIRST_FRAME_CONFIRMED` is evidence of rendered video; `NO_FIRST_FRAME`, `FAILED_OR_BLOCKED` and `INCONCLUSIVE` require cause-specific investigation.
+4. For HTTP 403, determine whether failure occurs during authentication, source extraction, media request, or playback. Correlate safely using fixed event names and HTTP class, not signed media URLs. Avoid speculative timeout or extraction-provider changes.
+5. Before enabling the actual family player, prove two-family isolation and revocation with real separate identities and devices, including deny-on-error and no legacy fallback; design explicit expiry/revalidation and offline policy for an already playing video.
+6. Keep active playback and public registration unchanged until physical evidence, relevant tests and a separate rollout decision. Log test outcomes here with date, device class, build SHA and sanitized verdict (never tokens, personal IDs or media URLs).
