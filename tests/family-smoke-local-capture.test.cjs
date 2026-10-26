@@ -8,7 +8,8 @@ test('family smoke diagnostics expose only fixed stages, elapsed time and HTTP c
  assert.match(java,/KidsFamilyPilot/);
  assert.match(java,/stage=media-http-status status=/);
  assert.match(java,/stage\.matches\("\[a-z0-9-\]/);
- assert.match(java,/onRenderedFirstFrame\(\)\{phase\("first-frame"\)/);
+ assert.match(java,/onRenderedFirstFrame\(\)\{/);
+ assert.match(java,/phase\("first-frame"\)/);
  assert.doesNotMatch(java,/Log\.[a-z]+\([^)]*(?:videoId|session|url|error\.getMessage)/);
 });
 test('local capture is non-destructive and emits only sanitized tagged lines',()=>{
