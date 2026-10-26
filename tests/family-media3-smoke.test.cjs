@@ -38,5 +38,6 @@ test('network and extractor errors never display raw signed URLs or server respo
  assert.match(src,/message\.matches\(/);
  assert.match(src,/error instanceof IOException\?error\.getMessage\(\)/);
  assert.doesNotMatch(src,/note\([^)]*error\.getMessage\(\)/);
- assert.doesNotMatch(src,/android\.util\.Log\.[a-z]+\(/);
+ assert.match(src,/android\.util\.Log\.i\("KidsFamilyPilot","stage="\+stage/);
+ assert.doesNotMatch(src,/android\.util\.Log\.[a-z]+\([^\n]*(?:videoId|session|error\.getMessage)/);
 });
