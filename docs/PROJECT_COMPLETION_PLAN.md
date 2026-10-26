@@ -61,3 +61,12 @@ Update this file as actual evidence changes. Do not label a gate complete withou
 - Family approval, device pairing, invite, and age-pack migrations appeared in Supabase migration history.
 - A real invitation and two separate verified test identities are still prerequisites to the actual cross-family access tests. Do not create production accounts or turn on enrollment flags implicitly.
 - GitHub PR #72 passed both website and Android workflow checks and was merged into `main` as `394274dfc9b772b221a3b56dd8961ade039719d0`.
+
+## Live database authorization audit — 2026-10-26 (read-only)
+- Inspected actual `pg_policies`, `pg_class`, `information_schema.role_table_grants` and `pg_proc` for the family tables and privileged RPC functions.
+- `families`: RLS enabled; authenticated clients have SELECT only; family read predicates use `private.can_read_family(id)`. `devices`: RLS enabled; authenticated clients have SELECT only; read predicate uses `private.is_parent(family_id)`. Existing UPDATE policies do **not** imply UPDATE is granted to end-user roles.
+- `family_approvals`, `family_pilot_invites`, and `kids_age_pack_items`: RLS enabled; no direct grants to `anon` or `authenticated` were found in the checked grant view.
+- `private.is_parent` and `private.can_read_family`: SECURITY DEFINER, restricted search path, executable by authenticated (not anon). Review body logic and schema exposure before claiming full safety.
+- `public.claim_family_pairing` and `public.enroll_invited_family`: SECURITY DEFINER with restricted search path; neither anon nor authenticated has direct EXECUTE privileges. The server-side service-role calls require further end-to-end validation.
+- These are schema/privilege observations, not authenticated attack tests. Remaining test gate: attempt reads/writes using two verified parents and separate anonymous paired devices, revoked device, stale grant, and authorization failure, recording sanitized HTTP evidence.
+- No database rows or grants were modified in this audit.
