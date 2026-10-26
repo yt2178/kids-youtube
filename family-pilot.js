@@ -101,6 +101,11 @@ els['create-code'].addEventListener('click',()=>guarded(async()=>{
  els['pair-expires'].textContent='בתוקף עד: '+new Date(d.expiresAt).toLocaleTimeString('he-IL');
  status('קוד השיוך נוצר. שתפו אותו רק עם המכשיר שאליו אתם מתכוונים לשייך.');
 }));
-els.logout.addEventListener('click',()=>{token='';version=0;els.approvals.value='';els.password.value='';view('login');status('יצאת מהמערכת הניסיונית.');});
+els.logout.addEventListener('click',()=>guarded(async()=>{
+ const prior=token;
+ token='';version=0;els.approvals.value='';els.password.value='';view('login');
+ try{if(prior)await request('/auth/v1/logout',{},prior);status('יצאת מהמערכת הניסיונית.');}
+ catch(e){status('המידע המקומי נוקה. לא ניתן לאשר ניתוק מהשרת; מומלץ לסגור את הדפדפן.');}
+}));
 window.addEventListener('pagehide',()=>{token='';version=0;});
 view('login');
