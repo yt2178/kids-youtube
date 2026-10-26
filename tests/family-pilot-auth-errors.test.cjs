@@ -47,3 +47,13 @@ test('failed initial family load cannot leave authenticated pilot state behind',
  assert.match(login,/try\{await getList\(\);\}/);
  assert.match(login,/catch\(e\)\{token='';version=0;els\.approvals\.value='';view\('login'\);throw e;\}/);
 });
+
+test('malformed family list/version cannot open parent editor',()=>{
+ const start=source.indexOf('async function getList()');
+ const end=source.indexOf('async function guarded(',start);
+ const handler=source.slice(start,end);
+ assert.match(handler,/Number\.isSafeInteger\(d\.version\)/);
+ assert.match(handler,/d\.version<1/);
+ assert.match(handler,/typeof d\.list!=='string'/);
+ assert.ok(handler.indexOf('INVALID_FAMILY_RESPONSE')<handler.indexOf("view('editor')"));
+});

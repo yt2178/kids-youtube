@@ -18,7 +18,9 @@ async function request(path,body,access){
  }finally{clearTimeout(timeout);}
 }
 async function getList(){
- try{const d=await request('/functions/v1/kids-youtube-family?action=list',undefined,token);version=d.version;els.approvals.value=d.list;view('editor');status('הרשימה הניסיונית נטענה.');await refreshDevices().catch(()=>{status('הרשימה נטענה, אך לא ניתן להציג את המכשירים כרגע.');});await refreshAgePacks().catch(()=>{status('הרשימה נטענה, אך ספריות הגיל אינן זמינות כרגע.');});}
+ try{const d=await request('/functions/v1/kids-youtube-family?action=list',undefined,token);
+ if(!Number.isSafeInteger(d.version)||d.version<1||typeof d.list!=='string')throw Error('INVALID_FAMILY_RESPONSE');
+ version=d.version;els.approvals.value=d.list;view('editor');status('הרשימה הניסיונית נטענה.');await refreshDevices().catch(()=>{status('הרשימה נטענה, אך לא ניתן להציג את המכשירים כרגע.');});await refreshAgePacks().catch(()=>{status('הרשימה נטענה, אך ספריות הגיל אינן זמינות כרגע.');});}
  catch(e){if(e.httpStatus===403&&e.message==='NO_FAMILY'){view('setup');status('אין עדיין משפחת ניסוי לחשבון זה. ההרשמה מוגבלת להזמנות מאושרות.');}else throw e;}
 }
 async function guarded(fn){if(busy)return;loading(true);try{await fn();}catch(e){if(e.httpStatus===401){token='';version=0;els.approvals.value='';els.password.value='';view('login');}status(e.name==='AbortError'?'הבקשה ארכה זמן רב מדי.':e.loginRejected?'לא ניתן להתחבר. בדקו את פרטי הכניסה ואימות כתובת הדוא״ל.':e.httpStatus===401?'ההתחברות פגה. בצעו כניסה מחדש.':e.message==='ENROLLMENT_CLOSED'?'הרשמת משפחות חדשה עדיין סגורה; אין שינוי בחשבון.':e.message==='INVITATION_REQUIRED'?'אין הזמנה מאושרת לחשבון זה.':'הפעולה נכשלה: '+e.message);}finally{loading(false);}}
