@@ -39,6 +39,22 @@ $clean = @($logs | Where-Object { $_ -match 'KidsFamilyPilot\s*:\s*stage=' } |
       elseif ($Matches['code']) { "$stamp stage=$($Matches['stage']) status=$($Matches['code'])" }
     }
   })
+# Report only the latest complete attempt. Historic logcat entries must not
+# cause an old success to be attributed to a new playback attempt.
+$starts = @($clean | ForEach-Object -Begin { $index = -1 } -Process {
+  $index++
+  if ($_ -match 'stage=smoke-start(?:\s|$)') { $index }
+})
+if ($starts.Count -gt 0) {
+  $clean = @($clean[$starts[-1]..($clean.Count-1)])
+}
+$confirmed = @($clean | Where-Object { $_ -match 'stage=outcome-first-frame-confirmed(?:\s|$)' }).Count -gt 0
+$noFrame = @($clean | Where-Object { $_ -match 'stage=outcome-no-first-frame(?:\s|$)' }).Count -gt 0
+$failed = @($clean | Where-Object { $_ -match 'stage=(?:player-error|smoke-preflight-failed|media-start-blocked)(?:\s|$)' }).Count -gt 0
+$verdict = if ($confirmed) { "FIRST_FRAME_CONFIRMED" }
+           elseif ($failed) { "FAILED_OR_BLOCKED" }
+           elseif ($noFrame) { "NO_FIRST_FRAME" }
+           else { "INCONCLUSIVE" }
 $dir = Join-Path $root "family-pilot-diagnostics"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -48,7 +64,9 @@ $file = Join-Path $dir "family-media3-$stamp.txt"
 "Timestamp: $(Get-Date -Format o)"
 "Evidence: sanitized KidsFamilyPilot events only"
 "Device identifier deliberately omitted"
+"Verdict: $verdict"
 ""
 ) + $clean | Set-Content -LiteralPath $file -Encoding UTF8
 Write-Host "Saved sanitized diagnostic report: $file"
+Write-Host "Result: $verdict"
 if (-not $clean.Count) { Write-Warning "No family pilot events found. Verify you installed and opened a DEBUG build." }

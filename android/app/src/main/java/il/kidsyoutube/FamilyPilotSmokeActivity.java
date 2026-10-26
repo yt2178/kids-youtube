@@ -41,6 +41,8 @@ public final class FamilyPilotSmokeActivity extends Activity {
     private FamilyPlaybackLeaseGate.Permit permit;
     private Runnable expiry;
     private String videoId;
+    private boolean firstFrameSeen;
+    private boolean mediaFailed;
     private final long diagnosticStarted=android.os.SystemClock.elapsedRealtime();
     private void phase(String stage){
         // Constant event labels only. Never log IDs, signed URLs, tokens or exceptions.
@@ -128,8 +130,14 @@ public final class FamilyPilotSmokeActivity extends Activity {
                         player=new ExoPlayer.Builder(this).build();
                         view.setPlayer(player);
                         permit=checked;
+                        firstFrameSeen=false;
+                        mediaFailed=false;
                         player.addListener(new Player.Listener(){
-                            @Override public void onRenderedFirstFrame(){phase("first-frame");}
+                            @Override public void onRenderedFirstFrame(){
+                                if(destroyed||!visible||player==null||mediaFailed)return;
+                                firstFrameSeen=true;
+                                phase("first-frame");
+                            }
                             @Override public void onPlayerError(PlaybackException error){
                                 if(destroyed)return;
                                 String kind="PLAYBACK_ERROR";
@@ -139,6 +147,7 @@ public final class FamilyPilotSmokeActivity extends Activity {
                                         break;
                                     }
                                 }
+                                mediaFailed=true;
                                 phase("player-error");
                                 if(kind.matches("HTTP_[1-5][0-9]{2}"))
                                     android.util.Log.i("KidsFamilyPilot","stage=media-http-status status="+kind);
@@ -154,7 +163,15 @@ public final class FamilyPilotSmokeActivity extends Activity {
                         phase("media3-play-request");
                         note("ניסוי ניגון פעיל עד 5 שניות בלבד; הנגן הרגיל לא השתנה.");
                         long remaining=Math.max(0,checked.expiresAt-System.currentTimeMillis());
-                        expiry=()->{phase("permit-expired");stopPlayback();note("הבדיקה הסתיימה; ההרשאה הזמנית פגה.");};
+                        expiry=()->{
+                            if(mediaFailed)phase("outcome-playback-error");
+                            else if(firstFrameSeen)phase("outcome-first-frame-confirmed");
+                            else phase("outcome-no-first-frame");
+                            phase("permit-expired");
+                            stopPlayback();
+                            note(firstFrameSeen?"נצפתה תמונה ראשונה; הניסוי הסתיים.":
+                                "הניסוי הסתיים בלי תמונה ראשונה מאומתת.");
+                        };
                         main.postDelayed(expiry,remaining);
                     }catch(Exception error){
                         phase("media-start-blocked");
