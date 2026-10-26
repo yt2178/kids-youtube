@@ -14,3 +14,10 @@ test('closed invitation-only enrollment explains refusal without claiming succes
  assert.match(source,/e\.message==='ENROLLMENT_CLOSED'/);
  assert.match(source,/e\.message==='INVITATION_REQUIRED'/);
 });
+
+test('expired family session clears authorization state and returns to login',()=>{
+ const begin=source.indexOf('async function guarded(fn)');
+ const end=source.indexOf('els.login.addEventListener',begin);
+ const handler=source.slice(begin,end);
+ assert.match(handler,/if\(e\.httpStatus===401\)\{token='';version=0;els\.approvals\.value='';els\.password\.value='';view\('login'\);\}/);
+});
