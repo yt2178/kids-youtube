@@ -21,3 +21,9 @@ test('expired family session clears authorization state and returns to login',()
  const handler=source.slice(begin,end);
  assert.match(handler,/if\(e\.httpStatus===401\)\{token='';version=0;els\.approvals\.value='';els\.password\.value='';view\('login'\);\}/);
 });
+
+test('login credential refusal does not masquerade as an expired session',()=>{
+ assert.match(source,/e\.loginRejected\?'לא ניתן להתחבר/);
+ assert.match(source,/e\.httpStatus===400\|\|e\.httpStatus===401\)e\.loginRejected=true/);
+ assert.match(source,/e\.httpStatus===401\?'ההתחברות פגה/);
+});
