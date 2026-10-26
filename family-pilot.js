@@ -12,7 +12,7 @@ async function request(path,body,access){
  const c=new AbortController(),timeout=setTimeout(()=>c.abort(),15000);
  try{
   const r=await fetch(BASE+path,{method:body===undefined?'GET':'POST',headers:{apikey:KEY,...(access?{Authorization:'Bearer '+access}:{}),...(body!==undefined?{'Content-Type':'application/json'}:{})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:c.signal});
-  const d=await r.json();
+  const d=r.status===204?{}:await r.json();
   if(!r.ok)throw Object.assign(Error(d?.error_description||d?.error||d?.msg||'REQUEST_FAILED'),{httpStatus:r.status});
   return d;
  }finally{clearTimeout(timeout);}
@@ -101,6 +101,11 @@ els['create-code'].addEventListener('click',()=>guarded(async()=>{
  els['pair-expires'].textContent='בתוקף עד: '+new Date(d.expiresAt).toLocaleTimeString('he-IL');
  status('קוד השיוך נוצר. שתפו אותו רק עם המכשיר שאליו אתם מתכוונים לשייך.');
 }));
-els.logout.addEventListener('click',()=>{token='';version=0;els.approvals.value='';els.password.value='';view('login');status('יצאת מהמערכת הניסיונית.');});
+els.logout.addEventListener('click',()=>guarded(async()=>{
+ const prior=token;
+ token='';version=0;els.approvals.value='';els.password.value='';view('login');
+ try{if(prior)await request('/auth/v1/logout',{},prior);status('יצאת מהמערכת הניסיונית.');}
+ catch(e){status('המידע המקומי נוקה. לא ניתן לאשר ניתוק מהשרת; מומלץ לסגור את הדפדפן.');}
+}));
 window.addEventListener('pagehide',()=>{token='';version=0;});
 view('login');
