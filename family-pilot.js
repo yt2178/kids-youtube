@@ -12,7 +12,7 @@ async function request(path,body,access){
  const c=new AbortController(),timeout=setTimeout(()=>c.abort(),15000);
  try{
   const r=await fetch(BASE+path,{method:body===undefined?'GET':'POST',headers:{apikey:KEY,...(access?{Authorization:'Bearer '+access}:{}),...(body!==undefined?{'Content-Type':'application/json'}:{})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:c.signal});
-  const d=await r.json();
+  const d=r.status===204?{}:await r.json();
   if(!r.ok)throw Object.assign(Error(d?.error_description||d?.error||d?.msg||'REQUEST_FAILED'),{httpStatus:r.status});
   return d;
  }finally{clearTimeout(timeout);}
