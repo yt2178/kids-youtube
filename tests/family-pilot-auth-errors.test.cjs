@@ -34,3 +34,7 @@ test('explicit logout clears local family state before server logout and reports
  assert.match(handler,/await request\('\/auth\/v1\/logout',\{\},prior\)/);
  assert.match(handler,/catch\(e\)\{status\('המידע המקומי נוקה/);
 });
+
+test('HTTP 204 logout is accepted without parsing JSON',()=>{
+ assert.match(source,/r\.status===204\?\{\}:await r\.json\(\)/);
+});
