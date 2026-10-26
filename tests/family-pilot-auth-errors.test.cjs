@@ -38,3 +38,12 @@ test('explicit logout clears local family state before server logout and reports
 test('HTTP 204 logout is accepted without parsing JSON',()=>{
  assert.match(source,/r\.status===204\?\{\}:await r\.json\(\)/);
 });
+
+test('failed initial family load cannot leave authenticated pilot state behind',()=>{
+ const start=source.indexOf("els.login.addEventListener");
+ const end=source.indexOf("els.enroll.addEventListener",start);
+ const login=source.slice(start,end);
+ assert.match(login,/token=d\.access_token;els\.password\.value='';/);
+ assert.match(login,/try\{await getList\(\);\}/);
+ assert.match(login,/catch\(e\)\{token='';version=0;els\.approvals\.value='';view\('login'\);throw e;\}/);
+});
