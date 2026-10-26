@@ -41,6 +41,13 @@ public final class FamilyPilotSmokeActivity extends Activity {
     private FamilyPlaybackLeaseGate.Permit permit;
     private Runnable expiry;
     private String videoId;
+    private final long diagnosticStarted=android.os.SystemClock.elapsedRealtime();
+    private void phase(String stage){
+        // Constant event labels only. Never log IDs, signed URLs, tokens or exceptions.
+        if(stage.matches("[a-z0-9-]{1,48}"))
+            android.util.Log.i("KidsFamilyPilot","stage="+stage+" elapsedMs="+
+                (android.os.SystemClock.elapsedRealtime()-diagnosticStarted));
+    }
     private void note(String text){if(!destroyed)status.setText(text);}
     private void stopPlayback(){
         if(expiry!=null){main.removeCallbacks(expiry);expiry=null;}
@@ -88,6 +95,7 @@ public final class FamilyPilotSmokeActivity extends Activity {
         stop.setOnClickListener(v->{stopPlayback();finish();});
         root.addView(stop);
         setContentView(root);
+        phase("smoke-start");
         worker.execute(()->{
             try {
                 FamilySessionStore store=new FamilySessionStore(getApplicationContext());
@@ -100,14 +108,17 @@ public final class FamilyPilotSmokeActivity extends Activity {
                     .retryOnConnectionFailure(false).build();
                 FamilyAuthClient auth=new FamilyAuthClient(http);
                 FamilyAuthClient.Session session=auth.refresh(storedRefreshToken);
+                phase("session-refreshed");
                 store.save(session.refreshToken);
                 // Extraction is untrusted and never authorizes a media item.
                 String url=extractApprovedSource(videoId);
+                phase("media-extracted");
                 // Crucially, refresh family authorization AFTER extraction.
                 FamilyPlaybackGuard guard=new FamilyPlaybackGuard(auth);
                 gate=new FamilyPlaybackLeaseGate(id->
                     guard.authorizeVideo(session.accessToken,id));
                 FamilyPlaybackLeaseGate.Permit checked=gate.request(videoId);
+                phase("grants-approved");
                 main.post(()->{
                     if(destroyed||!visible){gate.invalidate();return;}
                     try{
@@ -118,6 +129,7 @@ public final class FamilyPilotSmokeActivity extends Activity {
                         view.setPlayer(player);
                         permit=checked;
                         player.addListener(new Player.Listener(){
+                            @Override public void onRenderedFirstFrame(){phase("first-frame");}
                             @Override public void onPlayerError(PlaybackException error){
                                 if(destroyed)return;
                                 String kind="PLAYBACK_ERROR";
@@ -127,6 +139,9 @@ public final class FamilyPilotSmokeActivity extends Activity {
                                         break;
                                     }
                                 }
+                                phase("player-error");
+                                if(kind.matches("HTTP_[1-5][0-9]{2}"))
+                                    android.util.Log.i("KidsFamilyPilot","stage=media-http-status status="+kind);
                                 note("הניגון נכשל: "+kind+" (ללא חשיפת כתובת המדיה).");
                                 stopPlayback();
                             }
@@ -136,15 +151,18 @@ public final class FamilyPilotSmokeActivity extends Activity {
                         player.prepare();
                         gate.requireAuthorized(permit,videoId);
                         player.play();
+                        phase("media3-play-request");
                         note("ניסוי ניגון פעיל עד 5 שניות בלבד; הנגן הרגיל לא השתנה.");
                         long remaining=Math.max(0,checked.expiresAt-System.currentTimeMillis());
-                        expiry=()->{stopPlayback();note("הבדיקה הסתיימה; ההרשאה הזמנית פגה.");};
+                        expiry=()->{phase("permit-expired");stopPlayback();note("הבדיקה הסתיימה; ההרשאה הזמנית פגה.");};
                         main.postDelayed(expiry,remaining);
                     }catch(Exception error){
+                        phase("media-start-blocked");
                         stopPlayback();note("הבדיקה נחסמה: "+error.getClass().getSimpleName());
                     }
                 });
             }catch(Exception error){
+                phase("smoke-preflight-failed");
                 // Extraction/network exception messages can include signed URLs.
                 // Display an allowlisted category only, never the raw message.
                 String message=error instanceof IOException?error.getMessage():"";
