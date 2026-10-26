@@ -21,3 +21,14 @@ test('local capture is non-destructive and emits only sanitized tagged lines',()
   assert.ok(!ps.includes(dangerous),'Unexpected dangerous ADB operation: '+dangerous);
  }
 });
+
+test('a play command alone is never counted as evidence of a rendered frame',()=>{
+ assert.match(java,/firstFrameSeen=true/);
+ assert.match(java,/phase\("outcome-first-frame-confirmed"\)/);
+ assert.match(java,/phase\("outcome-no-first-frame"\)/);
+ assert.match(ps,/FIRST_FRAME_CONFIRMED/);
+ assert.match(ps,/NO_FIRST_FRAME/);
+ assert.match(ps,/INCONCLUSIVE/);
+ assert.match(ps,/stage=smoke-start/);
+ assert.doesNotMatch(ps,/media3-play-request[^\n]*FIRST_FRAME_CONFIRMED/);
+});
