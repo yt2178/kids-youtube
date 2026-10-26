@@ -10,3 +10,6 @@
 *.aab
 _site/
 
+
+# Local-only sanitized family pilot device diagnostics
+family-pilot-diagnostics/
