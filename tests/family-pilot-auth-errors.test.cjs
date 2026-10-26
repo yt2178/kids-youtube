@@ -27,3 +27,10 @@ test('login credential refusal does not masquerade as an expired session',()=>{
  assert.match(source,/e\.httpStatus===400\|\|e\.httpStatus===401\)e\.loginRejected=true/);
  assert.match(source,/e\.httpStatus===401\?'ההתחברות פגה/);
 });
+
+test('explicit logout clears local family state before server logout and reports failures',()=>{
+ const handler=source.slice(source.indexOf("els.logout.addEventListener"),source.indexOf("window.addEventListener('pagehide'"));
+ assert.match(handler,/token='';version=0;els\.approvals\.value='';els\.password\.value='';view\('login'\)/);
+ assert.match(handler,/await request\('\/auth\/v1\/logout',\{\},prior\)/);
+ assert.match(handler,/catch\(e\)\{status\('המידע המקומי נוקה/);
+});
