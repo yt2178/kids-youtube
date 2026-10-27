@@ -96,7 +96,7 @@ public final class AuthorizationFullRecoveryTest {
             Dns flaky=name->{lookups.incrementAndGet();first.countDown();
                 throw new UnknownHostException("temporary dns");};
             NativeApi api=new NativeApi(new ExtractorDownloader(false,flaky),
-                    server.url("/?action=list&format=native").toString());
+                    server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             RequestScope scope=new RequestScope(1500,"2",1,1);
             ExecutorService threads=Executors.newSingleThreadExecutor();
             try{
@@ -124,7 +124,7 @@ public final class AuthorizationFullRecoveryTest {
                 .setBodyDelay(700,TimeUnit.MILLISECONDS).setBody(document(8)));
             server.start();
             NativeApi api=new NativeApi(new ExtractorDownloader(false),
-                server.url("/?action=list&format=native").toString());
+                server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             RequestScope scope=new RequestScope(1700,"3",1,1);
             ExecutorService threads=Executors.newSingleThreadExecutor();
             try{

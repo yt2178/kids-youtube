@@ -29,7 +29,7 @@ public final class WeakNetworkTransportTest {
             server.enqueue(new MockResponse().setBody(response(VIDEO,1,0)));
             server.enqueue(new MockResponse().setBody(response(VIDEO,1,0)));
             server.start();
-            NativeApi api=new NativeApi(new ExtractorDownloader(false),server.url("/?action=list&format=native").toString());
+            NativeApi api=new NativeApi(new ExtractorDownloader(false),server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             assertTrue(api.whitelist(true,true).contains("AAAAAAAAAAA"));
             assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
             RecordedRequest full=server.takeRequest(2,TimeUnit.SECONDS);
@@ -47,7 +47,7 @@ public final class WeakNetworkTransportTest {
                 .setHeadersDelay(350,TimeUnit.MILLISECONDS)
                 .throttleBody(1024,32,TimeUnit.MILLISECONDS));
             server.start();
-            NativeApi api=new NativeApi(new ExtractorDownloader(false),server.url("/?action=list&format=native").toString());
+            NativeApi api=new NativeApi(new ExtractorDownloader(false),server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             long start=System.nanoTime();
             assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
             long ms=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start);
@@ -62,7 +62,7 @@ public final class WeakNetworkTransportTest {
                 .setHeadersDelay(150,TimeUnit.MILLISECONDS)
                 .throttleBody(4096,32,TimeUnit.MILLISECONDS));
             server.start();
-            NativeApi api=new NativeApi(new ExtractorDownloader(false),server.url("/?action=list&format=native").toString());
+            NativeApi api=new NativeApi(new ExtractorDownloader(false),server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
             assertEquals(1,server.getRequestCount());
         }
@@ -77,7 +77,7 @@ public final class WeakNetworkTransportTest {
                 return Dns.SYSTEM.lookup(name);
             };
             ExtractorDownloader network=new ExtractorDownloader(false,flaky);
-            NativeApi api=new NativeApi(network,server.url("/?action=list&format=native").toString());
+            NativeApi api=new NativeApi(network,server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             // A single transient DNS failure is retried internally; neither
             // the failed lookup nor stale data can grant approval.
             assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
@@ -98,7 +98,7 @@ public final class WeakNetworkTransportTest {
                 return Dns.SYSTEM.lookup(name);
             };
             NativeApi api=new NativeApi(new ExtractorDownloader(false,flaky),
-                    server.url("/?action=list&format=native").toString());
+                    server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
             try{api.whitelist(true,false);fail("failed fresh check must never grant access");}
             catch(UnknownHostException expected){}
@@ -130,7 +130,7 @@ public final class WeakNetworkTransportTest {
                 return Dns.SYSTEM.lookup(name);
             };
             NativeApi api=new NativeApi(new ExtractorDownloader(false,flaky,250),
-                    server.url("/?action=list&format=native").toString());
+                    server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             for(int load=0;load<2;load++){
                 try{api.whitelist(true,false);fail("two DNS failures must not authorize");}
                 catch(UnknownHostException expected){}
@@ -162,7 +162,7 @@ public final class WeakNetworkTransportTest {
                 return Dns.SYSTEM.lookup(name);
             };
             NativeApi api=new NativeApi(new ExtractorDownloader(false,slow),
-                    server.url("/?action=list&format=native").toString());
+                    server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             long started=System.nanoTime();
             assertTrue(api.whitelist(true,false).contains("AAAAAAAAAAA"));
             long ms=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
@@ -181,7 +181,7 @@ public final class WeakNetworkTransportTest {
             server.enqueue(new MockResponse().setResponseCode(403).setBody("no grants"));
             server.start();
             NativeApi api=new NativeApi(new ExtractorDownloader(false),
-                    server.url("/?action=list&format=native").toString());
+                    server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             try{api.whitelist(true,false);fail("HTTP 403 must fail closed");}
             catch(IOException expected){assertEquals("AUTH_DENIED",expected.getMessage());}
             assertEquals(1,server.getRequestCount());
@@ -195,7 +195,7 @@ public final class WeakNetworkTransportTest {
                     code==200?"{malformed":response(VIDEO,1,0)));
             server.start();
             NativeApi api=new NativeApi(new ExtractorDownloader(false),
-                    server.url("/?action=list&format=native").toString());
+                    server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             String[] expected={"AUTH_DENIED","AUTH_DENIED","AUTH_CHANGED_RETRY",
                 "RATE_LIMITED","WHITELIST_UNAVAILABLE","INVALID_AUTH_RESPONSE"};
             for(String code:expected){
@@ -224,7 +224,7 @@ public final class WeakNetworkTransportTest {
                 return Dns.SYSTEM.lookup(name);
             };
             NativeApi api=new NativeApi(new ExtractorDownloader(false,slow),
-                    server.url("/?action=list&format=native").toString());
+                    server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             RequestScope scope=new RequestScope(450,"88",1,2);
             java.util.concurrent.ExecutorService worker=
                 java.util.concurrent.Executors.newSingleThreadExecutor();
@@ -268,7 +268,7 @@ public final class WeakNetworkTransportTest {
                 return Dns.SYSTEM.lookup(name);
             };
             NativeApi api=new NativeApi(new ExtractorDownloader(false,flaky,2000),
-                    server.url("/?action=list&format=native").toString());
+                    server.url("/?action=list&format=native").newBuilder().host("localhost").build().toString());
             RequestScope scope=new RequestScope(900,"12",4,5);
             long started=System.nanoTime();scope.enter();
             try{
